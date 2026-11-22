@@ -90,6 +90,8 @@ func add_entity(kind: String, position: Vector3, yaw: float = 0.0, data: Diction
 		entity.extra["recipe_locked"] = true
 	if entity.recipe_id.is_empty():
 		entity.recipe_id = Recipes.default_for(kind)
+		if not entity.recipe_id.is_empty():
+			entity.extra["recipe_locked"] = false
 	entity.cost = building_definitions[kind].get("cost", {}).duplicate(true)
 	if kind == "miner_mk1":
 		entity.extra["node_id"] = node_id

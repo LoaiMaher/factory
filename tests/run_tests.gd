@@ -423,6 +423,20 @@ func _test_recipe_defaults_and_input_autoselect() -> void:
 		and bool(menu_sim.entities[menu_smelter].extra.get("recipe_locked", false)),
 		str(menu_sim.entities[menu_smelter].extra))
 
+	var default_saved_sim: FactorySim = FactorySim.new()
+	var default_saved_smelter: int = default_saved_sim.add_entity("smelter", Vector3.ZERO)
+	var default_saved_data: Dictionary = default_saved_sim.to_dict()
+	var default_restored: FactorySim = FactorySim.new()
+	default_restored.from_dict(default_saved_data)
+	var default_restored_entity: FactoryEntity = default_restored.entities.get(default_saved_smelter) as FactoryEntity
+	var auto_switch_after_load: bool = (
+		default_restored_entity != null
+		and not bool(default_restored_entity.extra.get("recipe_locked", true))
+		and default_restored.try_insert(default_saved_smelter, "copper_ore", "in0"))
+	_check("default recipe remains auto-selectable after save/load",
+		auto_switch_after_load and default_restored_entity.recipe_id == "copper_ingot",
+		str(default_restored.entities.get(default_saved_smelter)))
+
 	var saved_sim: FactorySim = FactorySim.new()
 	var saved_smelter: int = saved_sim.add_entity("smelter", Vector3.ZERO, 0.0, {"recipe": "copper_ingot"})
 	var saved_data: Dictionary = saved_sim.to_dict()
