@@ -200,14 +200,7 @@ func open_entity(entity_id: int) -> void:
 	entity_status_label.text = _status_markup("%s  ·  %s" % [entity.kind.replace("_", " ").capitalize(), entity.status])
 	panel_body.add_child(entity_status_label)
 	if entity.kind in ["smelter", "constructor", "assembler"]:
-		var recipe_select: OptionButton = OptionButton.new()
-		recipe_select.add_item("Choose recipe")
-		var recipe_names: Array[String] = Recipes.for_machine(entity.kind)
-		for recipe_id: String in recipe_names:
-			recipe_select.add_item(recipe_id.replace("_", " ").capitalize())
-			if recipe_id == entity.recipe_id:
-				recipe_select.select(recipe_select.item_count - 1)
-		recipe_select.item_selected.connect(_on_recipe_selected.bind(recipe_names))
+		var recipe_select: OptionButton = create_recipe_selector(entity)
 		panel_body.add_child(recipe_select)
 		for line: String in sim.diagnostics(entity_id):
 			var diagnostic: Label = _label(line, 15)
@@ -497,6 +490,24 @@ func _format_counts(item_types: Dictionary, buffer: Dictionary) -> String:
 	for item_id: String in item_types:
 		parts.append("%s ×%d" % [Items.item_name(item_id), int(buffer.get(item_id, 0))])
 	return "Empty" if parts.is_empty() else ", ".join(parts)
+
+func create_recipe_selector(entity: FactoryEntity) -> OptionButton:
+	var recipe_select: OptionButton = OptionButton.new()
+	recipe_select.allow_reselect = true
+	recipe_select.add_item("Choose recipe")
+	var recipe_names: Array[String] = Recipes.for_machine(entity.kind)
+	for recipe_id: String in recipe_names:
+		recipe_select.add_item(recipe_option_text(entity, recipe_id))
+		if recipe_id == entity.recipe_id:
+			recipe_select.select(recipe_select.item_count - 1)
+	recipe_select.item_selected.connect(_on_recipe_selected.bind(recipe_names))
+	return recipe_select
+
+static func recipe_option_text(entity: FactoryEntity, recipe_id: String) -> String:
+	var text_value: String = recipe_id.replace("_", " ").capitalize()
+	if recipe_id == entity.recipe_id and not bool(entity.extra.get("recipe_locked", false)):
+		text_value += " (auto)"
+	return text_value
 
 func _on_recipe_selected(index: int, recipe_names: Array[String]) -> void:
 	if index > 0 and selected_entity_id >= 0 and index - 1 < recipe_names.size():

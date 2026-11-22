@@ -402,6 +402,18 @@ func _test_recipe_defaults_and_input_autoselect() -> void:
 		copper_entity.recipe_id == "copper_ingot" and switched
 		and int(copper_entity.output_buffer.get("copper_ingot", 0)) > 0,
 		str([copper_entity.recipe_id, copper_entity.input_buffer, copper_entity.output_buffer]))
+	var recipe_hud: FactoryHUD = FactoryHUD.new()
+	var recipe_select: OptionButton = recipe_hud.create_recipe_selector(copper_entity)
+	_check("recipe dropdown can reselect its current automatic recipe",
+		recipe_select.allow_reselect and recipe_select.selected > 0
+		and recipe_select.get_item_text(recipe_select.selected) == "Copper Ingot (auto)",
+		str([recipe_select.allow_reselect, recipe_select.selected,
+			recipe_select.get_item_text(recipe_select.selected)]))
+	recipe_select.free()
+	recipe_hud.free()
+	_check("machine panel marks unlocked recipes as automatic",
+		FactoryHUD.recipe_option_text(copper_entity, "copper_ingot") == "Copper Ingot (auto)",
+		FactoryHUD.recipe_option_text(copper_entity, "copper_ingot"))
 
 	var input_buffer_sim: FactorySim = FactorySim.new()
 	var input_buffer_smelter: int = input_buffer_sim.add_entity("smelter", Vector3.ZERO)
@@ -431,6 +443,9 @@ func _test_recipe_defaults_and_input_autoselect() -> void:
 		and locked_sim.diagnostics(locked_smelter).has(mismatch_diagnostic),
 		str([locked_sim.entities[locked_smelter].recipe_id,
 			locked_sim.entities[locked_smelter].extra, locked_sim.diagnostics(locked_smelter)]))
+	_check("machine panel omits automatic marker for locked recipes",
+		FactoryHUD.recipe_option_text(locked_sim.entities[locked_smelter], "copper_ingot") == "Copper Ingot",
+		FactoryHUD.recipe_option_text(locked_sim.entities[locked_smelter], "copper_ingot"))
 
 	var menu_sim: FactorySim = FactorySim.new()
 	var menu_smelter: int = menu_sim.add_entity("smelter", Vector3.ZERO)
