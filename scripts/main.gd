@@ -452,9 +452,11 @@ func _build_belt_click(hit: Dictionary) -> void:
 	if belt_start.is_empty():
 		var source: Dictionary = _nearest_port(position, "out", true)
 		if source.is_empty():
+			audio_manager.call("play_one_shot", "invalid_placement", position)
 			hud.show_toast("Aim within 1.2 m of a free output port.")
 			return
 		if not sim.is_port_free(int(source["id"]), str(source["port"])):
+			audio_manager.call("play_one_shot", "invalid_placement", position)
 			hud.show_toast("Port already connected.")
 			return
 		belt_start = source
@@ -463,27 +465,33 @@ func _build_belt_click(hit: Dictionary) -> void:
 	var target: Dictionary = _nearest_port(position, "in", true)
 	if not target.is_empty():
 		if not sim.is_port_free(int(target["id"]), str(target["port"])):
+			audio_manager.call("play_one_shot", "invalid_placement", position)
 			hud.show_toast("Port already connected.")
 			return
 		var curve: PackedVector3Array = _belt_curve(belt_start, target)
 		var reason: String = _belt_curve_reason(curve, int(belt_start["id"]), int(target["id"]))
 		if not reason.is_empty():
+			audio_manager.call("play_one_shot", "invalid_placement", position)
 			hud.show_toast(reason)
 			return
 		var count: int = ceili(_curve_length(curve) / 2.0)
 		if not _can_afford(building_definitions[build_system.selected]["cost"], count):
+			audio_manager.call("play_one_shot", "invalid_placement", position)
 			hud.show_toast("Not enough materials for this belt.")
 			return
 		var result: Dictionary = sim.add_belt(build_system.selected, int(belt_start["id"]), str(belt_start["port"]),
 			int(target["id"]), str(target["port"]), curve)
 		if int(result["id"]) < 0:
+			audio_manager.call("play_one_shot", "invalid_placement", position)
 			hud.show_toast(str(result["reason"]))
 		else:
 			_pay_cost(building_definitions[build_system.selected]["cost"], count)
+			audio_manager.call("play_one_shot", "placement_confirm", curve[3])
 			belt_start.clear()
 		return
 	var other_output: Dictionary = _nearest_port(position, "out", true)
 	if not other_output.is_empty():
+		audio_manager.call("play_one_shot", "invalid_placement", position)
 		hud.show_toast("Can't connect output to output.")
 		return
 	var source_port: Dictionary = sim.port_world(int(belt_start["id"]), str(belt_start["port"]))
