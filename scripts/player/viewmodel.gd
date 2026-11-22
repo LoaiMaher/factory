@@ -50,7 +50,7 @@ func _ready() -> void:
 	layer = 0
 	if player != null and player.camera != null:
 		player.camera.set_cull_mask_value(VIEWMODEL_LAYER, false)
-	if DisplayServer.get_name() == "headless":
+	if DisplayServer.get_name() == "headless" and OS.get_name() != "Web":
 		return
 	_create_overlay()
 

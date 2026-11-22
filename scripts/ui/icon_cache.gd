@@ -10,7 +10,7 @@ func get_icon(slot_type: String, id: String) -> Texture2D:
 	return icons.get("%s:%s" % [slot_type, id]) as Texture2D
 
 func prepare(host: Node, machine_models: MachineModels, visuals: FactoryVisuals) -> void:
-	if prepared or DisplayServer.get_name() == "headless":
+	if prepared or (DisplayServer.get_name() == "headless" and OS.get_name() != "Web"):
 		return
 	var viewport: SubViewport = SubViewport.new()
 	viewport.name = "HotbarIconViewport"
