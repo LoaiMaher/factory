@@ -9,8 +9,8 @@ def main() -> None:
     output = Path(sys.argv[1])
     kinds = [
         "miner_mk1", "smelter", "constructor", "assembler", "geo_tap",
-        "power_pole", "storage", "splitter", "merger", "belt",
-        "spire", "hub", "drop_pod",
+        "power_pole", "storage", "splitter", "merger", "belt", "belt_pole",
+        "ascent_spire", "hub", "drop_pod", "ore_node",
     ]
     cell_width, image_height, label_height = 400, 225, 34
     columns = 4

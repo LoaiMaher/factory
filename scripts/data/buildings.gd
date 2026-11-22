@@ -10,10 +10,10 @@ static func all() -> Dictionary:
 	var west: Vector3 = Vector3(-1.0, 0.0, 0.0)
 	var east: Vector3 = Vector3(1.0, 0.0, 0.0)
 	return {
-		"miner_mk1": {"size": Vector3(4.0, 6.0, 4.0), "ports": [_port("out0", "out", Vector3(-1.0, 0.62, 2.0), south)], "requires": "node", "power": 5.0, "cost": {"iron_plate": 10, "concrete": 10}, "tier": 0},
-		"smelter": {"size": Vector3(4.0, 5.0, 4.0), "ports": [_port("in0", "in", Vector3(-1.0, 0.62, -2.0), north), _port("out0", "out", Vector3(-1.0, 0.62, 2.0), south)], "requires": "", "power": 4.0, "cost": {"iron_rod": 5, "wire": 8}, "tier": 0},
-		"constructor": {"size": Vector3(4.0, 4.0, 6.0), "ports": [_port("in0", "in", Vector3(-1.0, 0.62, -3.0), north), _port("out0", "out", Vector3(-1.0, 0.62, 3.0), south)], "requires": "", "power": 4.0, "cost": {"iron_plate": 8, "wire": 10}, "tier": 0},
-		"assembler": {"size": Vector3(6.0, 4.5, 6.0), "ports": [_port("in0", "in", Vector3(-2.0, 0.62, -3.0), north), _port("in1", "in", Vector3(2.0, 0.62, -3.0), north), _port("out0", "out", Vector3(0.0, 0.62, 3.0), south)], "requires": "", "power": 15.0, "cost": {"iron_plate": 20, "screw": 40, "cable": 10}, "tier": 2},
+		"miner_mk1": {"size": Vector3(4.0, 6.0, 4.0), "ports": [_port("out0", "out", Vector3(-1.0, 1.0, 2.0), south)], "requires": "node", "power": 5.0, "cost": {"iron_plate": 10, "concrete": 10}, "tier": 0},
+		"smelter": {"size": Vector3(4.0, 5.0, 4.0), "ports": [_port("in0", "in", Vector3(-1.0, 1.0, -2.0), north), _port("out0", "out", Vector3(-1.0, 1.0, 2.0), south)], "requires": "", "power": 4.0, "cost": {"iron_rod": 5, "wire": 8}, "tier": 0},
+		"constructor": {"size": Vector3(4.0, 4.0, 6.0), "ports": [_port("in0", "in", Vector3(-1.0, 1.0, -3.0), north), _port("out0", "out", Vector3(-1.0, 1.0, 3.0), south)], "requires": "", "power": 4.0, "cost": {"iron_plate": 8, "wire": 10}, "tier": 0},
+		"assembler": {"size": Vector3(6.0, 4.5, 6.0), "ports": [_port("in0", "in", Vector3(-2.0, 1.0, -3.0), north), _port("in1", "in", Vector3(2.0, 1.0, -3.0), north), _port("out0", "out", Vector3(0.0, 1.0, 3.0), south)], "requires": "", "power": 15.0, "cost": {"iron_plate": 20, "screw": 40, "cable": 10}, "tier": 2},
 		"belt_mk1": {"size": Vector3(0.8, 0.5, 1.4), "ports": [], "requires": "", "power": 0.0, "cost": {"iron_plate": 1}, "tier": 0},
 		"belt_mk2": {"size": Vector3(0.8, 0.5, 1.4), "ports": [], "requires": "", "power": 0.0, "cost": {"iron_plate": 1, "screw": 2}, "tier": 2},
 		"belt_pole": {"size": Vector3(0.8, 1.5, 0.8), "ports": [_port("in0", "in", Vector3(0.0, 1.0, -0.4), north), _port("out0", "out", Vector3(0.0, 1.0, 0.4), south)], "requires": "", "power": 0.0, "cost": {"iron_rod": 1}, "tier": 0},

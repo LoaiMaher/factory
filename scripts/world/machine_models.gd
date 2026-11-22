@@ -6,7 +6,7 @@ var material_cache: Dictionary = {}
 
 func build(kind: String, root: Node3D, size: Vector2i, body_position: Vector3) -> void:
 	var asset_name: String = "ascent_spire" if kind == "spire" else kind
-	if kind.begins_with("belt_"):
+	if kind in ["belt_mk1", "belt_mk2"]:
 		asset_name = "belt"
 	var packed: PackedScene = load("res://assets/models/%s.glb" % asset_name) as PackedScene
 	if packed == null:
@@ -36,7 +36,7 @@ func build(kind: String, root: Node3D, size: Vector2i, body_position: Vector3) -
 				_add_particles(arm, "AssemblerSparks", Vector3(0.0, -1.18, 0.08), 7, Color("ffb34d"))
 		"geo_tap":
 			_add_particles(model, "GeoSteam", Vector3(0.0, 4.0, 0.0), 20, Color("d4d1c5"))
-	if kind.begins_with("belt_"):
+	if kind in ["belt_mk1", "belt_mk2"]:
 		var belt_surface: MeshInstance3D = model.find_child("Belt_Mesh", true, false) as MeshInstance3D
 		if belt_surface != null:
 			belt_surface.name = "BeltSurface"
@@ -222,7 +222,7 @@ func _pbr_material(key: String) -> Material:
 	if material_cache.has(key):
 		return material_cache[key]
 	var paint_tints: Dictionary = {
-		"Paint_Orange": Color("e8792b"), "Paint_Dark": Color("2b2e33"),
+		"Paint_Orange": Color("e8902a"), "Paint_Dark": Color("2b2e33"),
 		"Steel": Color("b2b8b8"), "Concrete": Color("77766b"),
 		"Glass": Color("75aeb2"), "Rubber": Color("252826"),
 		"Glove_Charcoal": Color("2b2f34"),
@@ -234,11 +234,11 @@ func _pbr_material(key: String) -> Material:
 	if key == "Paint_Orange" or key == "Paint_Dark":
 		var paint: StandardMaterial3D = StandardMaterial3D.new()
 		paint.albedo_color = paint_tints[key]
-		paint.metallic = 0.3 if key == "Paint_Orange" else 0.24
+		paint.metallic = 0.3 if key == "Paint_Orange" else 0.6
 		paint.roughness = 0.45
 		paint.normal_enabled = true
 		paint.normal_texture = load("res://assets/textures/metal_plate_nor_gl_1k.jpg")
-		paint.normal_scale = 0.08
+		paint.normal_scale = 0.035
 		material_cache[key] = paint
 		return paint
 	if key == "Glove_Charcoal":
@@ -262,7 +262,7 @@ func _pbr_material(key: String) -> Material:
 		return hazard
 	var material: StandardMaterial3D = StandardMaterial3D.new()
 	material.albedo_color = paint_tints.get(key, Color("777c72"))
-	material.roughness = 0.58 if key == "Steel" else 0.78
+	material.roughness = 0.45 if key == "Steel" else 0.78
 	material.metallic = 0.8 if key == "Steel" else 0.08
 	if key == "Glass":
 		material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA

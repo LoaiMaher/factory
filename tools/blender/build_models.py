@@ -17,22 +17,26 @@ MODEL_DIR.mkdir(parents=True, exist_ok=True)
 
 MATERIALS = {
     "Paint_Orange": ((0.78, 0.27, 0.025, 1.0), 0.3, 0.45),
-    "Paint_Dark": ((0.055, 0.065, 0.075, 1.0), 0.6, 0.45),
+    "Paint_Dark": ((0.025, 0.028, 0.034, 1.0), 0.6, 0.45),
     "Steel": ((0.48, 0.52, 0.55, 1.0), 0.8, 0.45),
     "Concrete": ((0.35, 0.37, 0.33, 1.0), 0.02, 0.92),
     "Glass": ((0.11, 0.35, 0.39, 1.0), 0.3, 0.18),
+    "Machine_Glass": ((0.11, 0.35, 0.39, 0.05), 0.08, 0.24),
     "Rubber": ((0.025, 0.029, 0.032, 1.0), 0.0, 0.86),
     "Glove_Charcoal": ((0.13, 0.14, 0.15, 1.0), 0.02, 0.62),
     "Pick_Wood": ((0.42, 0.24, 0.11, 1.0), 0.0, 0.82),
     "Hazard": ((0.95, 0.57, 0.055, 1.0), 0.22, 0.48),
-    "Emissive_Furnace": ((1.0, 0.22, 0.025, 1.0), 0.0, 0.28),
+    "Emissive_Furnace": ((1.0, 0.125, 0.014, 1.0), 0.0, 0.28),
     "Emissive_Status": ((0.18, 0.9, 0.33, 1.0), 0.05, 0.2),
     "Foliage": ((0.18, 0.34, 0.15, 1.0), 0.0, 0.9),
     "GrassBlade": ((0.18, 0.34, 0.15, 1.0), 0.0, 0.9),
     "Bark": ((0.22, 0.13, 0.08, 1.0), 0.0, 0.95),
-    "Ore_Iron": ((0.47, 0.19, 0.11, 1.0), 0.1, 0.88),
-    "Ore_Copper": ((0.21, 0.43, 0.35, 1.0), 0.16, 0.72),
+    "Ore_Iron": ((0.25, 0.07, 0.04, 1.0), 0.1, 0.88),
+    "Ore_Copper": ((0.58, 0.19, 0.055, 1.0), 0.1, 0.82),
     "Ore_Limestone": ((0.72, 0.68, 0.52, 1.0), 0.0, 0.91),
+    "Ore_Surface": ((0.12, 0.11, 0.095, 1.0), 0.02, 0.94),
+    "Ore_Crack": ((0.055, 0.06, 0.055, 1.0), 0.0, 0.98),
+    "Ore_Rubble": ((0.25, 0.24, 0.22, 1.0), 0.04, 0.94),
 }
 
 MATERIAL_CACHE = {}
@@ -52,10 +56,13 @@ def material(name):
     shader.inputs["Roughness"].default_value = roughness
     if name == "Emissive_Furnace":
         shader.inputs["Emission Color"].default_value = color
-        shader.inputs["Emission Strength"].default_value = 4.0
+        shader.inputs["Emission Strength"].default_value = 1.8
     elif name == "Emissive_Status":
         shader.inputs["Emission Color"].default_value = color
         shader.inputs["Emission Strength"].default_value = 2.0
+    elif name == "Machine_Glass":
+        shader.inputs["Alpha"].default_value = 0.05
+        mat.surface_render_method = "BLENDED"
     elif name == "GrassBlade":
         vertex_color = mat.node_tree.nodes.new("ShaderNodeVertexColor")
         vertex_color.layer_name = "Color"
@@ -73,6 +80,19 @@ def material(name):
         ramp.color_ramp.elements[1].position = 0.52
         ramp.color_ramp.elements[1].color = color
         links.new(tex.outputs["Color"], ramp.inputs["Fac"])
+        links.new(ramp.outputs["Color"], shader.inputs["Base Color"])
+    if name == "Ore_Copper":
+        nodes = mat.node_tree.nodes
+        links = mat.node_tree.links
+        tex = nodes.new("ShaderNodeTexNoise")
+        tex.inputs["Scale"].default_value = 34.0
+        tex.inputs["Detail"].default_value = 2.0
+        ramp = nodes.new("ShaderNodeValToRGB")
+        ramp.color_ramp.elements[0].position = 0.6
+        ramp.color_ramp.elements[0].color = color
+        ramp.color_ramp.elements[1].position = 0.7
+        ramp.color_ramp.elements[1].color = (0.055, 0.34, 0.29, 1.0)
+        links.new(tex.outputs["Fac"], ramp.inputs["Fac"])
         links.new(ramp.outputs["Color"], shader.inputs["Base Color"])
     MATERIAL_CACHE[name] = mat
     return mat
@@ -191,7 +211,7 @@ def bolt(parent, name, location, mat_name="Steel", radius=0.055, axis="Y"):
     return cylinder(parent, name, location, radius, radius * 0.55, mat_name, 12, 0.006, rotation)
 
 
-def ladder(parent, center, height, width=0.48, mat_name="Hazard"):
+def ladder(parent, center, height, width=0.48, mat_name="Steel"):
     for side in (-1.0, 1.0):
         cylinder_between(parent, "Ladder_Rail",
                          (center[0] + side * width * 0.5, center[1], center[2]),
@@ -218,7 +238,7 @@ def flange_pipe(parent, start, end, radius=0.12, mat_name="Steel"):
         cylinder_between(parent, "Pipe_Flange",
                          (point[0], point[1], point[2] - 0.055),
                          (point[0], point[1], point[2] + 0.055),
-                         radius * 1.48, "Hazard", 24)
+                         radius * 1.48, "Steel", 24)
         for bolt_index in range(6):
             angle = math.tau * bolt_index / 6
             bolt(parent, "Flange_Bolt",
@@ -269,54 +289,110 @@ def add_frame(parent, width, length, base_z=0.2, beam=0.18, mat_name="Paint_Dark
              (width, beam, beam), "Steel")
     for x in (-width * 0.43, width * 0.43):
         for y in (-length * 0.43, length * 0.43):
-            bolt(parent, "Frame_Bolt", (x, y, base_z + beam * 0.58), "Hazard", 0.05, "Z")
+            bolt(parent, "Frame_Bolt", (x, y, base_z + beam * 0.58), "Steel", 0.05, "Z")
+
+
+def foundation_plate(parent, width, depth, height=0.32):
+    cube(parent, "Foundation_Plate", (0.0, 0.0, height * 0.5),
+         (width, depth, height), "Paint_Dark", 0.07)
+    for x in (-width * 0.42, width * 0.42):
+        for y in (-depth * 0.42, depth * 0.42):
+            cube(parent, "Foundation_Foot", (x, y, 0.12), (0.42, 0.42, 0.24), "Steel", 0.045)
+    for y in (-depth * 0.48, depth * 0.48):
+        cube(parent, "Foundation_Hazard_Trim", (0.0, y, height + 0.045),
+             (width * 0.78, 0.11, 0.09), "Hazard", 0.03)
 
 
 def build_miner():
     root, body = machine_root()
-    add_frame(body, 3.7, 3.7, 0.24, 0.2)
+    foundation_plate(body, 3.9, 3.9, 0.24)
+    cube(body, "Drill_Housing", (0.0, 0.0, 4.18), (3.45, 3.35, 1.65), "Paint_Dark", 0.12)
+    cube(body, "Miner_Motor_Housing", (0.0, 0.0, 5.4), (2.25, 2.15, 1.05), "Paint_Dark", 0.12)
+    cube(body, "Miner_Motor_Armor", (0.0, -1.12, 5.35), (1.85, 0.12, 0.78), "Paint_Orange", 0.07)
+    inset_panel(body, "Miner_Motor_Inset", (0.0, -1.2, 5.34), 1.18, 0.43, "Paint_Dark")
+    for side in (-1.0, 1.0):
+        cube(body, "Miner_Motor_Side_Armor", (side * 1.16, 0.0, 5.36),
+             (0.12, 1.55, 0.72), "Paint_Orange", 0.06)
+        for z in (5.12, 5.34, 5.56):
+            bolt(body, "Miner_Motor_Fastener", (side * 1.23, -0.62, z),
+                 "Steel", 0.035, "Y")
+    for side in (-1.0, 1.0):
+        cube(body, "Miner_Armour_Panel", (side * 1.76, -0.02, 4.15),
+             (0.16, 2.45, 1.28), "Paint_Orange", 0.075)
+        cube(body, "Miner_Armour_Inset", (side * 1.85, -0.02, 4.15),
+             (0.035, 1.58, 0.8), "Paint_Dark", 0.035)
+        for y in (-0.86, -0.3, 0.3, 0.86):
+            for z in (3.72, 4.55):
+                bolt(body, "Miner_Armour_Fastener",
+                     (side * 1.88, y, z), "Steel", 0.032, "X")
+        cylinder_between(body, "Miner_Cable_Run", (side * 1.38, 1.1, 4.55),
+                         (side * 1.55, 1.1, 1.25), 0.06, "Rubber", 12)
     for x in (-1.48, 1.48):
         for y in (-1.42, 1.42):
-            cube(body, "Rig_Foot", (x, y, 0.2), (0.55, 0.55, 0.22), "Concrete")
-            cylinder(body, "Derrick_Leg", (x, y, 3.15), 0.13, 5.7, "Steel", 18)
-            cylinder(body, "Hydraulic_Piston", (x * 0.82, y * 0.82, 2.1),
-                     0.08, 2.6, "Hazard", 16)
-    for z in (1.05, 2.65, 4.25, 5.7):
-        for y in (-1.42, 1.42):
-            cube(body, "Tower_Crossbeam", (0.0, y, z), (3.4, 0.16, 0.17), "Steel")
-        for x in (-1.48, 1.48):
-            cube(body, "Tower_Crossbeam", (x, 0.0, z), (0.16, 3.25, 0.17), "Steel")
-    for corner in (-1.0, 1.0):
-        cylinder_between(body, "Derrick_Diagonal",
-                         (corner * 1.42, -1.42, 1.2),
-                         (-corner * 1.42, -1.42, 5.4), 0.065, "Hazard", 12)
-    cube(body, "Derrick_Crown", (0.0, 0.0, 6.0), (2.3, 2.2, 0.42), "Paint_Orange")
-    cube(body, "Control_Cabinet", (1.92, -0.8, 1.55), (0.7, 1.0, 1.4), "Paint_Orange")
-    inset_panel(body, "Control_Cabinet_Door", (1.93, -0.8, 1.65), 0.54, 0.92, "Paint_Dark")
+            foot_x, foot_y = x * 1.22, y * 1.22
+            top_x, top_y = x * 0.78, y * 0.78
+            cube(body, "Rig_Foot", (foot_x, foot_y, 0.2), (0.68, 0.68, 0.25), "Concrete", 0.07)
+            cube(body, "Rig_Foot_Guard", (foot_x, foot_y, 0.36),
+                 (0.58, 0.58, 0.1), "Hazard", 0.035)
+            cylinder_between(body, "Derrick_Leg", (foot_x, foot_y, 0.38),
+                             (top_x, top_y, 3.56), 0.22, "Paint_Dark", 20)
+            cylinder_between(body, "Hydraulic_Barrel", (foot_x * 0.96, foot_y * 0.96, 0.72),
+                             (top_x * 0.96, top_y * 0.96, 3.15), 0.14, "Paint_Orange", 16)
+            cylinder_between(body, "Hydraulic_Piston", (foot_x * 0.94, foot_y * 0.94, 0.85),
+                             (top_x * 0.94, top_y * 0.94, 3.36), 0.07, "Steel", 16)
+            cylinder_between(body, "Leg_Hose", (foot_x * 0.9, foot_y * 0.9, 0.86),
+                             (top_x * 0.88, top_y * 0.88, 3.2), 0.035, "Rubber", 10)
+    for side in (-1.0, 1.0):
+        cube(body, "Drill_Mast_Side", (side * 0.82, 0.45, 6.03),
+             (0.2, 1.5, 0.92), "Paint_Dark", 0.06)
+        cube(body, "Drill_Mast_Armor", (side * 0.94, -0.2, 6.03),
+             (0.08, 0.72, 0.58), "Paint_Orange", 0.04)
+        cylinder_between(body, "Mast_Hydraulic_Line", (side * 0.63, 0.0, 5.55),
+                         (side * 0.63, 0.0, 6.42), 0.07, "Steel", 14)
+    cube(body, "Control_Cabinet", (1.68, -0.92, 1.55), (0.7, 1.0, 1.4), "Paint_Dark")
+    cube(body, "Control_Cabinet_Armor", (1.68, -1.45, 1.55),
+         (0.78, 0.12, 1.32), "Paint_Orange", 0.055)
+    inset_panel(body, "Control_Cabinet_Door", (1.68, -1.53, 1.65), 0.54, 0.92, "Paint_Dark")
     for z in (1.4, 1.68, 1.96):
-        cylinder(body, "Control_Dial", (2.01, -0.8, z), 0.09, 0.055,
+        cylinder(body, "Control_Dial", (2.09, -1.54, z), 0.09, 0.055,
                  "Emissive_Status", 16, 0.008, (math.pi / 2, 0.0, 0.0))
-    vent_bank(body, (0.0, -1.9, 1.1), 9, 1.6)
-    ladder(body, (-1.76, -1.0, 0.4), 4.8)
+    vent_bank(body, (0.0, -1.74, 1.1), 9, 1.6)
     for x in (-0.45, 0.0, 0.45):
-        cylinder(body, "Chute_Roller", (x - 1.0, -1.86, 0.72), 0.12, 1.1, "Rubber", 16, 0.01, (0.0, math.pi / 2, 0.0))
+        cylinder(body, "Chute_Roller", (x - 1.0, -1.72, 0.72), 0.12, 1.1,
+                 "Rubber", 16, 0.01, (0.0, math.pi / 2, 0.0))
     cube(body, "Ore_Chute", (-1.0, -0.95, 1.05), (0.9, 2.15, 0.48),
-         "Paint_Orange", 0.08, (math.radians(12), 0.0, 0.0))
+         "Paint_Dark", 0.08, (math.radians(12), 0.0, 0.0))
+    cube(body, "Ore_Chute_Armor", (-1.0, -1.74, 1.05), (0.84, 0.1, 0.42),
+         "Paint_Orange", 0.045)
     cube(body, "Hazard_Skirting", (0.0, -1.9, 0.42), (3.3, 0.12, 0.22), "Hazard")
-    drill = empty("Drill", root, (0.0, 0.0, 1.0))
-    cylinder(drill, "Drill_Hub", (0.0, 0.0, 0.0), 0.66, 0.48, "Steel", 24)
-    cylinder(drill, "Drill_Collar", (0.0, 0.0, -0.34), 0.48, 0.18, "Hazard", 24)
-    cone(drill, "Drill_Bit", (0.0, 0.0, -0.9), 0.42, 0.025, 0.95, "Steel", 12)
+    cylinder(body, "Cable_Reel_Axle", (1.72, 0.78, 2.1), 0.13, 0.72, "Steel", 20,
+             rotation=(0.0, math.pi / 2.0, 0.0))
+    for x in (1.35, 2.08):
+        cylinder(body, "Cable_Reel_Flange", (x, 0.78, 2.1), 0.48, 0.11, "Paint_Dark", 24,
+                 rotation=(0.0, math.pi / 2.0, 0.0))
+        torus(body, "Cable_Reel_Rim", (x, 0.78, 2.1), 0.42, 0.035, "Steel",
+              (0.0, math.pi / 2.0, 0.0))
+    for index in range(9):
+        angle = math.tau * index / 9
+        cylinder_between(body, "Cable_Reel_Spoke",
+                         (1.44, 0.78 + math.cos(angle) * 0.16, 2.1 + math.sin(angle) * 0.16),
+                         (1.99, 0.78 + math.cos(angle) * 0.16, 2.1 + math.sin(angle) * 0.16),
+                         0.026, "Steel", 10)
+    drill = empty("Drill", root, (0.0, 0.0, 2.85))
+    cylinder(drill, "Drill_Hub", (0.0, 0.0, -0.14), 0.44, 0.5, "Paint_Dark", 24)
+    cylinder(drill, "Drill_Shaft", (0.0, 0.0, -1.04), 0.2, 1.55, "Steel", 24)
+    cylinder(drill, "Drill_Collar", (0.0, 0.0, -1.82), 0.5, 0.2, "Hazard", 24)
+    cone(drill, "Drill_Bit", (0.0, 0.0, -2.38), 0.46, 0.025, 0.92, "Steel", 16)
     for index in range(8):
         angle = math.tau * index / 8
         cylinder_between(drill, "Drill_Flute",
                          (math.cos(angle) * 0.28, math.sin(angle) * 0.28, -1.18),
                          (math.cos(angle) * 0.12, math.sin(angle) * 0.12, -0.52),
                          0.055, "Paint_Orange", 10)
-    piston = empty("Piston", root, (0.0, 0.0, 4.15))
-    cylinder(piston, "Piston_Barrel", (0.0, 0.0, 0.0), 0.24, 1.8, "Paint_Dark", 20)
-    cylinder(piston, "Piston_Rod", (0.0, 0.0, -0.95), 0.105, 0.85, "Steel", 16)
-    add_status_light(body, (1.55, -1.6, 5.85))
+    piston = empty("Piston", root, (0.0, 0.0, 5.48))
+    cylinder(piston, "Piston_Barrel", (0.0, 0.0, 0.0), 0.24, 0.78, "Paint_Dark", 20)
+    cylinder(piston, "Piston_Rod", (0.0, 0.0, -0.56), 0.105, 0.68, "Steel", 16)
+    add_status_light(body, (1.55, -1.72, 5.75))
     return root, (4.0, 4.0, 6.5)
 
 
@@ -329,25 +405,13 @@ def build_smelter():
             cube(body, "Furnace_Foot_Guard", (x, y, 0.33), (0.42, 0.42, 0.09), "Hazard", 0.035)
     for y in (-1.93, 1.93):
         cube(body, "Furnace_Base_Hazard_Rail", (0.0, y, 0.43), (3.45, 0.13, 0.2), "Hazard", 0.04)
-    add_frame(body, 3.55, 3.55, 0.57, 0.18, "Paint_Dark")
-    for x in (-1.57, 1.57):
-        for y in (-1.57, 1.57):
-            cube(body, "Crucible_Frame_Pylon", (x, y, 2.72), (0.2, 0.2, 4.2), "Steel", 0.045)
-            cube(body, "Pylon_Armor_Collar", (x, y, 1.18), (0.27, 0.27, 0.18), "Paint_Orange", 0.045)
-            cylinder_between(body, "Frame_Diagonal_Brace",
-                             (x, y, 1.35), (-x * 0.92, y, 4.52), 0.055, "Steel", 16)
-    for z in (0.78, 4.72):
-        for y in (-1.6, 1.6):
-            cube(body, "Furnace_Gantry_Rail", (0.0, y, z), (3.5, 0.18, 0.2), "Paint_Dark", 0.05)
-        for x in (-1.6, 1.6):
-            cube(body, "Furnace_Gantry_Cross_Rail", (x, 0.0, z), (0.18, 3.5, 0.2), "Paint_Dark", 0.05)
-
-    cylinder(body, "Crucible_Shell", (0.0, 0.0, 2.23), 1.24, 2.92, "Paint_Dark", 32, 0.06)
-    for z, radius in ((0.82, 1.25), (1.0, 1.28), (3.53, 1.28), (3.72, 1.16)):
-        torus(body, "Crucible_Steel_Band", (0.0, 0.0, z), radius, 0.085, "Steel")
+    cylinder(body, "Furnace_Lower_Ring", (0.0, 0.0, 0.72), 1.67, 0.62, "Paint_Dark", 40, 0.06)
+    cylinder(body, "Crucible_Shell", (0.0, 0.0, 2.25), 1.48, 3.2, "Paint_Dark", 40, 0.07)
+    for z, radius in ((0.94, 1.55), (1.14, 1.53), (3.45, 1.53), (3.72, 1.42)):
+        torus(body, "Crucible_Steel_Band", (0.0, 0.0, z), radius, 0.085, "Paint_Dark")
     for angle_index in range(24):
         angle = math.tau * angle_index / 24
-        x, y = math.cos(angle) * 1.27, math.sin(angle) * 1.27
+        x, y = math.cos(angle) * 1.52, math.sin(angle) * 1.52
         bolt(body, "Crucible_Bolt", (x, y, 2.24), "Steel", 0.035, "Z")
     for side in (-1.0, 1.0):
         cube(body, "Orange_Crucible_Armor", (side * 0.55, -1.28, 2.55),
@@ -355,12 +419,16 @@ def build_smelter():
         cube(body, "Armor_Hinge", (side * 0.96, -1.29, 2.55), (0.1, 0.24, 1.92), "Steel", 0.035)
         for z in (2.05, 2.35, 2.65, 2.95):
             cube(body, "Armor_Rib", (side * 0.91, -1.39, z), (0.08, 0.08, 0.08), "Paint_Dark", 0.025)
-    for y in (-1.0, 1.0):
-        cube(body, "Crucible_Slit_Shroud", (0.0, y * 1.27, 2.55), (0.42, 0.22, 1.9), "Paint_Dark", 0.04)
-        glow = empty("Furnace_Glow", root, (0.0, y * 1.34, 2.55))
-        cube(glow, "Furnace_Glow_Slit", (0.0, 0.0, 0.0), (0.22, 0.08, 1.5), "Emissive_Furnace", 0.025)
-        for z in (1.9, 2.35, 2.8, 3.25):
-            cube(body, "Slit_Guard_Bar", (0.0, y * 1.4, z), (0.42, 0.12, 0.07), "Steel", 0.025)
+    glow = empty("Furnace_Glow", root)
+    for x in (-0.82, -0.41, 0.0, 0.41, 0.82):
+        surface_y = -math.sqrt(1.48 * 1.48 - x * x)
+        cube(body, "Crucible_Slit_Shroud", (x, surface_y - 0.05, 2.55),
+             (0.24, 0.18, 1.55), "Paint_Dark", 0.04)
+        cube(glow, "Furnace_Glow_Slit", (x, surface_y - 0.16, 2.55), (0.12, 0.045, 1.24),
+             "Emissive_Furnace", 0.025)
+        for z in (2.0, 3.1):
+            cube(body, "Slit_Guard_Bar", (x, surface_y - 0.17, z),
+                 (0.3, 0.1, 0.07), "Steel", 0.025)
 
     cube(body, "Furnace_Service_Panel", (1.25, -0.72, 1.35), (0.22, 1.1, 0.86), "Paint_Orange", 0.055)
     cube(body, "Service_Panel_Display", (1.38, -0.72, 1.43), (0.035, 0.52, 0.32), "Glass", 0.015)
@@ -368,18 +436,19 @@ def build_smelter():
         cylinder(body, "Service_Control", (1.42, -0.48, z), 0.045, 0.08, "Steel", 16,
                  rotation=(0.0, math.pi / 2.0, 0.0))
 
-    cylinder(body, "Crucible_Crown", (0.0, 0.0, 3.82), 1.17, 0.3, "Paint_Orange", 32, 0.04)
-    cone(body, "Feed_Hopper", (0.0, 0.0, 4.17), 0.74, 0.46, 0.52, "Steel", 24)
-    torus(body, "Feed_Hopper_Rim", (0.0, 0.0, 4.45), 0.76, 0.07, "Steel")
-    cylinder(body, "Chimney_Stack", (0.82, 0.72, 4.15), 0.26, 1.42, "Paint_Dark", 24, 0.035)
-    for z in (3.48, 4.68):
-        torus(body, "Chimney_Flange", (0.82, 0.72, z), 0.33, 0.06, "Steel")
-    cylinder(body, "Chimney_Cap", (0.82, 0.72, 4.93), 0.39, 0.12, "Paint_Orange", 24, 0.025)
+    cube(body, "Furnace_Input_Recess", (0.0, -1.54, 1.02), (1.3, 0.16, 0.82), "Paint_Dark", 0.045)
+    cube(body, "Furnace_Output_Recess", (0.0, 1.54, 1.02), (1.3, 0.16, 0.82), "Paint_Dark", 0.045)
+    cone(body, "Furnace_Hood", (0.0, 0.0, 4.08), 1.48, 0.58, 0.88, "Paint_Dark", 36)
+    torus(body, "Furnace_Hood_Flange", (0.0, 0.0, 3.66), 1.46, 0.09, "Paint_Orange")
+    cylinder(body, "Chimney_Stack", (0.38, 0.3, 5.66), 0.3, 2.3, "Paint_Dark", 28, 0.04)
+    for z in (4.55, 6.74):
+        torus(body, "Chimney_Flange", (0.38, 0.3, z), 0.33, 0.06, "Steel")
+    cylinder(body, "Chimney_Cap", (0.38, 0.3, 6.93), 0.39, 0.12, "Paint_Orange", 24, 0.025)
     for angle_index in range(12):
         angle = math.tau * angle_index / 12
         cylinder_between(body, "Chimney_Cap_Standoff",
-                         (0.82 + math.cos(angle) * 0.29, 0.72 + math.sin(angle) * 0.29, 4.72),
-                         (0.82 + math.cos(angle) * 0.29, 0.72 + math.sin(angle) * 0.29, 4.87),
+                         (0.38 + math.cos(angle) * 0.29, 0.3 + math.sin(angle) * 0.29, 6.74),
+                         (0.38 + math.cos(angle) * 0.29, 0.3 + math.sin(angle) * 0.29, 6.87),
                          0.025, "Steel", 10)
     for x in (-1.15, 1.15):
         cylinder_between(body, "Crucible_Pressure_Pipe", (x, -1.18, 1.0), (x, -1.18, 3.3), 0.11, "Steel", 20)
@@ -388,86 +457,135 @@ def build_smelter():
         for y in (-1.37, -0.99):
             cube(body, "Pressure_Pipe_Clamp", (x, y, 2.1), (0.24, 0.1, 0.13), "Paint_Orange", 0.03)
 
-    ladder(body, (-1.78, -0.72, 0.58), 3.9, 0.5, "Steel")
-    for z in (1.05, 1.8, 2.55, 3.3):
-        cube(body, "Access_Platform", (1.5, 0.0, z), (0.48, 1.8, 0.09), "Paint_Dark", 0.035)
-        for y in (-0.8, 0.8):
-            cylinder_between(body, "Platform_Railing", (1.76, y, z + 0.05), (1.76, y, z + 0.42), 0.025, "Steel", 10)
     piston = empty("Piston", root, (0.0, 0.0, 4.0))
     cylinder(piston, "Piston_Hydraulic_Barrel", (0.0, 0.0, 0.0), 0.17, 0.9, "Paint_Dark", 24)
     cylinder(piston, "Piston_Chrome_Rod", (0.0, 0.0, -0.62), 0.08, 0.65, "Steel", 20)
     cylinder(piston, "Piston_Head", (0.0, 0.0, -0.98), 0.29, 0.14, "Paint_Orange", 24)
-    add_status_light(body, (1.42, -1.7, 4.45))
-    return root, (4.0, 4.0, 5.0)
+    add_status_light(body, (1.42, -1.7, 4.4))
+    return root, (4.0, 4.0, 7.2)
 
 
 def build_constructor():
     root, body = machine_root()
+    foundation_plate(body, 3.9, 5.9)
     add_frame(body, 3.55, 5.55, 0.2, 0.2)
+    cube(body, "Constructor_Main_Housing", (0.0, 0.35, 1.65),
+         (3.15, 4.5, 2.58), "Paint_Dark", 0.12)
+    for side in (-1.0, 1.0):
+        cube(body, "Constructor_Workchamber_Jamb",
+             (side * 1.37, -2.25, 1.65), (0.38, 0.7, 2.58), "Paint_Dark", 0.07)
+    for z in (0.55, 2.75):
+        cube(body, "Constructor_Workchamber_Rail", (0.0, -2.25, z),
+             (3.15, 0.7, 0.38), "Paint_Dark", 0.07)
+    cube(body, "Constructor_Workchamber_Backwall", (0.0, 0.9, 1.88),
+         (2.12, 0.12, 1.32), "Paint_Dark", 0.04)
+    cube(body, "Constructor_Workchamber_Glow", (0.0, -2.04, 1.9),
+         (0.08, 0.035, 0.84), "Emissive_Furnace", 0.015)
+    cube(body, "Constructor_Workchamber_Glass", (0.0, -2.77, 1.88),
+         (2.18, 0.055, 1.34), "Machine_Glass", 0.025)
     for side in (-1.0, 1.0):
         x = side * 1.65
         cube(body, "Constructor_Side_Wall", (x, 0.0, 1.55), (0.22, 4.7, 2.75), "Paint_Orange")
+        cube(body, "Constructor_Side_Inset", (side * 1.79, 0.0, 1.62),
+             (0.04, 2.05, 1.4), "Paint_Dark", 0.035)
+        for y in (-1.8, -0.9, 0.0, 0.9, 1.8):
+            for z in (0.62, 2.48):
+                bolt(body, "Constructor_Armor_Bolt", (side * 1.8, y, z),
+                     "Steel", 0.03, "X")
         for y in (-1.4, 0.0, 1.4):
-            cube(body, "Window_Frame", (x - side * 0.13, y, 1.75), (0.11, 1.1, 0.9), "Steel")
+            cube(body, "Window_Frame", (x - side * 0.13, y, 1.75), (0.11, 1.1, 0.9), "Paint_Dark")
             cube(body, "Inspection_Glass", (x - side * 0.205, y, 1.75), (0.05, 0.82, 0.62), "Glass", 0.025)
         for z in (0.52, 0.82, 2.55, 2.83):
             cube(body, "Housing_Rib", (x - side * 0.14, 0.0, z), (0.16, 4.6, 0.085), "Hazard" if z < 0.9 else "Paint_Dark")
     cube(body, "Roof_Spine", (0.0, 0.0, 3.18), (3.0, 5.45, 0.28), "Paint_Dark")
     for y in (-2.2, -1.45, -0.7, 0.05, 0.8, 1.55, 2.25):
-        cube(body, "Roof_Rib", (0.0, y, 3.33), (3.5, 0.12, 0.18), "Steel")
-    for end in (-1.0, 1.0):
-        cube(body, "Conveyor_Mouth", (-1.0, end * 2.82, 0.48), (1.55, 0.58, 0.74), "Paint_Dark")
-        for flap_x in (-0.54, -0.18, 0.18, 0.54):
-            cube(body, "Rubber_Flap", (-1.0 + flap_x, end * 2.56, 0.24), (0.16, 0.08, 0.46), "Rubber")
-        cube(body, "Mouth_Hazard", (-1.0, end * 2.84, 0.91), (1.65, 0.12, 0.14), "Hazard")
-    press = empty("Press", root, (0.0, 0.0, 2.5))
+        cube(body, "Roof_Rib", (0.0, y, 3.33), (3.5, 0.12, 0.18), "Paint_Dark")
+    press = empty("Press", root, (0.0, -2.05, 2.55))
     cube(press, "Press_Carriage", (0.0, 0.0, 0.0), (1.4, 1.25, 0.38), "Paint_Orange")
     cylinder(press, "Press_Ram", (0.0, 0.0, -0.58), 0.18, 0.9, "Steel", 20)
     cube(press, "Press_Die", (0.0, 0.0, -1.08), (1.1, 0.9, 0.2), "Hazard")
     for x in (-1.15, 1.15):
         cylinder(body, "Gantry_Guide", (x, 0.0, 2.15), 0.075, 1.6, "Steel", 16)
-    vent_bank(body, (0.0, -1.8, 2.9), 12, 2.2)
+    piston = empty("Piston", root, (0.0, -2.08, 2.38))
+    for x in (-0.92, 0.92):
+        cylinder(piston, "Twin_Hydraulic_Barrel", (x, 0.0, 0.0), 0.14, 1.35, "Paint_Dark", 20)
+        cylinder(piston, "Twin_Chrome_Rod", (x, 0.0, -0.78), 0.065, 0.85, "Steel", 16)
+        torus(piston, "Piston_Gland", (x, 0.0, -0.08), 0.18, 0.035, "Steel")
+    cube(body, "Cooling_Block", (0.0, 0.0, 3.52), (2.7, 1.65, 0.56), "Paint_Dark", 0.07)
+    for x in (-0.78, 0.78):
+        cylinder(body, "Top_Motor_Housing", (x, 0.0, 3.9), 0.28, 0.42, "Paint_Dark", 24)
+        torus(body, "Top_Motor_Flange", (x, 0.0, 4.12), 0.24, 0.035, "Steel")
+        cylinder_between(body, "Motor_Cable_Bundle", (x, 0.62, 3.78),
+                         (x, 0.62, 4.22), 0.055, "Rubber", 12)
+    for x in range(-8, 9):
+        cube(body, "Cooling_Fin", (float(x) * 0.14, -0.86, 3.52), (0.055, 0.09, 0.48), "Paint_Dark", 0.025)
+    for x in (-1.12, 1.12):
+        cylinder_between(body, "Cooling_Pipe", (x, -0.95, 3.1), (x, -0.95, 3.72), 0.07, "Steel", 16)
+    vent_bank(body, (0.0, -2.68, 3.28), 16, 2.55)
     for y in (-2.0, 2.0):
         for x in (-1.4, 1.4):
             bolt(body, "Housing_Bolt", (x, y, 2.75), "Hazard", 0.052, "Z")
     add_status_light(body, (1.54, -2.1, 3.05))
-    return root, (4.0, 6.0, 3.8)
+    return root, (4.0, 6.0, 4.3)
 
 
 def build_assembler():
     root, body = machine_root()
+    foundation_plate(body, 5.9, 5.9)
     add_frame(body, 5.55, 5.55, 0.22, 0.22)
+    cube(body, "Assembler_Main_Housing", (0.0, 0.45, 1.72),
+         (5.25, 4.3, 2.55), "Paint_Dark", 0.12)
+    for side in (-1.0, 1.0):
+        cube(body, "Assembler_Side_Tower", (side * 2.28, 0.0, 1.95),
+             (0.82, 4.82, 3.15), "Paint_Dark", 0.1)
+        cube(body, "Assembler_Tower_Armor", (side * 2.72, 0.0, 1.98),
+             (0.14, 3.9, 2.45), "Paint_Orange", 0.06)
+        cube(body, "Assembler_Tower_Inset", (side * 2.81, 0.0, 1.98),
+             (0.045, 1.9, 1.42), "Paint_Dark", 0.035)
+        for y in (-1.6, -0.8, 0.0, 0.8, 1.6):
+            for z in (0.86, 3.08):
+                bolt(body, "Assembler_Armor_Bolt", (side * 2.86, y, z),
+                     "Steel", 0.032, "X")
     for x in (-2.5, 2.5):
         for y in (-2.45, 2.45):
-            cube(body, "Assembler_Pylon", (x, y, 2.05), (0.34, 0.34, 3.6), "Steel")
+            cube(body, "Assembler_Pylon", (x, y, 2.05), (0.34, 0.34, 3.6), "Paint_Dark")
     for x in (-2.5, 2.5):
         for z in (0.72, 3.55):
             cube(body, "Assembler_Side_Rail", (x, 0.0, z), (0.34, 5.1, 0.26), "Paint_Orange")
     for y in (-2.45, 2.45):
         cube(body, "Assembler_End_Rail", (0.0, y, 3.55), (5.1, 0.3, 0.25), "Paint_Dark")
-    cube(body, "Assembler_Roof_Rack", (0.0, 0.0, 3.8), (5.0, 5.0, 0.2), "Steel")
+    cube(body, "Assembler_Roof_Rack", (0.0, 0.0, 3.72), (5.15, 4.9, 0.48), "Paint_Dark", 0.1)
     for y in (-1.8, -0.9, 0.0, 0.9, 1.8):
         cube(body, "Roof_Rib", (0.0, y, 3.96), (5.05, 0.12, 0.14), "Paint_Orange")
     for side in (-1.0, 1.0):
-        cube(body, "Inspection_Glass", (side * 2.43, 0.0, 2.18), (0.06, 3.9, 1.75), "Glass", 0.03)
+        cube(body, "Assembler_Bay_Jamb", (side * 1.35, -2.25, 2.08),
+             (0.18, 0.7, 1.9), "Paint_Dark", 0.05)
+    for z in (1.18, 2.98):
+        cube(body, "Assembler_Bay_Rail", (0.0, -2.25, z),
+             (2.88, 0.7, 0.18), "Paint_Dark", 0.05)
+    cube(body, "Assembler_Bay_Interior", (0.0, 0.85, 2.08), (2.48, 0.12, 1.48),
+         "Paint_Dark", 0.04)
+    cube(body, "Assembler_Bay_Glow", (0.0, -1.82, 2.08), (0.08, 0.035, 0.88),
+         "Emissive_Furnace", 0.015)
+    cube(body, "Inspection_Glass", (0.0, -2.7, 2.08), (2.54, 0.055, 1.5), "Machine_Glass", 0.03)
     for x in (-1.4, 1.4):
         cone(body, "Input_Hopper", (x, -1.5, 3.1), 0.66, 0.34, 0.85, "Hazard", 16)
         torus(body, "Hopper_Lip", (x, -1.5, 3.54), 0.6, 0.075, "Steel")
-    for index, x in enumerate((-1.15, 1.15)):
-        arm = empty("Arm_A" if index == 0 else "Arm_B", root, (x, 0.25, 2.15))
+    for index, x in enumerate((-0.75, 0.75)):
+        arm = empty("Arm_A" if index == 0 else "Arm_B", root, (x, -1.45, 2.15))
         cylinder(arm, "Robot_Base", (0.0, 0.0, 0.0), 0.28, 0.38, "Paint_Dark", 20)
-        cylinder_between(arm, "Robot_Upper_Link", (0.0, 0.0, 0.15), (0.0, -0.65, 0.72),
+        cylinder(arm, "Turntable", (0.0, 0.0, -0.2), 0.43, 0.12, "Steel", 24)
+        torus(arm, "Turntable_Rim", (0.0, 0.0, -0.12), 0.38, 0.045, "Paint_Orange")
+        cylinder_between(arm, "Robot_Upper_Link", (0.0, 0.0, 0.15), (0.0, -0.32, 0.72),
                          0.14, "Paint_Orange", 16)
-        cylinder_between(arm, "Robot_Forearm", (0.0, -0.65, 0.72), (0.0, -1.35, 0.35),
+        cylinder_between(arm, "Robot_Forearm", (0.0, -0.32, 0.72), (0.0, -0.64, 0.35),
                          0.1, "Steel", 16)
-        cube(arm, "Robot_Gripper", (0.0, -1.38, 0.2), (0.42, 0.22, 0.16), "Hazard")
+        cube(arm, "Robot_Gripper", (0.0, -0.67, 0.2), (0.42, 0.22, 0.16), "Hazard")
         for claw_x in (-0.16, 0.16):
-            cube(arm, "Robot_Gripper_Finger", (claw_x, -1.52, 0.05), (0.08, 0.32, 0.16), "Steel")
-    cube(body, "Assembler_Belt_Mouth", (0.0, -2.8, 0.48), (1.4, 0.48, 0.66), "Rubber")
-    cube(body, "Mouth_Hazard", (0.0, -2.8, 0.86), (1.5, 0.12, 0.1), "Hazard")
-    for x in (-2.0, 2.0):
-        cube(body, "Assembler_Belt_Mouth", (x, 2.8, 0.48), (1.0, 0.48, 0.66), "Rubber")
-        cube(body, "Mouth_Hazard", (x, 2.8, 0.86), (1.1, 0.12, 0.1), "Hazard")
+            cube(arm, "Robot_Gripper_Finger", (claw_x, -0.78, 0.05), (0.08, 0.18, 0.16), "Steel")
+        for side in (-1.0, 1.0):
+            cylinder_between(arm, "Arm_Hydraulic_Hose", (side * 0.2, -0.12, 0.34),
+                             (side * 0.2, -0.5, 0.52), 0.035, "Rubber", 12)
     vent_bank(body, (2.66, 0.0, 1.8), 14, 2.6)
     add_status_light(body, (2.54, -2.4, 3.35))
     return root, (6.0, 6.0, 4.2)
@@ -511,10 +629,11 @@ def build_geo_tap():
 
 def build_power_pole():
     root, body = machine_root()
+    foundation_plate(body, 1.9, 1.9)
     cube(body, "Pole_Base_Plate", (0.0, 0.0, 0.18), (1.6, 1.6, 0.3), "Concrete")
     cylinder(body, "Tapered_Mast", (0.0, 0.0, 3.0), 0.18, 5.55, "Steel", 20)
     for z in (0.55, 1.85, 3.15, 4.45):
-        torus(body, "Mast_Collar", (0.0, 0.0, z), 0.2, 0.045, "Hazard")
+        torus(body, "Mast_Collar", (0.0, 0.0, z), 0.2, 0.045, "Steel")
     cube(body, "Crossarm", (0.0, 0.0, 5.25), (2.0, 0.18, 0.2), "Paint_Orange")
     cube(body, "Crossarm_Brace", (0.0, 0.0, 4.7), (0.14, 0.14, 1.1), "Steel")
     for x in (-0.8, -0.4, 0.0, 0.4, 0.8):
@@ -525,9 +644,10 @@ def build_power_pole():
         cylinder_between(body, "Lattice_Brace",
                          (0.0, side * 0.08, 0.75), (side * 0.8, 0.0, 5.18),
                          0.048, "Paint_Dark", 12)
-    for x in (-0.75, 0.75):
-        for z in (1.0, 2.0, 3.0, 4.0):
-            bolt(body, "Crossbolt", (x, -0.12, z), "Hazard", 0.035)
+        for z in (1.2, 2.2, 3.2, 4.2):
+            cylinder_between(body, "Mast_Lattice_Crossbrace",
+                             (side * 0.15, 0.0, z), (-side * 0.15, 0.0, z + 0.72),
+                             0.035, "Steel", 10)
     lamp = empty("StatusLight", root, (0.0, 0.0, 5.95))
     cube(lamp, "Pole_Lamp_Housing", (0.0, 0.0, 0.0), (0.44, 0.4, 0.24), "Paint_Dark")
     cylinder(lamp, "Pole_Lamp_Lens", (0.0, -0.22, 0.0), 0.13, 0.07,
@@ -566,31 +686,22 @@ def build_storage():
 
 def build_junction(kind):
     root, body = machine_root()
+    foundation_plate(body, 1.95, 1.95, 0.24)
     add_frame(body, 1.75, 1.75, 0.2, 0.12)
     cube(body, "Junction_Armor", (0.0, 0.0, 0.78), (1.45, 1.45, 1.15), "Paint_Orange")
     for z in (0.32, 1.23):
-        cube(body, "Hazard_Band", (0.0, 0.0, z), (1.55, 1.55, 0.12), "Hazard")
-    ports = [((0.0, -1.0), 1.0), ((-1.0, 0.0), 0.0), ((1.0, 0.0), 0.0)]
-    if kind == "merger":
-        ports = [((0.0, 1.0), 1.0), ((-1.0, 0.0), 0.0), ((1.0, 0.0), 0.0)]
-    for (dx, dy), _unused in ports:
-        if dy:
-            loc = (0.0, dy * 0.95, 0.62)
-            dims = (0.84, 0.76, 0.62)
-        else:
-            loc = (dx * 0.95, 0.0, 0.62)
-            dims = (0.76, 0.84, 0.62)
-        cube(body, "Belt_Mouth", loc, dims, "Rubber")
-        cube(body, "Mouth_Lip", (loc[0], loc[1], 0.98), (dims[0] + 0.06, dims[1] + 0.06, 0.11), "Steel")
-    cube(body, "Flow_Arrow_Shaft", (0.0, 0.0, 1.48), (0.13, 0.62, 0.08), "Hazard")
+        cube(body, "Junction_Armor_Band", (0.0, 0.0, z), (1.55, 1.55, 0.12), "Paint_Dark")
+    cube(body, "Flow_Arrow_Shaft", (0.0, 0.0, 1.48), (0.13, 0.62, 0.08), "Emissive_Status")
     for side in (-1.0, 1.0):
         cube(body, "Flow_Arrow_Head", (side * 0.22, 0.0, 1.48),
-             (0.11, 0.26, 0.08), "Hazard", 0.02, (0.0, 0.0, side * math.radians(38)))
+             (0.11, 0.26, 0.08), "Emissive_Status", 0.02, (0.0, 0.0, side * math.radians(38)))
     for x in (-0.48, 0.48):
         for y in (-0.48, 0.48):
             bolt(body, "Junction_Bolt", (x, y, 1.42), "Steel", 0.045, "Z")
-    for x in (-0.58, 0.58):
-        bolt(body, "Armor_Fastener", (x, 0.0, 1.4), "Hazard", 0.04, "Z")
+    for index in range(12):
+        angle = math.tau * index / 12
+        bolt(body, "Armor_Fastener",
+             (math.cos(angle) * 0.68, math.sin(angle) * 0.68, 1.38), "Steel", 0.035, "Z")
     add_status_light(body, (0.0, 0.0, 1.72))
     return root, (1.8, 1.8, 1.9)
 
@@ -602,18 +713,144 @@ def build_belt():
     cube(belt, "Belt_Surface", (0.0, 0.0, 0.0), (1.45, 1.55, 0.12), "Rubber", 0.025)
     for side in (-1.0, 1.0):
         cube(body, "Side_Rail", (side * 0.79, 0.0, 0.44), (0.12, 1.72, 0.36), "Paint_Dark")
-        cube(body, "Rail_Hazard", (side * 0.79, 0.0, 0.64), (0.1, 1.74, 0.07), "Hazard")
+        cube(body, "Rail_Accent", (side * 0.79, 0.0, 0.64), (0.1, 1.74, 0.07), "Paint_Orange")
     for y in (-0.72, 0.72):
-        cylinder(body, "End_Roller", (0.0, y, 0.26), 0.15, 1.45, "Steel", 20,
+        cylinder(body, "End_Roller", (0.0, y, 0.26), 0.15, 1.45, "Rubber", 20,
                  0.015, (0.0, math.pi / 2.0, 0.0))
+    for index in range(7):
+        y = -0.6 + index * 0.2
+        cylinder(body, "Conveyor_Roller", (0.0, y, 0.26), 0.075, 1.35, "Rubber", 20,
+                 0.012, (0.0, math.pi / 2.0, 0.0))
+    roller_positions = [-0.72, 0.72] + [-0.6 + index * 0.2 for index in range(7)]
+    for y in roller_positions:
+        for side in (-1.0, 1.0):
+            for offset in (0.66, 0.72):
+                torus(body, "Roller_Bearing_Collar", (side * offset, y, 0.26),
+                      0.085, 0.018, "Steel", (0.0, math.pi / 2.0, 0.0))
     for x in (-0.58, 0.58):
         for y in (-0.55, 0.55):
             cube(body, "Support_Leg", (x, y, -0.02), (0.13, 0.13, 0.5), "Steel")
             cube(body, "Foot_Plate", (x, y, -0.27), (0.34, 0.28, 0.1), "Concrete")
     for side in (-1.0, 1.0):
         for y in (-0.58, -0.18, 0.22, 0.62):
-            bolt(body, "Rail_Bolt", (side * 0.87, y, 0.49), "Hazard", 0.035, "Z")
+            bolt(body, "Rail_Bolt", (side * 0.87, y, 0.49), "Steel", 0.035, "Z")
     return root, (1.9, 1.9, 0.9)
+
+
+def build_belt_pole():
+    root, body = machine_root()
+    foundation_plate(body, 0.76, 0.76, 0.18)
+    cube(body, "BeltPole_Column", (0.0, 0.0, 0.62), (0.18, 0.18, 0.92), "Steel", 0.045)
+    for z in (0.28, 0.56, 0.84, 1.05):
+        torus(body, "BeltPole_Collar", (0.0, 0.0, z), 0.15, 0.025, "Paint_Dark")
+    cube(body, "BeltPole_Head", (0.0, 0.0, 1.22), (0.84, 0.62, 0.3), "Paint_Orange", 0.06)
+    cube(body, "BeltPole_Mouth_Recess", (0.0, -0.34, 1.0), (0.62, 0.12, 0.5), "Paint_Dark", 0.035)
+    for side in (-1.0, 1.0):
+        cube(body, "BeltPole_Mouth_Jamb", (side * 0.37, -0.38, 1.0), (0.08, 0.12, 0.62), "Steel", 0.03)
+        cylinder_between(body, "BeltPole_Brace", (side * 0.1, 0.0, 0.28),
+                         (side * 0.38, 0.0, 1.08), 0.04, "Steel", 12)
+    cylinder(body, "BeltPole_Mouth_Roller", (0.0, -0.43, 0.98), 0.075, 0.58,
+             "Rubber", 24, 0.012, (0.0, math.pi / 2.0, 0.0))
+    for side in (-1.0, 1.0):
+        for offset in (0.24, 0.3):
+            torus(body, "BeltPole_Roller_Bearing", (side * offset, -0.43, 0.98),
+                  0.075, 0.014, "Steel", (0.0, math.pi / 2.0, 0.0))
+            torus(body, "BeltPole_Bearing_Race", (side * offset, -0.43, 0.98),
+                  0.092, 0.012, "Paint_Dark", (0.0, math.pi / 2.0, 0.0))
+    for z in (0.78, 1.18):
+        cube(body, "BeltPole_Rubber_Flap", (0.0, -0.46, z), (0.54, 0.035, 0.08), "Rubber", 0.015)
+    cube(body, "BeltPole_Drive_Motor", (0.0, 0.42, 1.08), (0.5, 0.24, 0.42), "Paint_Dark", 0.045)
+    vent_bank(body, (0.0, 0.555, 1.08), 7, 0.34, "Steel")
+    for side in (-1.0, 1.0):
+        for z in (0.8, 1.0, 1.2):
+            bolt(body, "BeltPole_Mouth_Fastener", (side * 0.37, -0.45, z), "Steel", 0.027, "Y")
+    for z in (0.8, 1.18):
+        bolt(body, "BeltPole_Mouth_Fastener", (0.0, -0.45, z), "Steel", 0.027, "Y")
+    for index in range(10):
+        angle = math.tau * index / 10
+        bolt(body, "BeltPole_Base_Bolt",
+             (math.cos(angle) * 0.28, math.sin(angle) * 0.28, 0.2), "Steel", 0.025, "Z")
+    add_status_light(body, (0.0, -0.4, 1.36))
+    return root, (0.9, 0.9, 1.5)
+
+
+def _ore_wedge(parent, name, angle, radius, thickness, rng, slab_count):
+    step = math.tau / slab_count
+    half = step * 0.5 - 0.1 / radius
+    inner = 0.18 + rng.random() * 0.08
+    boundary = [(inner, angle - half)]
+    for index in range(9):
+        fraction = (index + 1.0) / 10.0
+        theta = angle - half + 2.0 * half * fraction
+        theta += rng.uniform(-0.006, 0.006)
+        boundary.append((radius * rng.uniform(0.94, 1.06), theta))
+    boundary.append((inner, angle + half))
+    top = []
+    bottom = []
+    tilt = math.radians(rng.uniform(32.0, 36.0))
+    base_height = -0.72
+    for radial, theta in boundary:
+        rough = rng.uniform(-0.07, 0.07)
+        height = base_height + max(0.0, radial - inner) * math.tan(tilt) + rough
+        top.append((math.cos(theta) * radial, math.sin(theta) * radial, height))
+        bottom.append((math.cos(theta) * radial, math.sin(theta) * radial, height - thickness))
+    center_r = rng.uniform(0.72, 1.15)
+    center = (math.cos(angle) * center_r, math.sin(angle) * center_r,
+              base_height + max(0.0, center_r - inner) * math.tan(tilt) + rng.uniform(-0.04, 0.04))
+    vertices = top + bottom + [center, (center[0], center[1], center[2] - thickness)]
+    top_center = len(vertices) - 2
+    bottom_center = len(vertices) - 1
+    faces = []
+    for index in range(len(boundary) - 1):
+        faces.append((top_center, index, index + 1))
+        faces.append((bottom_center, len(boundary) + index + 1, len(boundary) + index))
+        next_index = (index + 1) % len(boundary)
+        faces.append((index, len(boundary) + index, len(boundary) + next_index, next_index))
+    mesh = bpy.data.meshes.new(name + "_Mesh")
+    mesh.from_pydata(vertices, [], faces)
+    mesh.update()
+    obj = bpy.data.objects.new(name, mesh)
+    bpy.context.collection.objects.link(obj)
+    obj.parent = parent
+    obj.matrix_parent_inverse = Matrix.Identity(4)
+    finish_mesh(obj, "Ore_Surface", 0.045, 2)
+    obj.data.materials.clear()
+    obj.data.materials.append(material("Ore_Iron"))
+    obj.data.materials.append(material("Ore_Surface"))
+    for polygon_index, polygon in enumerate(obj.data.polygons):
+        polygon.material_index = 0 if polygon_index % 3 == 0 else 1
+    return obj
+
+
+def _ore_node_variant(root, name, slab_count, seed):
+    rng = random.Random(seed)
+    variant = empty(name, root)
+    radius_range = {8: (2.78, 2.88), 9: (2.98, 3.08), 10: (3.05, 3.18)}[slab_count]
+    radius = rng.uniform(*radius_range)
+    for index in range(slab_count):
+        angle = math.tau * index / slab_count + rng.uniform(-0.008, 0.008)
+        _ore_wedge(variant, "Ore_Slab_%02d" % index, angle, radius,
+                   rng.uniform(0.5, 0.9), rng, slab_count)
+    for index in range(11):
+        angle = rng.uniform(0.0, math.tau)
+        radial = rng.uniform(0.08, 0.68)
+        bpy.ops.mesh.primitive_ico_sphere_add(subdivisions=1, radius=rng.uniform(0.16, 0.38))
+        rubble = bpy.context.object
+        rubble.name = "Ore_Core_Rubble"
+        rubble.location = (math.cos(angle) * radial, math.sin(angle) * radial, -0.12)
+        rubble.scale = (rng.uniform(0.75, 1.3), rng.uniform(0.72, 1.18), rng.uniform(0.45, 0.95))
+        bpy.ops.object.transform_apply(location=False, rotation=False, scale=True)
+        attach(rubble, variant, rubble.location.copy())
+        finish_mesh(rubble, "Ore_Iron", 0.012, 2)
+    return variant
+
+
+def build_ore_node():
+    root = empty("Ore_Node_Root")
+    _ore_node_variant(root, "OreNode_A", 8, 4127)
+    _ore_node_variant(root, "OreNode_B", 9, 7831)
+    _ore_node_variant(root, "OreNode_C", 10, 22039)
+    return root, (7.0, 7.0, 1.2)
 
 
 def build_hub():
@@ -1008,6 +1245,8 @@ BUILDERS = {
     "splitter": lambda: build_junction("splitter"),
     "merger": lambda: build_junction("merger"),
     "belt": build_belt,
+    "belt_pole": build_belt_pole,
+    "ore_node": build_ore_node,
     "hub": build_hub,
     "drop_pod": build_drop_pod,
     "hand_pick": build_hand_pick,
@@ -1124,12 +1363,18 @@ PORT_FOOTPRINTS = {
     "splitter": (1, 1),
     "merger": (1, 1),
     "belt": (1, 1),
+    "belt_pole": (1, 1),
     "ascent_spire": (6, 6),
 }
 
 
 def _port_specs(kind):
     size = PORT_FOOTPRINTS.get(kind)
+    if kind == "belt_pole":
+        return [
+            {"name": "Port_In_0", "position": (0.0, 0.4), "direction": (0, -1), "height": 1.0, "mouth": True, "width": 0.68},
+            {"name": "Port_Out_0", "position": (0.0, -0.4), "direction": (0, 1), "height": 1.0, "mouth": True, "width": 0.68},
+        ]
     if kind == "power_pole":
         return [
             {"name": "Port_In_0", "position": (-1.0, 0.0), "direction": (-1, 0), "height": 5.62},
@@ -1202,8 +1447,9 @@ def _port_specs(kind):
             "name": "Port_%s_%d" % (label, index),
             "cell": cell,
             "direction": direction,
-            "height": 0.55 if kind in ("splitter", "merger", "belt") else 0.62,
-            "mouth": kind in ("miner_mk1", "smelter", "geo_tap", "storage") or missing_junction_mouth,
+            "height": 0.55 if kind in ("splitter", "merger", "belt") else 1.0 if kind in ("miner_mk1", "smelter", "constructor", "assembler") else 0.62,
+            "mouth": kind in ("miner_mk1", "smelter", "constructor", "assembler",
+                              "geo_tap", "storage", "splitter", "merger") or missing_junction_mouth,
         })
     return specs
 
@@ -1232,19 +1478,30 @@ def add_machine_ports(kind, root, static):
         width = spec.get("width", 0.9)
         depth = 0.16
         bar = 0.12
+        redesigned_machine = kind in ("miner_mk1", "smelter", "constructor", "assembler")
         center_x = x + direction_x * 0.06
         center_y = y - direction_z * 0.06
         if spec.get("simple_mouth", False):
             cube(static, spec["name"] + "_Socket", (center_x, center_y, height),
                  (width - bar * 2.0, depth * 0.6, 0.56), "Rubber", 0.0)
             cube(static, spec["name"] + "_Top_Rail",
-                 (center_x, center_y, height + 0.32), (width, depth, bar), "Hazard", 0.0)
+                 (center_x, center_y, height + 0.32), (width, depth, bar), "Paint_Orange", 0.0)
             cube(static, spec["name"] + "_Bottom_Rail",
                  (center_x, center_y, height - 0.32), (width, depth, bar), "Steel", 0.0)
             continue
         if direction_x:
             cube(static, spec["name"] + "_Socket", (center_x, center_y, height),
-                 (depth * 0.6, width - bar * 2.0, 0.56), "Rubber", 0.025)
+                 (depth * (0.38 if redesigned_machine else 0.6), width - bar * 2.0, 0.56),
+                 "Paint_Dark" if redesigned_machine else "Rubber", 0.025)
+            if redesigned_machine and kind != "smelter":
+                cylinder(static, spec["name"] + "_Roller",
+                         (center_x + direction_x * 0.08, center_y, height - 0.22),
+                         0.055, width * 0.76, "Steel", 16, 0.01, (math.pi / 2.0, 0.0, 0.0))
+                for flap_index in range(3):
+                    flap_y = center_y - width * 0.22 + flap_index * width * 0.22
+                    cube(static, spec["name"] + "_Rubber_Flap",
+                         (center_x + direction_x * 0.11, flap_y, height + 0.12),
+                         (0.07, 0.08, 0.34), "Rubber", 0.025)
             for side in (-1.0, 1.0):
                 cube(static, spec["name"] + "_Jamb",
                      (center_x, center_y + side * (width * 0.5 - bar * 0.5), height),
@@ -1252,10 +1509,22 @@ def add_machine_ports(kind, root, static):
             for side in (-1.0, 1.0):
                 cube(static, spec["name"] + "_Rail",
                      (center_x, center_y, height + side * (0.38 - bar * 0.5)),
-                     (depth, width, bar), "Hazard" if side > 0 else "Steel", 0.025)
+                     (depth, width, bar),
+                     "Paint_Orange" if redesigned_machine and side > 0 else "Hazard" if side > 0 else "Steel",
+                     0.025)
         else:
             cube(static, spec["name"] + "_Socket", (center_x, center_y, height),
-                 (width - bar * 2.0, depth * 0.6, 0.56), "Rubber", 0.025)
+                 (width - bar * 2.0, depth * (0.38 if redesigned_machine else 0.6), 0.56),
+                 "Paint_Dark" if redesigned_machine else "Rubber", 0.025)
+            if redesigned_machine and kind != "smelter":
+                cylinder(static, spec["name"] + "_Roller",
+                         (center_x, center_y - direction_z * 0.08, height - 0.22),
+                         0.055, width * 0.76, "Steel", 16, 0.01, (0.0, math.pi / 2.0, 0.0))
+                for flap_index in range(3):
+                    flap_x = center_x - width * 0.22 + flap_index * width * 0.22
+                    cube(static, spec["name"] + "_Rubber_Flap",
+                         (flap_x, center_y - direction_z * 0.11, height + 0.12),
+                         (0.08, 0.07, 0.34), "Rubber", 0.025)
             for side in (-1.0, 1.0):
                 cube(static, spec["name"] + "_Jamb",
                      (center_x + side * (width * 0.5 - bar * 0.5), center_y, height),
@@ -1263,7 +1532,40 @@ def add_machine_ports(kind, root, static):
             for side in (-1.0, 1.0):
                 cube(static, spec["name"] + "_Rail",
                      (center_x, center_y, height + side * (0.38 - bar * 0.5)),
-                     (width, depth, bar), "Hazard" if side > 0 else "Steel", 0.025)
+                     (width, depth, bar),
+                     "Paint_Orange" if redesigned_machine and side > 0 else "Hazard" if side > 0 else "Steel",
+                     0.025)
+
+
+def _set_ore_preview_material(variant, material_name):
+    for obj in variant.children:
+        if obj.type != "MESH":
+            continue
+        for index, slot_material in enumerate(obj.data.materials):
+            if slot_material and slot_material.name in ("Ore_Iron", "Ore_Copper"):
+                obj.data.materials[index] = material(material_name)
+
+
+def render_ore_node_previews(root, dimensions):
+    variants = [child for child in root.children if child.name.startswith("OreNode_")]
+    hidden_objects = []
+    for variant in variants:
+        if variant.name == "OreNode_A":
+            continue
+        for obj in variant.children:
+            hidden_objects.append((obj, obj.hide_render))
+            obj.hide_render = True
+    iron_variant = next(variant for variant in variants if variant.name == "OreNode_A")
+    _set_ore_preview_material(iron_variant, "Ore_Iron")
+    prepare_preview((0.0, 0.0, dimensions[2] * 0.43), max(dimensions))
+    scene = bpy.context.scene
+    scene.render.filepath = str(PREVIEW_DIR / "ore_node.png")
+    bpy.ops.render.render(write_still=True)
+    _set_ore_preview_material(iron_variant, "Ore_Copper")
+    scene.render.filepath = str(PREVIEW_DIR / "ore_node-copper.png")
+    bpy.ops.render.render(write_still=True)
+    for obj, was_hidden in hidden_objects:
+        obj.hide_render = was_hidden
 
 
 def build_asset(kind, builder):
@@ -1280,7 +1582,7 @@ def build_asset(kind, builder):
     objects = list(bpy.context.scene.objects)
     triangles = model_triangles(objects)
     if kind in {"miner_mk1", "smelter", "constructor", "assembler", "geo_tap",
-                "power_pole", "storage", "splitter", "merger", "belt"} and not 12000 <= triangles <= 40000:
+                "power_pole", "storage", "splitter", "merger", "belt", "belt_pole"} and not 12000 <= triangles <= 40000:
         raise RuntimeError("%s has %d triangles; expected 12,000–40,000" % (kind, triangles))
     TRI_COUNTS[kind] = triangles
     glb_path = MODEL_DIR / (kind + ".glb")
@@ -1297,9 +1599,12 @@ def build_asset(kind, builder):
         export_cameras=False,
         export_lights=False,
     )
-    prepare_preview((0.0, 0.0, dimensions[2] * 0.43), max(dimensions))
-    bpy.context.scene.render.filepath = str(PREVIEW_DIR / (kind + ".png"))
-    bpy.ops.render.render(write_still=True)
+    if kind == "ore_node":
+        render_ore_node_previews(root, dimensions)
+    else:
+        prepare_preview((0.0, 0.0, dimensions[2] * 0.43), max(dimensions))
+        bpy.context.scene.render.filepath = str(PREVIEW_DIR / (kind + ".png"))
+        bpy.ops.render.render(write_still=True)
     if kind == "hands":
         render_hands_turnaround(dimensions)
     print("MODEL %s: %d triangles, %.1f x %.1f x %.1f m" % (

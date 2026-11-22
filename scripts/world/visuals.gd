@@ -146,10 +146,8 @@ func _make_entity_visual(entity: FactoryEntity) -> Node3D:
 		_add_belt_mesh(root, entity)
 	elif entity.kind == "belt_pole":
 		_add_collider(root, size, Vector3(0.0, size.y * 0.5, 0.0))
-		_add_box_part(root, "BeltPoleBase", Vector3(0.82, 0.16, 0.72), Vector3(0.0, 0.08, 0.0), Color("b2b8b8"), 0.8)
-		_add_cylinder(root, "BeltPole", 0.09, 1.45, Vector3(0.0, 0.86, 0.0), Color("3b4145"), 0.7)
-		_add_box_part(root, "BeltPoleHead", Vector3(0.86, 0.3, 0.66), Vector3(0.0, 1.68, 0.0), Color("e8792b"), 0.3)
-		_add_box_part(root, "BeltPoleMouth", Vector3(0.68, 0.24, 0.12), Vector3(0.0, 1.68, -0.39), Color("252a2e"), 0.2)
+		machine_models.build(entity.kind, root, footprint_cells, Vector3.ZERO)
+		_add_port_markers(root, entity)
 	else:
 		var collider_size: Vector3 = Vector3(size.x, maxf(1.0, size.y), size.z)
 		var collider_position: Vector3 = Vector3(0.0, size.y * 0.5, 0.0)
@@ -256,6 +254,22 @@ func _add_belt_mesh(root: Node3D, entity: FactoryEntity) -> void:
 	belt_material.set_shader_parameter("belt_speed", 0.35 if not entity.belt_items.is_empty() else 0.0)
 	deck.material_override = belt_material
 	root.add_child(deck)
+	for distance: int in range(0, ceili(length) + 1):
+		var roller_t: float = clampf(float(distance) / length, 0.0, 1.0)
+		var roller_point: Vector3 = _belt_point(curve, roller_t)
+		var roller_side: Vector3 = Vector3(_belt_tangent(curve, roller_t).z, 0.0,
+			-_belt_tangent(curve, roller_t).x).normalized()
+		var roller: MeshInstance3D = MeshInstance3D.new()
+		roller.name = "BeltRoller"
+		var roller_mesh: CylinderMesh = CylinderMesh.new()
+		roller_mesh.top_radius = 0.045
+		roller_mesh.bottom_radius = 0.045
+		roller_mesh.height = 0.86
+		roller.mesh = roller_mesh
+		roller.position = roller_point + Vector3.UP * 0.08
+		roller.basis = Basis(Quaternion(Vector3.UP, roller_side))
+		roller.material_override = _material("belt_roller", Color("282d30"), 0.18, 0.86)
+		root.add_child(roller)
 	var rail_mesh: MeshInstance3D = MeshInstance3D.new()
 	rail_mesh.mesh = rails.commit()
 	rail_mesh.material_override = _material("belt_rail", Color("b2b8b8"), 0.8, 0.55)
