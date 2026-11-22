@@ -123,6 +123,8 @@ func _ready() -> void:
 		hud.show_toast("Press H for controls · E to interact · B to build.", 6.0)
 	sim.power.apply_launch_flags(OS.get_cmdline_user_args())
 	visuals.refresh()
+	if arguments.has("--capture-v9"):
+		hud.icon_cache.prepared = true
 	for argument: String in OS.get_cmdline_user_args():
 		if argument == "--capture-all":
 			call_deferred("_capture_all")
@@ -135,6 +137,9 @@ func _ready() -> void:
 			break
 		if argument == "--capture-v8":
 			call_deferred("_capture_v8_shots")
+			break
+		if argument == "--capture-v9":
+			call_deferred("_capture_v9_shots")
 			break
 		if argument.begins_with("--capture-"):
 			call_deferred("_capture_screenshot", argument.trim_prefix("--capture-"))
@@ -1196,6 +1201,59 @@ func _capture_v8_shots() -> void:
 		visuals.refresh()
 		_write_capture("aimed-machine-outline")
 		capture_aim_override = false
+	get_tree().quit()
+
+func _capture_v9_shots() -> void:
+	autosave_enabled = false
+	hud.show_toast("", 0.0)
+	if hud.help_panel.visible:
+		hud.toggle_help()
+	player.set_physics_process(false)
+	player.position = Vector3(0.0, terrain.height_at(0.0, 38.0) + 0.1, 38.0)
+	player.rotation.y = 0.0
+	player.pitch = 0.0
+	player.camera.rotation.x = 0.0
+	player.velocity = Vector3.ZERO
+	viewmodel.set_mining_active(false)
+	hotbar_model.selected_index = -1
+	_apply_hotbar_selection(false)
+	await get_tree().create_timer(0.65).timeout
+	await get_tree().process_frame
+	await RenderingServer.frame_post_draw
+	_write_capture("empty-hands")
+
+	hotbar_model.assign(7, "item", "iron_ore")
+	player.inventory["iron_ore"] = 40
+	hotbar_model.selected_index = -1
+	hotbar_model.select_slot(7, unlocked_tiers)
+	_apply_hotbar_selection(false)
+	await get_tree().create_timer(0.65).timeout
+	await get_tree().process_frame
+	await RenderingServer.frame_post_draw
+	_write_capture("held-ore")
+
+	hotbar_model.assign(8, "item", "iron_plate")
+	player.inventory["iron_plate"] = 40
+	hotbar_model.selected_index = -1
+	hotbar_model.select_slot(8, unlocked_tiers)
+	_apply_hotbar_selection(false)
+	await get_tree().create_timer(0.65).timeout
+	await get_tree().process_frame
+	await RenderingServer.frame_post_draw
+	_write_capture("held-plate")
+
+	hotbar_model.selected_index = -1
+	hotbar_model.select_slot(7, unlocked_tiers)
+	_apply_hotbar_selection(false)
+	capture_mining_override = true
+	viewmodel.set_mining_active(true)
+	viewmodel.play_mining_swing()
+	await get_tree().create_timer(0.18).timeout
+	await get_tree().process_frame
+	await RenderingServer.frame_post_draw
+	_write_capture("pick-swing")
+	capture_mining_override = false
+	viewmodel.set_mining_active(false)
 	get_tree().quit()
 
 func _capture_machine_set() -> void:

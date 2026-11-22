@@ -25,8 +25,8 @@ var screen_material: StandardMaterial3D
 var held_item: MeshInstance3D
 var desired_action: Dictionary = {"type": "empty", "id": ""}
 var current_action: Dictionary = {"type": "empty", "id": ""}
-var left_hand_base: Vector3 = Vector3(-0.53, -0.49, -0.61)
-var right_hand_base: Vector3 = Vector3(0.49, -0.49, -0.61)
+var left_hand_base: Vector3 = Vector3(-0.42, -0.28, -0.48)
+var right_hand_base: Vector3 = Vector3(0.42, -0.28, -0.48)
 var mining_pick: Node3D
 var mining_active: bool = false
 var switch_phase: int = 0
@@ -83,16 +83,18 @@ func _process(delta: float) -> void:
 	var idle_y: float = cos(animation_time * 1.4) * 0.005
 	var switch_offset: float = _update_switch(delta)
 	if hand_left != null:
-		hand_left.scale = Vector3.ONE * 0.54
+		hand_left.scale = Vector3.ONE * 0.68
 		hand_left.position = left_hand_base + Vector3(idle_x - mouse_lag.x, bob + idle_y + mouse_lag.y + switch_offset, 0.0)
-		hand_left.rotation = Vector3(-0.12, 0.0, -0.08 + mouse_lag.x * 0.2)
+		hand_left.rotation = Vector3(0.5, -0.75, -0.08 + mouse_lag.x * 0.2)
 	if hand_right != null:
 		var mining_rotation: float = _mining_swing_rotation(delta)
 		var swing_offset: Vector3 = Vector3(0.0, mining_rotation * 0.3, -mining_rotation * 0.1)
-		hand_right.scale = Vector3.ONE * 0.54
+		hand_right.scale = Vector3.ONE * 0.68
 		hand_right.position = right_hand_base + Vector3(idle_x + mouse_lag.x,
 			bob - idle_y + mouse_lag.y + switch_offset, 0.0) + swing_offset
-		hand_right.rotation.x = -0.12 - mining_rotation * 0.4
+		hand_right.rotation.x = 0.5 - mining_rotation * 0.4
+		hand_right.rotation.y = 0.75
+		hand_right.rotation.z = 0.06 + mouse_lag.x * 0.2
 		if build_tool != null:
 			build_tool.rotation.x = mining_rotation * 0.75
 		if mining_pick != null:
@@ -106,8 +108,9 @@ func _process(delta: float) -> void:
 		if screen_icon != null:
 			screen_icon.visible = build_tool.visible
 	if held_item != null:
-		held_item.visible = current_action.get("type", "") == "item"
-		held_item.position = Vector3(-0.24, -0.08, -0.17) if mining_active else Vector3(0.0, 0.26, -0.19)
+		held_item.visible = current_action.get("type", "") == "item" and not mining_active
+		held_item.position = Vector3(0.0, 0.13, -0.43)
+		held_item.rotation = Vector3(-0.18, 0.08, 0.12)
 	_update_screen_icon()
 
 func set_action(action: Dictionary) -> void:
@@ -197,8 +200,8 @@ func _create_overlay() -> void:
 		mining_pick = pick_scene.instantiate() as Node3D
 		mining_pick.name = "MiningPick"
 		hand_right.add_child(mining_pick)
-		mining_pick.position = Vector3(-0.08, 0.08, -0.24)
-		mining_pick.scale = Vector3.ONE * 1.1
+		mining_pick.position = Vector3(-0.08, 0.02, -0.22)
+		mining_pick.scale = Vector3.ONE * 0.82
 		mining_pick.rotation.z = 0.35
 		machine_models.apply_pbr_materials(mining_pick)
 		_set_viewmodel_layers(mining_pick)
@@ -207,8 +210,8 @@ func _create_overlay() -> void:
 		held_item = MeshInstance3D.new()
 		held_item.name = "HeldItem"
 		held_item.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-		held_item.position = Vector3(0.0, 0.26, -0.19)
-		held_item.scale = Vector3.ONE * 0.72
+		held_item.position = Vector3(0.0, 0.13, -0.43)
+		held_item.scale = Vector3.ONE * 1.1
 		hand_right.add_child(held_item)
 		_set_viewmodel_layers(held_item)
 		held_item.visible = false
@@ -265,7 +268,7 @@ func _apply_current_action() -> void:
 	current_action = desired_action.duplicate(true)
 	var action_type: String = str(current_action.get("type", "empty"))
 	if held_item != null:
-		held_item.visible = action_type == "item"
+		held_item.visible = action_type == "item" and not mining_active
 		if held_item.visible:
 			var item_id: String = str(current_action.get("id", ""))
 			held_item.mesh = visuals._item_mesh(item_id)

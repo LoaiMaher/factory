@@ -225,6 +225,8 @@ func _pbr_material(key: String) -> Material:
 		"Paint_Orange": Color("e8792b"), "Paint_Dark": Color("2b2e33"),
 		"Steel": Color("b2b8b8"), "Concrete": Color("77766b"),
 		"Glass": Color("75aeb2"), "Rubber": Color("252826"),
+		"Glove_Charcoal": Color("3f444a"),
+		"Pick_Wood": Color("8b5b32"),
 		"Foliage": Color("49643b"), "Bark": Color("594532"),
 		"Ore_Iron": Color("a75a3d"), "Ore_Copper": Color("5f9c76"),
 		"Ore_Limestone": Color("bcb48a")
@@ -239,6 +241,20 @@ func _pbr_material(key: String) -> Material:
 		paint.normal_scale = 0.08
 		material_cache[key] = paint
 		return paint
+	if key == "Glove_Charcoal":
+		var glove: StandardMaterial3D = StandardMaterial3D.new()
+		glove.albedo_color = paint_tints[key]
+		glove.metallic = 0.02
+		glove.roughness = 0.62
+		material_cache[key] = glove
+		return glove
+	if key == "Pick_Wood":
+		var wood: StandardMaterial3D = StandardMaterial3D.new()
+		wood.albedo_color = paint_tints[key]
+		wood.metallic = 0.0
+		wood.roughness = 0.82
+		material_cache[key] = wood
+		return wood
 	if key == "Hazard":
 		var hazard: ShaderMaterial = ShaderMaterial.new()
 		hazard.shader = load("res://shaders/hazard_stripe.gdshader") as Shader

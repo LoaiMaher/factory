@@ -2,6 +2,7 @@ import math
 import json
 import random
 import sys
+from array import array
 from pathlib import Path
 
 import bpy
@@ -21,6 +22,8 @@ MATERIALS = {
     "Concrete": ((0.35, 0.37, 0.33, 1.0), 0.02, 0.92),
     "Glass": ((0.11, 0.35, 0.39, 1.0), 0.3, 0.18),
     "Rubber": ((0.035, 0.045, 0.043, 1.0), 0.0, 0.86),
+    "Glove_Charcoal": ((0.13, 0.14, 0.15, 1.0), 0.02, 0.62),
+    "Pick_Wood": ((0.42, 0.24, 0.11, 1.0), 0.0, 0.82),
     "Hazard": ((0.95, 0.57, 0.055, 1.0), 0.22, 0.48),
     "Emissive_Furnace": ((1.0, 0.22, 0.025, 1.0), 0.0, 0.28),
     "Emissive_Status": ((0.18, 0.9, 0.33, 1.0), 0.05, 0.2),
@@ -145,13 +148,13 @@ def cylinder_between(parent, name, start, end, radius, mat_name="Steel", vertice
 
 
 def cone(parent, name, location, radius_bottom, radius_top, depth,
-         mat_name="Steel", vertices=20):
+         mat_name="Steel", vertices=20, rotation=(0.0, 0.0, 0.0)):
     bpy.ops.mesh.primitive_cone_add(
         vertices=vertices, radius1=radius_bottom, radius2=radius_top, depth=depth
     )
     obj = bpy.context.object
     obj.name = name
-    attach(obj, parent, location)
+    attach(obj, parent, location, rotation)
     return finish_mesh(obj, mat_name, 0.018, 2, True)
 
 
@@ -803,61 +806,108 @@ def build_hands():
     root = empty("Hands")
     for hand_name, side in (("Hand_L", -1.0), ("Hand_R", 1.0)):
         hand = empty(hand_name, root, (side * 0.28, 0.0, 0.0))
+        right_grip = hand_name == "Hand_R"
         cylinder(hand, "Sleeve_Orange", (0.0, 0.03, -0.07), 0.12, 0.38,
                  "Paint_Orange", 16, 0.025, (math.pi / 2, 0.0, 0.0))
         torus(hand, "Sleeve_Cuff_Seam", (0.0, 0.22, -0.02), 0.12, 0.018,
               "Steel", (math.pi / 2, 0.0, 0.0))
-        cube(hand, "Wrist_Cuff", (0.0, 0.25, -0.02), (0.31, 0.13, 0.23),
-             "Paint_Dark", 0.035)
-        cube(hand, "Cuff_Ridge", (0.0, 0.25, 0.08), (0.27, 0.07, 0.035),
-             "Steel", 0.012)
-        cube(hand, "Glove_Palm", (0.0, 0.39, 0.12), (0.26, 0.24, 0.17),
-             "Rubber", 0.045)
-        cube(hand, "Palm_Pad", (0.0, 0.39, 0.21), (0.19, 0.18, 0.035),
-             "Paint_Dark", 0.018)
+        cylinder(hand, "Wrist_Cuff", (0.0, 0.25, -0.02), 0.145, 0.15,
+                 "Paint_Dark", 20, 0.02, (math.pi / 2, 0.0, 0.0))
+        torus(hand, "Cuff_Ridge", (0.0, 0.31, -0.02), 0.13, 0.012,
+              "Steel", (math.pi / 2, 0.0, 0.0))
+
+        palm_vertices = []
+        palm_faces = []
+        palm_rings = [
+            (0.31, 0.045, 0.035), (0.35, 0.105, 0.068),
+            (0.43, 0.125, 0.078), (0.51, 0.105, 0.066),
+            (0.55, 0.045, 0.035),
+        ]
+        ring_segments = 12
+        for y, radius_x, radius_z in palm_rings:
+            for segment in range(ring_segments):
+                angle = math.tau * segment / ring_segments
+                palm_vertices.append((math.cos(angle) * radius_x, y,
+                                      0.12 + math.sin(angle) * radius_z))
+        for ring in range(len(palm_rings) - 1):
+            for segment in range(ring_segments):
+                first = ring * ring_segments + segment
+                second = ring * ring_segments + (segment + 1) % ring_segments
+                palm_faces.append((first, second, second + ring_segments, first + ring_segments))
+        palm_faces.append(tuple(range(ring_segments - 1, -1, -1)))
+        palm_faces.append(tuple((len(palm_rings) - 1) * ring_segments + index
+                                for index in range(ring_segments)))
+        palm_mesh = bpy.data.meshes.new("Glove_Palm_Tapered_Mesh")
+        palm_mesh.from_pydata(palm_vertices, [], palm_faces)
+        palm_mesh.update()
+        palm = bpy.data.objects.new("Glove_Palm_Tapered", palm_mesh)
+        bpy.context.collection.objects.link(palm)
+        attach(palm, hand, (0.0, 0.0, 0.0))
+        palm.data.materials.append(material("Glove_Charcoal"))
+        for polygon in palm.data.polygons:
+            polygon.use_smooth = True
+        palm_subdivision = palm.modifiers.new("Rounded_Palm", "SUBSURF")
+        palm_subdivision.levels = 1
+
         for finger in range(4):
-            x = (finger - 1.5) * 0.062
-            finger_length = 0.11 if finger in (0, 3) else 0.14
-            cube(hand, "Finger_%d_Base" % finger,
-                 (x, 0.52 + finger_length * 0.18, 0.12),
-                 (0.052, finger_length * 0.62, 0.072), "Rubber", 0.018)
-            cube(hand, "Finger_%d_Knuckle" % finger,
-                 (x, 0.52 + finger_length * 0.57, 0.14),
-                 (0.048, 0.045, 0.078), "Paint_Dark", 0.012)
-            cube(hand, "Finger_%d_Tip" % finger,
-                 (x, 0.52 + finger_length * 0.88, 0.11),
-                 (0.048, finger_length * 0.3, 0.064), "Rubber", 0.018)
-        cube(hand, "Thumb_Base", (side * 0.15, 0.37, 0.11),
-             (0.085, 0.14, 0.09), "Rubber", 0.025,
-             (0.0, 0.0, side * 0.42))
-        cube(hand, "Thumb_Pad", (side * 0.19, 0.45, 0.12),
-             (0.07, 0.09, 0.08), "Paint_Dark", 0.02,
-             (0.0, 0.0, side * 0.36))
-        for finger in range(4):
-            x = (finger - 1.5) * 0.062
-            cube(hand, "Knuckle_Plate_%d" % finger,
-                 (x, 0.5, 0.21), (0.044, 0.065, 0.025),
-                 "Paint_Dark", 0.01)
-        for obj in hand.children:
-            if obj.type == "MESH":
-                for modifier in obj.modifiers:
-                    if modifier.type == "BEVEL":
-                        modifier.segments = 3
+            x = (finger - 1.5) * 0.085
+            inward = -1.0 if x > 0.0 else 1.0
+            curl = 0.5 if right_grip else 0.05
+            points = [
+                Vector((x, 0.50, 0.13)),
+                Vector((x + inward * 0.004, 0.62, 0.12)),
+                Vector((x + inward * 0.012, 0.72, 0.075)),
+                Vector((x + inward * 0.021, 0.74 - 0.07 * curl, 0.035)),
+            ]
+            radii = [0.022, 0.020, 0.018, 0.015]
+            for joint_index, point in enumerate(points):
+                bpy.ops.mesh.primitive_uv_sphere_add(
+                    segments=10, ring_count=6, radius=radii[joint_index])
+                joint = bpy.context.object
+                joint.name = "Finger_%d_Joint_%d" % (finger, joint_index)
+                attach(joint, hand, point)
+                finish_mesh(joint, "Glove_Charcoal", 0.0, 0, True)
+            for segment in range(3):
+                cylinder_between(
+                    hand, "Finger_%d_Segment_%d" % (finger, segment),
+                    points[segment], points[segment + 1],
+                    radii[segment] * 0.86, "Glove_Charcoal", 8)
+
+        inward = -side
+        thumb_points = [
+            Vector((inward * 0.17, 0.36, 0.12)),
+            Vector((inward * 0.14, 0.45, 0.095)),
+            Vector((inward * 0.06, 0.53, 0.055)),
+        ]
+        thumb_radii = [0.034, 0.029, 0.023]
+        for joint_index, point in enumerate(thumb_points):
+            bpy.ops.mesh.primitive_uv_sphere_add(
+                segments=10, ring_count=6, radius=thumb_radii[joint_index])
+            joint = bpy.context.object
+            joint.name = "Thumb_Joint_%d" % joint_index
+            attach(joint, hand, point)
+            finish_mesh(joint, "Glove_Charcoal", 0.0, 0, True)
+        for segment in range(2):
+            cylinder_between(
+                hand, "Thumb_Segment_%d" % segment,
+                thumb_points[segment], thumb_points[segment + 1],
+                thumb_radii[segment] * 0.86, "Glove_Charcoal", 8)
     return root, (1.45, 1.0, 0.75)
 
 
 def build_hand_pick():
     root = empty("HandPick")
-    cylinder(root, "Pick_Handle", (0.0, 0.0, -0.2), 0.035, 0.62,
-             "Paint_Dark", 16, 0.012)
-    cylinder(root, "Pick_Grip", (0.0, -0.01, -0.2), 0.052, 0.26,
+    cone(root, "Pick_Wooden_Haft", (0.0, 0.0, 0.0), 0.048, 0.038, 0.78,
+         "Pick_Wood", 16)
+    cylinder(root, "Pick_Grip", (0.0, -0.01, 0.08), 0.06, 0.24,
              "Rubber", 16, 0.012)
-    cube(root, "Pick_Head", (0.0, 0.0, 0.15), (0.36, 0.085, 0.12),
+    cylinder_between(root, "Pick_Steel_Head",
+                     (-0.13, 0.0, 0.28), (0.18, 0.0, 0.28),
+                     0.045, "Steel", 16)
+    cube(root, "Pick_Chisel_End", (-0.18, 0.0, 0.28), (0.14, 0.11, 0.085),
          "Steel", 0.035)
-    cube(root, "Pick_Tip_L", (-0.19, 0.0, 0.15), (0.12, 0.075, 0.07),
-         "Paint_Dark", 0.025, (0.0, 0.0, -0.3))
-    cube(root, "Pick_Tip_R", (0.19, 0.0, 0.15), (0.12, 0.075, 0.07),
-         "Paint_Dark", 0.025, (0.0, 0.0, 0.3))
+    cone(root, "Pick_Point", (0.27, 0.0, 0.28), 0.05, 0.0, 0.32,
+         "Steel", 16, (0.0, math.pi / 2.0, 0.0))
     return root, (0.52, 0.52, 0.52)
 
 def build_tool():
@@ -1163,9 +1213,67 @@ def build_asset(kind, builder):
     prepare_preview((0.0, 0.0, dimensions[2] * 0.43), max(dimensions))
     bpy.context.scene.render.filepath = str(PREVIEW_DIR / (kind + ".png"))
     bpy.ops.render.render(write_still=True)
+    if kind == "hands":
+        render_hands_turnaround(dimensions)
     print("MODEL %s: %d triangles, %.1f x %.1f x %.1f m" % (
         kind, triangles, dimensions[0], dimensions[1], dimensions[2]
     ))
+
+
+def render_hands_turnaround(dimensions):
+    scene = bpy.context.scene
+    camera = scene.camera
+    target = Vector((0.0, 0.0, dimensions[2] * 0.43))
+    radius = max(dimensions) * 2.2
+    camera.data.ortho_scale = max(dimensions) * 1.35
+    old_location = camera.location.copy()
+    old_rotation = camera.rotation_euler.copy()
+    old_resolution = (scene.render.resolution_x, scene.render.resolution_y)
+    side = 512
+    scene.render.resolution_x = side
+    scene.render.resolution_y = side
+    angle_paths = []
+    angle_pixels = []
+    for index, angle_degrees in enumerate((0.0, 90.0, 180.0, 270.0)):
+        angle = math.radians(angle_degrees)
+        camera.location = target + Vector((
+            math.cos(angle) * radius,
+            math.sin(angle) * radius,
+            radius * 0.42,
+        ))
+        camera.rotation_euler = (target - camera.location).to_track_quat("-Z", "Y").to_euler()
+        angle_path = PREVIEW_DIR / (".hands-angle-%d.png" % index)
+        scene.render.filepath = str(angle_path)
+        bpy.ops.render.render(write_still=True)
+        image = bpy.data.images.load(str(angle_path), check_existing=False)
+        pixels = array("f", [0.0]) * (side * side * 4)
+        image.pixels.foreach_get(pixels)
+        angle_pixels.append(pixels)
+        angle_paths.append((image, angle_path))
+
+    sheet_width = side * 2
+    sheet = bpy.data.images.new("Hands_Turnaround", width=sheet_width,
+                                height=side * 2, alpha=True, float_buffer=False)
+    sheet_pixels = array("f", [0.0]) * (sheet_width * side * 2 * 4)
+    for index, pixels in enumerate(angle_pixels):
+        x_offset = (index % 2) * side
+        y_offset = (index // 2) * side
+        for row in range(side):
+            source_start = row * side * 4
+            target_start = ((y_offset + row) * sheet_width + x_offset) * 4
+            sheet_pixels[target_start:target_start + side * 4] = \
+                pixels[source_start:source_start + side * 4]
+    sheet.pixels.foreach_set(sheet_pixels)
+    sheet.filepath_raw = str(PREVIEW_DIR / "hands-turnaround.png")
+    sheet.file_format = "PNG"
+    sheet.save()
+    bpy.data.images.remove(sheet)
+    for image, angle_path in angle_paths:
+        bpy.data.images.remove(image)
+        angle_path.unlink(missing_ok=True)
+    camera.location = old_location
+    camera.rotation_euler = old_rotation
+    scene.render.resolution_x, scene.render.resolution_y = old_resolution
 
 
 def build_requested_assets():
