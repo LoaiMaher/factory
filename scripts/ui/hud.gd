@@ -38,9 +38,11 @@ var unlocked_tiers: int = 0
 func _ready() -> void:
 	root = Control.new()
 	root.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	root.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(root)
 	var crosshair: Label = Label.new()
 	crosshair.text = "+"
+	crosshair.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	crosshair.add_theme_font_size_override("font_size", 28)
 	crosshair.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	crosshair.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
@@ -49,6 +51,7 @@ func _ready() -> void:
 	crosshair.size = Vector2(40, 48)
 	root.add_child(crosshair)
 	info_label = Label.new()
+	info_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	info_label.set_anchors_preset(Control.PRESET_TOP_RIGHT)
 	info_label.position = Vector2(-500, 18)
 	info_label.size = Vector2(480, 126)
@@ -56,14 +59,17 @@ func _ready() -> void:
 	info_label.add_theme_font_size_override("font_size", 14)
 	root.add_child(info_label)
 	hint_label = Label.new()
+	hint_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	hint_label.position = Vector2(18, 660)
 	hint_label.add_theme_font_size_override("font_size", 18)
 	root.add_child(hint_label)
 	build_info_label = Label.new()
+	build_info_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	build_info_label.position = Vector2(18, 690)
 	build_info_label.add_theme_font_size_override("font_size", 15)
 	root.add_child(build_info_label)
 	toast_label = Label.new()
+	toast_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	toast_label.position = Vector2(20, 840)
 	toast_label.add_theme_font_size_override("font_size", 18)
 	toast_label.add_theme_color_override("font_color", Color("f2d992"))
@@ -127,6 +133,7 @@ func open_entity(entity_id: int) -> void:
 	var entity: FactoryEntity = sim.entities[entity_id]
 	_set_panel("%s diagnostics" % entity.kind.replace("_", " ").capitalize())
 	entity_status_label = RichTextLabel.new()
+	entity_status_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	entity_status_label.bbcode_enabled = true
 	entity_status_label.fit_content = true
 	entity_status_label.custom_minimum_size.y = 30.0
@@ -265,6 +272,7 @@ func refresh_entity_panel() -> void:
 
 func _create_panel() -> void:
 	panel = PanelContainer.new()
+	panel.mouse_filter = Control.MOUSE_FILTER_STOP
 	panel.set_anchors_preset(Control.PRESET_CENTER)
 	panel.position = Vector2(-310.0, -255.0)
 	panel.size = Vector2(620.0, 510.0)
@@ -279,6 +287,7 @@ func _create_panel() -> void:
 
 func _create_build_menu() -> void:
 	build_menu = PanelContainer.new()
+	build_menu.mouse_filter = Control.MOUSE_FILTER_STOP
 	build_menu.position = Vector2(220.0, 130.0)
 	build_menu.size = Vector2(520.0, 420.0)
 	build_menu.visible = false
@@ -296,10 +305,12 @@ func _create_build_menu() -> void:
 
 func _create_help_panel() -> void:
 	help_panel = PanelContainer.new()
+	help_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	help_panel.position = Vector2(18.0, 84.0)
 	help_panel.custom_minimum_size = Vector2(720.0, 150.0)
 	root.add_child(help_panel)
 	var guide: VBoxContainer = VBoxContainer.new()
+	guide.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	help_panel.add_child(guide)
 	guide.add_child(_label("PLANETARY FIELD GUIDE", 19))
 	guide.add_child(_label("WASD move · Shift sprint · Space jump · Mouse look\nE interact / mine · B build · R rotate · F dismantle · X dismantle mode\nTab inventory and craft · F5 save · F9 load · H toggle this guide", 15))
@@ -307,6 +318,7 @@ func _create_help_panel() -> void:
 func _update_hotbar() -> void:
 	if hotbar_label == null:
 		hotbar_label = Label.new()
+		hotbar_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		hotbar_label.add_theme_font_size_override("font_size", 14)
 		hotbar_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		hotbar_label.set_anchors_preset(Control.PRESET_BOTTOM_WIDE)
@@ -331,6 +343,7 @@ func _set_panel(title: String) -> void:
 
 func _label(text_value: String, font_size: int) -> Label:
 	var label: Label = Label.new()
+	label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	label.text = text_value
 	label.add_theme_font_size_override("font_size", font_size)
 	label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
