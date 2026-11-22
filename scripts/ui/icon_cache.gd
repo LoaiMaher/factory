@@ -72,7 +72,7 @@ func prepare(host: Node, machine_models: MachineModels, visuals: FactoryVisuals)
 		item.material_override = visuals._item_material(item_id)
 		item_root.add_child(item)
 		scene.add_child(item_root)
-		_frame_preview(camera, item_root, item.mesh.get_aabb().size)
+		_frame_preview(camera, item_root, item.mesh.get_aabb().size, true)
 		await RenderingServer.frame_post_draw
 		_store_viewport_icon(viewport, "item", item_id)
 		item_root.queue_free()
@@ -96,14 +96,16 @@ func _building_preview(id: String, machine_models: MachineModels, visuals: Facto
 		return null
 	return root
 
-func _frame_preview(camera: Camera3D, preview: Node3D, dimensions: Vector3) -> void:
+func _frame_preview(camera: Camera3D, preview: Node3D, dimensions: Vector3, item_icon: bool = false) -> void:
 	preview.position = Vector3.ZERO
 	preview.rotation = Vector3.ZERO
 	preview.rotation.y = deg_to_rad(34.0)
-	var height: float = maxf(dimensions.y, 0.5)
+	var height: float = maxf(dimensions.y, 0.05 if item_icon else 0.5)
 	var radius: float = maxf(dimensions.x, dimensions.z)
-	var target: Vector3 = Vector3(0.0, height * 0.38, 0.0)
-	var distance: float = maxf(2.2, maxf(radius, height) * 1.35)
+	var target: Vector3 = Vector3.ZERO if item_icon else Vector3(0.0, height * 0.38, 0.0)
+	var distance: float = maxf(1.7, maxf(radius, height) * 1.35)
+	if item_icon:
+		distance = maxf(0.32, maxf(radius, height) * 1.5)
 	camera.position = target + Vector3(distance * 0.74, distance * 0.48, distance)
 	camera.look_at(target, Vector3.UP)
 

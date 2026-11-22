@@ -803,12 +803,10 @@ def build_hands():
     root = empty("Hands")
     for hand_name, side in (("Hand_L", -1.0), ("Hand_R", 1.0)):
         hand = empty(hand_name, root, (side * 0.28, 0.0, 0.0))
-        cube(hand, "Sleeve_Orange", (0.0, 0.03, -0.07), (0.32, 0.37, 0.2),
-             "Paint_Orange", 0.055)
-        cube(hand, "Sleeve_Armor", (0.0, 0.02, 0.04), (0.27, 0.23, 0.045),
-             "Paint_Orange", 0.025)
-        cube(hand, "Sleeve_Seam", (0.0, -0.14, -0.17), (0.29, 0.035, 0.035),
-             "Hazard", 0.008)
+        cylinder(hand, "Sleeve_Orange", (0.0, 0.03, -0.07), 0.12, 0.38,
+                 "Paint_Orange", 16, 0.025, (math.pi / 2, 0.0, 0.0))
+        torus(hand, "Sleeve_Cuff_Seam", (0.0, 0.22, -0.02), 0.12, 0.018,
+              "Steel", (math.pi / 2, 0.0, 0.0))
         cube(hand, "Wrist_Cuff", (0.0, 0.25, -0.02), (0.31, 0.13, 0.23),
              "Paint_Dark", 0.035)
         cube(hand, "Cuff_Ridge", (0.0, 0.25, 0.08), (0.27, 0.07, 0.035),
@@ -840,8 +838,27 @@ def build_hands():
             cube(hand, "Knuckle_Plate_%d" % finger,
                  (x, 0.5, 0.21), (0.044, 0.065, 0.025),
                  "Paint_Dark", 0.01)
+        for obj in hand.children:
+            if obj.type == "MESH":
+                for modifier in obj.modifiers:
+                    if modifier.type == "BEVEL":
+                        modifier.segments = 3
     return root, (1.45, 1.0, 0.75)
 
+
+def build_hand_pick():
+    root = empty("HandPick")
+    cylinder(root, "Pick_Handle", (0.0, 0.0, -0.2), 0.035, 0.62,
+             "Paint_Dark", 16, 0.012)
+    cylinder(root, "Pick_Grip", (0.0, -0.01, -0.2), 0.052, 0.26,
+             "Rubber", 16, 0.012)
+    cube(root, "Pick_Head", (0.0, 0.0, 0.15), (0.36, 0.085, 0.12),
+         "Steel", 0.035)
+    cube(root, "Pick_Tip_L", (-0.19, 0.0, 0.15), (0.12, 0.075, 0.07),
+         "Paint_Dark", 0.025, (0.0, 0.0, -0.3))
+    cube(root, "Pick_Tip_R", (0.19, 0.0, 0.15), (0.12, 0.075, 0.07),
+         "Paint_Dark", 0.025, (0.0, 0.0, 0.3))
+    return root, (0.52, 0.52, 0.52)
 
 def build_tool():
     root = empty("BuildTool")
@@ -896,6 +913,7 @@ BUILDERS = {
     "belt": build_belt,
     "hub": build_hub,
     "drop_pod": build_drop_pod,
+    "hand_pick": build_hand_pick,
     "ascent_spire": build_spire,
     "tree_conifer_01": lambda: build_conifer(0),
     "tree_conifer_02": lambda: build_conifer(1),
@@ -1125,7 +1143,7 @@ def build_asset(kind, builder):
             join_group(group, group.name + "_Mesh")
     objects = list(bpy.context.scene.objects)
     triangles = model_triangles(objects)
-    if not (kind.startswith("tree_") or kind.startswith("grass_") or kind in ("hands", "build_tool")) and not 2000 <= triangles <= 15000:
+    if not (kind.startswith("tree_") or kind.startswith("grass_") or kind in ("hands", "build_tool", "hand_pick")) and not 2000 <= triangles <= 15000:
         raise RuntimeError("%s has %d triangles; expected 2,000–15,000" % (kind, triangles))
     TRI_COUNTS[kind] = triangles
     glb_path = MODEL_DIR / (kind + ".glb")
