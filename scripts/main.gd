@@ -119,7 +119,7 @@ func _process(delta: float) -> void:
 			hud.show_toast("Hand-mined 1 %s." % Items.item_name(item_id), 1.0)
 	elif not mining_node.is_empty():
 		hand_mine_elapsed = 0.0
-		mining_node.clear()
+		mining_node = {}
 	if dismantle_pending and Input.is_key_pressed(KEY_F):
 		dismantle_elapsed += delta
 		if dismantle_elapsed >= 0.35:
