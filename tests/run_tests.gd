@@ -10,6 +10,8 @@ func _initialize() -> void:
 
 func _run_all() -> void:
 	_test_placement_and_ports()
+	_test_glb_model_ports()
+	_test_ore_node_model()
 	_test_deposit_reservations()
 	_test_belt_validation_and_flow()
 	_test_splitter_merger_backpressure()
@@ -42,9 +44,59 @@ func _test_placement_and_ports() -> void:
 	_check("edge-touching footprints are allowed", bool(edge["ok"]), str(edge))
 	var port: Dictionary = sim.port_world(existing, "out0")
 	_check("port transform uses metre-based local position and normal",
-		port.get("pos", Vector3.ZERO).is_equal_approx(Vector3(-1.0, 0.62, 2.0))
+		port.get("pos", Vector3.ZERO).is_equal_approx(Vector3(-1.0, 1.0, 2.0))
 		and port.get("normal", Vector3.ZERO).is_equal_approx(Vector3.BACK),
 		str(port))
+	_finish_group()
+
+func _test_glb_model_ports() -> void:
+	var model_kinds: Array[String] = [
+		"miner_mk1", "smelter", "constructor", "assembler", "storage", "geo_tap",
+		"splitter", "merger", "belt_pole", "power_pole", "spire"
+	]
+	for kind: String in model_kinds:
+		var asset_name: String = "ascent_spire" if kind == "spire" else kind
+		var packed: PackedScene = load("res://assets/models/%s.glb" % asset_name) as PackedScene
+		if packed == null:
+			_check("%s model asset exists" % kind, false, asset_name)
+			continue
+		var model: Node3D = packed.instantiate() as Node3D
+		for definition: Dictionary in BuildingDefs.all().get(kind, {}).get("ports", []):
+			var direction: String = str(definition["dir"])
+			var index: int = int(str(definition["id"]).trim_prefix(direction))
+			var port: Node3D = model.find_child("Port_%s_%d" % [direction.capitalize(), index], true, false) as Node3D
+			if port == null:
+				_check("%s %s GLB port exists" % [kind, definition["id"]], false, str(model.get_children()))
+				continue
+			var transform: Transform3D = port.transform
+			var ancestor: Node = port.get_parent()
+			while ancestor != null and ancestor != model:
+				transform = (ancestor as Node3D).transform * transform
+				ancestor = ancestor.get_parent()
+			var normal: Vector3 = (transform.basis * Vector3.FORWARD).normalized()
+			_check("%s %s GLB port matches BuildingDefs within 5 cm" % [kind, definition["id"]],
+				transform.origin.distance_to(definition["pos"]) <= 0.05
+				and normal.distance_to(definition["normal"]) <= 0.05,
+				str([transform.origin, definition["pos"], normal, definition["normal"]]))
+		model.free()
+	_finish_group()
+
+func _test_ore_node_model() -> void:
+	var packed: PackedScene = load("res://assets/models/ore_node.glb") as PackedScene
+	_check("radial ore-node GLB is available", packed != null, "assets/models/ore_node.glb")
+	if packed != null:
+		var model: Node3D = packed.instantiate() as Node3D
+		for variant: String in ["OreNode_A", "OreNode_B", "OreNode_C"]:
+			var part: Node3D = model.find_child(variant, true, false) as Node3D
+			var meshes: Array[Node] = part.find_children("*", "MeshInstance3D", true, false) if part != null else []
+			_check("%s contains radial slab geometry" % variant,
+				part != null and not meshes.is_empty()
+				and (meshes[0] as MeshInstance3D).mesh.get_surface_count() > 0,
+				str(meshes.size()))
+		model.free()
+	_check("shared ore-node shader is available",
+		load("res://shaders/resource_node.gdshader") is Shader,
+		"shaders/resource_node.gdshader")
 	_finish_group()
 
 func _test_deposit_reservations() -> void:

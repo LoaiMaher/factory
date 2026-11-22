@@ -13,7 +13,6 @@ uniform sampler2D rock_roughness : repeat_enable, filter_linear_mipmap;
 uniform sampler2D sand_albedo : source_color, repeat_enable, filter_linear_mipmap;
 uniform sampler2D sand_normal : hint_normal, repeat_enable, filter_linear_mipmap;
 uniform sampler2D sand_roughness : repeat_enable, filter_linear_mipmap;
-uniform sampler2D ore_overlay : source_color, filter_linear, repeat_disable;
 uniform float texture_scale = 0.12;
 
 varying vec3 world_position;
@@ -89,8 +88,6 @@ void fragment() {
 	vec4 weights = vec4(grass_weight, forest_weight, rock_weight, sand_weight) / weight_total;
 
 	ALBEDO = grass_color * weights.x + forest_color * weights.y + rock_color * weights.z + sand_color * weights.w;
-	vec4 ore_patch = texture(ore_overlay, (world_position.xz + vec2(512.0)) / 1024.0);
-	ALBEDO = mix(ALBEDO, ore_patch.rgb, ore_patch.a);
 	float grass_rough = texture(grass_roughness, ground_uv).r;
 	float forest_rough = texture(forest_roughness, forest_uv).r;
 	float rock_rough = texture(rock_roughness, world_position.xz * tiling).r;

@@ -484,7 +484,6 @@ func _build_nodes() -> void:
 		nodes.append(definition)
 		if not bool(definition.get("hidden", false)):
 			_make_node_visual(definition)
-	_update_ore_overlay()
 
 func _make_node_visual(definition: Dictionary) -> void:
 	if DisplayServer.get_name() == "headless":
@@ -494,36 +493,72 @@ func _make_node_visual(definition: Dictionary) -> void:
 	root.position = point
 	root.name = "%s_%s" % [definition["item"], definition["purity"]]
 	root.set_meta("resource_node", definition)
-	var tint: Color = Color("9b5945") if definition["item"] == "iron_ore" else Color("4f8b83") if definition["item"] == "copper_ore" else Color("c6bea5")
-	for index: int in range(12):
-		var chunk: MeshInstance3D = MeshInstance3D.new()
-		var chunk_mesh: SphereMesh = SphereMesh.new()
-		chunk_mesh.radius = 0.14
-		chunk_mesh.height = 0.24
-		chunk_mesh.radial_segments = 7
-		chunk_mesh.rings = 4
-		chunk.mesh = chunk_mesh
-		var angle: float = TAU * float(index) / 12.0
-		var radial: float = 0.45 + float(index % 3) * 0.18
-		chunk.position = Vector3(cos(angle) * radial, 0.08, sin(angle) * radial)
-		chunk.scale = Vector3(1.1, 0.85 + float(index % 2) * 0.35, 0.9)
-		var chunk_material: StandardMaterial3D = StandardMaterial3D.new()
-		chunk_material.albedo_color = tint.lightened(0.18 if index % 2 == 0 else 0.0)
-		chunk_material.roughness = 0.94
-		chunk.material_override = chunk_material
-		root.add_child(chunk)
+	var packed: PackedScene = load("res://assets/models/ore_node.glb") as PackedScene
+	if packed == null:
+		push_error("Missing Blender model: ore_node")
+		return
+	var model: Node3D = packed.instantiate() as Node3D
+	model.name = "OreNodeModel"
+	root.add_child(model)
+	var purity: String = str(definition["purity"])
+	var variant_name: String = "OreNode_A" if purity == "impure" else "OreNode_C" if purity == "pure" else ["OreNode_A", "OreNode_B", "OreNode_C"][int(definition["id"]) % 3]
+	var active_part: Node3D = null
+	for variant: String in ["OreNode_A", "OreNode_B", "OreNode_C"]:
+		var part: Node3D = model.find_child(variant, true, false) as Node3D
+		if part == null:
+			push_error("Ore node model missing variant: " + variant)
+			continue
+		part.visible = variant == variant_name
+		if not part.visible:
+			continue
+		active_part = part
+		var purity_scale: float = 0.8 if purity == "impure" else 1.2 if purity == "pure" else 1.0
+		part.scale = Vector3.ONE * purity_scale
+		for mesh_node: Node in part.find_children("*", "MeshInstance3D", true, false):
+			var mesh: MeshInstance3D = mesh_node as MeshInstance3D
+			var ore_material: ShaderMaterial = ShaderMaterial.new()
+			ore_material.shader = load("res://shaders/resource_node.gdshader") as Shader
+			var item: String = str(definition["item"])
+			ore_material.set_shader_parameter("ore_tint", _ore_tint(item))
+			ore_material.set_shader_parameter("patina_tint", Color("358876"))
+			ore_material.set_shader_parameter("patina_strength", 0.55 if item == "copper_ore" else 0.0)
+			ore_material.set_shader_parameter("vein_glow", 0.18 if purity == "pure" else 0.0)
+			mesh.material_override = ore_material
+	var normal: Vector3 = _terrain_normal(point.x, point.z)
+	root.basis = Basis(Quaternion(Vector3.UP, normal))
 	var collision_body: StaticBody3D = StaticBody3D.new()
 	collision_body.collision_layer = 2
-	var collision_shape: CollisionShape3D = CollisionShape3D.new()
-	var patch_shape: BoxShape3D = BoxShape3D.new()
-	patch_shape.size = Vector3(5.4, 0.3, 5.4)
-	collision_shape.shape = patch_shape
-	collision_shape.position.y = 0.14
-	collision_body.add_child(collision_shape)
+	var collision_faces: PackedVector3Array = PackedVector3Array()
+	for mesh_node: Node in active_part.find_children("*", "MeshInstance3D", true, false):
+		var mesh_instance: MeshInstance3D = mesh_node as MeshInstance3D
+		if mesh_instance.mesh == null:
+			continue
+		var mesh_transform: Transform3D = mesh_instance.transform
+		var ancestor: Node = mesh_instance.get_parent()
+		while ancestor != null and ancestor != root:
+			mesh_transform = (ancestor as Node3D).transform * mesh_transform
+			ancestor = ancestor.get_parent()
+		for surface_index: int in range(mesh_instance.mesh.get_surface_count()):
+			var arrays: Array = mesh_instance.mesh.surface_get_arrays(surface_index)
+			var vertices: PackedVector3Array = arrays[Mesh.ARRAY_VERTEX]
+			var indices: PackedInt32Array = arrays[Mesh.ARRAY_INDEX]
+			if indices.is_empty():
+				for vertex: Vector3 in vertices:
+					collision_faces.append(mesh_transform * vertex)
+			else:
+				for triangle_index: int in range(0, indices.size(), 3):
+					for vertex_index: int in range(3):
+						collision_faces.append(mesh_transform * vertices[indices[triangle_index + vertex_index]])
+	if not collision_faces.is_empty():
+		var collision_shape: CollisionShape3D = CollisionShape3D.new()
+		var slab_shape: ConcavePolygonShape3D = ConcavePolygonShape3D.new()
+		slab_shape.set_faces(collision_faces)
+		collision_shape.shape = slab_shape
+		collision_body.add_child(collision_shape)
 	root.add_child(collision_body)
 	var label: Label3D = Label3D.new()
 	label.text = "%s · %s" % [Items.item_name(str(definition["item"])).replace(" Ore", ""), str(definition["purity"]).capitalize()]
-	label.position = Vector3(0.0, 0.72, 0.0)
+	label.position = Vector3(0.0, 1.85, 0.0)
 	label.font_size = 30
 	label.pixel_size = 0.009
 	label.billboard = BaseMaterial3D.BILLBOARD_ENABLED
@@ -536,33 +571,18 @@ func _make_node_visual(definition: Dictionary) -> void:
 	root.add_child(label)
 	add_child(root)
 
-func _update_ore_overlay() -> void:
-	if terrain_material == null:
-		return
-	var image: Image = Image.create(1024, 1024, false, Image.FORMAT_RGBA8)
-	image.fill(Color(0.0, 0.0, 0.0, 0.0))
-	for site: Dictionary in nodes:
-		if bool(site.get("hidden", false)):
-			continue
-		var point: Vector3 = site["position"]
-		var center_x: int = roundi(point.x + WORLD_HALF_EXTENT)
-		var center_y: int = roundi(point.z + WORLD_HALF_EXTENT)
-		var ore_color: Color = Color("936044") if site["item"] == "iron_ore" else Color("4a8579") if site["item"] == "copper_ore" else Color("b9b29b")
-		var radius: int = 7
-		for y: int in range(maxi(0, center_y - radius), mini(1024, center_y + radius + 1)):
-			for x: int in range(maxi(0, center_x - radius), mini(1024, center_x + radius + 1)):
-				var delta: Vector2 = Vector2(float(x - center_x), float(y - center_y))
-				var distance: float = delta.length()
-				if distance > float(radius):
-					continue
-				var soft_edge: float = 1.0 - _smoothstep(4.0, float(radius), distance)
-				var crack: float = 0.68 + 0.32 * absf(sin(delta.x * 0.72 + sin(delta.y * 0.53) * 2.1))
-				var alpha: float = soft_edge * crack * 0.78
-				var previous: Color = image.get_pixel(x, y)
-				image.set_pixel(x, y, Color(ore_color.r, ore_color.g, ore_color.b, maxf(previous.a, alpha)))
-	var texture: ImageTexture = ImageTexture.create_from_image(image)
-	texture.resource_name = "Ore_Site_Overlay"
-	terrain_material.set_shader_parameter("ore_overlay", texture)
+func _ore_tint(item: String) -> Color:
+	match item:
+		"iron_ore":
+			return Color("9b5945")
+		"copper_ore":
+			return Color("b87333")
+		"limestone":
+			return Color("c6bea5")
+		"caterium_ore":
+			return Color("d8bb4b")
+		_:
+			return Color("b89445")
 
 func _build_boulders() -> void:
 	var rng: RandomNumberGenerator = RandomNumberGenerator.new()

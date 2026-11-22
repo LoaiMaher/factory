@@ -383,6 +383,13 @@ func _update_grass(force: bool) -> void:
 				continue
 			if Vector2(x, z).distance_to(terrain.LAKE_CENTER) < 78.0:
 				continue
+			var overlaps_resource_site: bool = false
+			for site: Vector2 in terrain.resource_sites:
+				if Vector2(x, z).distance_to(site) < 4.2:
+					overlaps_resource_site = true
+					break
+			if overlaps_resource_site:
+				continue
 			var position: Vector3 = Vector3(x, terrain.height_at(x, z), z)
 			var scale: float = rng.randf_range(0.72, 1.22)
 			var basis: Basis = Basis(Vector3.UP, rng.randf_range(0.0, TAU)).scaled(Vector3(scale, scale, scale))

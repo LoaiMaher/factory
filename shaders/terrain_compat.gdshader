@@ -13,8 +13,6 @@ uniform sampler2D rock_roughness : repeat_enable, filter_linear_mipmap;
 uniform sampler2D sand_albedo : source_color, repeat_enable, filter_linear_mipmap;
 uniform sampler2D sand_normal : hint_normal, repeat_enable, filter_linear_mipmap;
 uniform sampler2D sand_roughness : repeat_enable, filter_linear_mipmap;
-uniform sampler2D ore_overlay : source_color, filter_linear, repeat_disable;
-
 varying vec3 world_position;
 varying vec3 world_normal;
 varying vec4 terrain_masks;
@@ -80,8 +78,6 @@ void fragment() {
 	}
 
 	ALBEDO = albedo;
-	vec4 ore_patch = texture(ore_overlay, (world_position.xz + vec2(512.0)) / 1024.0);
-	ALBEDO = mix(ALBEDO, ore_patch.rgb, ore_patch.a);
 	ROUGHNESS = roughness;
 	NORMAL_MAP = normalize(mapped_normal) * 0.5 + 0.5;
 	NORMAL_MAP_DEPTH = 0.38;
