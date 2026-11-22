@@ -14,6 +14,9 @@ var item_mesh_cache: Dictionary = {}
 var item_material_cache: Dictionary = {}
 var building_definitions: Dictionary = BuildingDefs.all()
 var machine_models: MachineModels = MachineModels.new()
+var viewer_position: Vector3 = Vector3.ZERO
+var aimed_entity_id: int = -1
+var outline_material: ShaderMaterial
 var interpolation_alpha: float = 0.0
 var cable_visual: MeshInstance3D
 var cable_mesh: ImmediateMesh
@@ -30,7 +33,7 @@ func add_preview_port_markers(root: Node3D, kind: String) -> void:
 	for node: Node in root.find_children("*", "MeshInstance3D", true, false):
 		(node as MeshInstance3D).cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 
-func refresh() -> void:
+func refresh(delta: float = 0.05) -> void:
 	if sim == null or DisplayServer.get_name() == "headless":
 		return
 	var live_ids: Dictionary = {}
@@ -54,24 +57,84 @@ func refresh() -> void:
 			visual.rotation.y = entity.yaw
 		if entity.kind == "spire":
 			_update_spire(visual, sim.spire_stage)
+		var distance: float = visual.global_position.distance_to(viewer_position)
 		if entity.kind in ["belt_mk1", "belt_mk2"]:
 			var belt_surface: MeshInstance3D = visual.find_child("BeltSurface", true, false) as MeshInstance3D
 			if belt_surface != null and belt_surface.material_override is ShaderMaterial:
 				var belt_shader: ShaderMaterial = belt_surface.material_override
 				belt_shader.set_shader_parameter("belt_speed", 0.9 if not entity.belt_items.is_empty() else 0.0)
 		else:
-			machine_models.animate(visual, entity)
+			var state: Dictionary = sim.visual_state(entity.id)
+			machine_models.animate(visual, state, delta, distance)
 		var indicator: Label3D = visual.get_node_or_null("Status") as Label3D
 		if indicator != null:
-			indicator.text = "●" if entity.status == "Running" else "●"
-			indicator.modulate = Color("73d38f") if entity.status == "Running" else Color("e4be58") if entity.status.begins_with("Low") else Color("e46e5d")
-			indicator.visible = entity.status != "No recipe" and entity.status != "Stopped"
+			var state: Dictionary = sim.visual_state(entity.id)
+			var status: String = str(state.get("status", "Stopped"))
+			var aimed: bool = entity.id == aimed_entity_id
+			var alpha: float = 1.0 if aimed else clampf((25.0 - distance) / 5.0, 0.0, 1.0)
+			indicator.text = _status_glyph(status, bool(state.get("powered", false)))
+			indicator.modulate = _status_color(status, bool(state.get("powered", false)), alpha)
+			indicator.visible = distance <= 25.0 or aimed
+		_set_aim_outline(visual, entity.id == aimed_entity_id)
 	for raw_id: Variant in entity_nodes.keys():
 		if not live_ids.has(raw_id):
 			(entity_nodes[raw_id] as Node).queue_free()
 			entity_nodes.erase(raw_id)
 	_update_item_instances()
 	_refresh_power_cables()
+
+func _status_glyph(status: String, powered: bool) -> String:
+	if status == "Running":
+		return "●"
+	if status.begins_with("Output full"):
+		return "×"
+	if status.begins_with("Missing input") or status.begins_with("Low power"):
+		return "!"
+	if status.begins_with("No power") or not powered:
+		return "⚡"
+	return "○"
+
+func _status_color(status: String, powered: bool, alpha: float) -> Color:
+	if status == "Running":
+		return Color(0.3, 1.0, 0.48, alpha)
+	if status.begins_with("No power") or not powered:
+		return Color(1.0, 0.25, 0.22, alpha)
+	if status.begins_with("Output full") or status.begins_with("Missing input") or status.begins_with("Low power"):
+		return Color(1.0, 0.66, 0.18, alpha)
+	return Color(0.35, 0.4, 0.37, alpha)
+
+func _set_aim_outline(root: Node3D, enabled: bool) -> void:
+	if bool(root.get_meta("outline_enabled", false)) == enabled:
+		return
+	root.set_meta("outline_enabled", enabled)
+	if enabled and outline_material == null:
+		var shader: Shader = load("res://shaders/machine_outline.gdshader") as Shader
+		outline_material = ShaderMaterial.new()
+		outline_material.shader = shader
+	for raw_mesh: Node in root.find_children("*", "MeshInstance3D", true, false):
+		var mesh: MeshInstance3D = raw_mesh as MeshInstance3D
+		mesh.material_overlay = outline_material if enabled else null
+
+func spawn_mining_dust(world_position: Vector3) -> void:
+	var particles: CPUParticles3D = CPUParticles3D.new()
+	particles.name = "MiningImpactDust"
+	particles.position = to_local(world_position)
+	particles.one_shot = true
+	particles.amount = 12
+	particles.lifetime = 0.55
+	particles.direction = Vector3.UP
+	particles.spread = 38.0
+	particles.initial_velocity_min = 0.55
+	particles.initial_velocity_max = 1.4
+	particles.gravity = Vector3(0.0, -2.2, 0.0)
+	particles.mesh = SphereMesh.new()
+	var material: StandardMaterial3D = StandardMaterial3D.new()
+	material.albedo_color = Color(0.55, 0.48, 0.37, 0.65)
+	material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	particles.material_override = material
+	add_child(particles)
+	particles.finished.connect(particles.queue_free)
+	particles.emitting = true
 
 func _make_entity_visual(entity: FactoryEntity) -> Node3D:
 	var root: Node3D = Node3D.new()
@@ -460,8 +523,8 @@ func _item_mesh(item_id: String) -> Mesh:
 			var ore: SphereMesh = SphereMesh.new()
 			ore.radius = 0.16
 			ore.height = 0.28
-			ore.radial_segments = 6
-			ore.rings = 4
+			ore.radial_segments = 5
+			ore.rings = 3
 			mesh = ore
 		"iron_ingot":
 			var ingot: BoxMesh = BoxMesh.new()
@@ -494,6 +557,8 @@ func _item_material(item_id: String) -> StandardMaterial3D:
 	material.albedo_color = item_colors.get(item_id, item_data.get("color", Color("9b8d73")))
 	material.metallic = 0.22 if item_id in ["iron_ingot", "iron_plate", "iron_rod"] else 0.04
 	material.roughness = 0.72
+	if item_id in ["iron_ore", "copper_ore", "limestone"]:
+		material.roughness = 0.86
 	item_material_cache[item_id] = material
 	return material
 

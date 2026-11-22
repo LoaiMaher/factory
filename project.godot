@@ -27,6 +27,11 @@ renderer/rendering_method.web="gl_compatibility"
 
 power_bypass=true
 
+[factory/audio]
+
+master_volume=1.0
+sfx_volume=1.0
+
 [input]
 
 move_forward={

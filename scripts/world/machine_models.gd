@@ -17,11 +17,25 @@ func build(kind: String, root: Node3D, size: Vector2i, body_position: Vector3) -
 	model.position = body_position
 	root.add_child(model)
 	apply_pbr_materials(model)
+	_ensure_status_light(kind, model)
 	_validate_ports(kind, model, root)
-	if kind == "smelter":
-		_add_particles(model, "SmelterSmoke", Vector3(0.85, 4.8, -0.65))
-	elif kind == "geo_tap":
-		_add_particles(model, "GeoSteam", Vector3(0.0, 4.0, 0.0))
+	match kind:
+		"miner_mk1":
+			var drill: Node3D = model.find_child("Drill", true, false) as Node3D
+			if drill != null:
+				_add_particles(drill, "MinerDust", Vector3(0.0, -0.82, 0.0), 12, Color("9b8569"))
+		"smelter":
+			_add_particles(model, "SmelterSmoke", Vector3(0.85, 4.8, -0.65), 18, Color("82827a"))
+		"constructor":
+			var press: Node3D = model.find_child("Press", true, false) as Node3D
+			if press != null:
+				_add_particles(press, "ConstructorSparks", Vector3(0.0, -0.58, 0.08), 7, Color("ffb34d"))
+		"assembler":
+			var arm: Node3D = model.find_child("Arm_A", true, false) as Node3D
+			if arm != null:
+				_add_particles(arm, "AssemblerSparks", Vector3(0.0, -1.18, 0.08), 7, Color("ffb34d"))
+		"geo_tap":
+			_add_particles(model, "GeoSteam", Vector3(0.0, 4.0, 0.0), 20, Color("d4d1c5"))
 	if kind.begins_with("belt_"):
 		var belt_surface: MeshInstance3D = model.find_child("Belt_Mesh", true, false) as MeshInstance3D
 		if belt_surface != null:
@@ -31,40 +45,141 @@ func build(kind: String, root: Node3D, size: Vector2i, body_position: Vector3) -
 			belt_material.set_shader_parameter("belt_speed", 0.0)
 			belt_surface.material_override = belt_material
 
-func animate(root: Node3D, entity: FactoryEntity) -> void:
-	var running: bool = entity.status == "Running"
+func animate(root: Node3D, visual_state: Dictionary, delta: float, distance: float) -> void:
+	var target_productivity: float = clampf(float(visual_state.get("productivity", 0.0)), 0.0, 1.0)
+	var productivity: float = float(root.get_meta("visual_productivity", 0.0))
+	productivity = move_toward(productivity, target_productivity, delta / 0.6)
+	root.set_meta("visual_productivity", productivity)
+	var phase: float = float(root.get_meta("machine_animation_phase", 0.0)) + delta * productivity
+	root.set_meta("machine_animation_phase", phase)
+	var status: String = str(visual_state.get("status", "Stopped"))
+	var powered: bool = bool(visual_state.get("powered", false))
+
 	var drill: Node3D = root.find_child("Drill", true, false) as Node3D
 	if drill != null:
-		drill.rotation.y = Time.get_ticks_msec() * 0.002 if running else 0.0
+		if not drill.has_meta("factory_base_position"):
+			drill.set_meta("factory_base_position", drill.position)
+		var drill_base: Vector3 = drill.get_meta("factory_base_position")
+		drill.rotation.y += delta * 6.0 * productivity
+		drill.position.y = drill_base.y + sin(phase * 18.0) * 0.025 * productivity
 	var piston: Node3D = root.find_child("Piston", true, false) as Node3D
 	if piston != null:
-		piston.position.y = 4.15 + (sin(Time.get_ticks_msec() * 0.006) * 0.24 if running else 0.0)
+		if not piston.has_meta("factory_base_position"):
+			piston.set_meta("factory_base_position", piston.position)
+		var piston_base: Vector3 = piston.get_meta("factory_base_position")
+		piston.position.y = piston_base.y + sin(phase * 8.0) * 0.22 * productivity
 	var press: Node3D = root.find_child("Press", true, false) as Node3D
 	if press != null:
-		press.position.y = 2.5 - (absf(sin(Time.get_ticks_msec() * 0.004)) * 0.7 if running else 0.0)
+		if not press.has_meta("factory_base_position"):
+			press.set_meta("factory_base_position", press.position)
+		var press_base: Vector3 = press.get_meta("factory_base_position")
+		press.position.y = press_base.y - absf(sin(phase * 5.0)) * 0.7 * productivity
 	for arm_name: String in ["Arm_A", "Arm_B"]:
 		var arm: Node3D = root.find_child(arm_name, true, false) as Node3D
 		if arm != null:
-			arm.rotation.y = sin(Time.get_ticks_msec() * 0.0018 + (0.0 if arm_name == "Arm_A" else PI)) * 0.55 if running else 0.0
+			if not arm.has_meta("factory_base_rotation"):
+				arm.set_meta("factory_base_rotation", arm.rotation)
+			var arm_base: Vector3 = arm.get_meta("factory_base_rotation")
+			var phase_offset: float = 0.0 if arm_name == "Arm_A" else PI
+			arm.rotation.y = arm_base.y + sin(phase * 1.8 + phase_offset) * 0.55 * productivity
 	var turbine: Node3D = root.find_child("Turbine", true, false) as Node3D
 	if turbine != null:
-		turbine.rotation.y = Time.get_ticks_msec() * 0.003 if running else 0.0
-	for particle_name: String in ["SmelterSmoke", "GeoSteam"]:
+		turbine.rotation.y += delta * 4.0 * productivity
+	var belt: Node3D = root.find_child("Belt", true, false) as Node3D
+	if belt != null:
+		belt.position.x = sin(phase * 18.0) * 0.02 * productivity
+	var in_range: bool = distance <= 60.0
+	for particle_name: String in ["SmelterSmoke", "GeoSteam", "MinerDust",
+			"ConstructorSparks", "AssemblerSparks"]:
 		var particles: CPUParticles3D = root.find_child(particle_name, true, false) as CPUParticles3D
-		if particles != null:
-			particles.emitting = running
+		if particles == null:
+			continue
+		var emit: bool = productivity > 0.02 and in_range
+		if particle_name in ["ConstructorSparks", "AssemblerSparks"]:
+			emit = emit and sin(phase * 5.0) > 0.82
+		particles.emitting = emit
 	var glow: Node3D = root.find_child("Furnace_Glow", true, false) as Node3D
 	if glow != null:
 		for child: Node in glow.get_children():
 			if child is MeshInstance3D:
-				(child as MeshInstance3D).material_override = _emission_material(
-					Color("ff6320") if running else Color("33342f"), running)
-	var status_light: Node3D = root.find_child("StatusLight", true, false) as Node3D
-	if status_light != null:
-		for child: Node in status_light.get_children():
-			if child is MeshInstance3D:
-				var tint: Color = Color("4ddd75") if running else Color("d58a35") if entity.status != "Stopped" else Color("434943")
-				(child as MeshInstance3D).material_override = _emission_material(tint, running or entity.status != "Stopped")
+				var mesh: MeshInstance3D = child as MeshInstance3D
+				if not mesh.has_meta("factory_glow_material"):
+					var glow_material: StandardMaterial3D = _emission_material(Color("ff6320"), true)
+					mesh.set_meta("factory_glow_material", glow_material)
+					mesh.material_override = glow_material
+				var material: StandardMaterial3D = mesh.get_meta("factory_glow_material")
+				var glow_color: Color = Color("ff6320").lerp(Color("33342f"), 1.0 - productivity)
+				material.albedo_color = glow_color
+				material.emission = glow_color
+				material.emission_energy_multiplier = 1.8 * productivity
+				material.emission_enabled = productivity > 0.01
+	_update_status_light(root, status, powered, Time.get_ticks_msec() * 0.001)
+
+func _ensure_status_light(kind: String, model: Node3D) -> void:
+	if kind in ["belt_mk1", "belt_mk2", "spire"] or model.find_child("StatusLight", true, false) != null:
+		return
+	var light_positions: Dictionary = {
+		"storage": Vector3(1.55, 2.85, 0.0),
+		"splitter": Vector3(0.0, 1.65, 0.0),
+		"merger": Vector3(0.0, 1.65, 0.0)
+	}
+	var light: Node3D = Node3D.new()
+	light.name = "StatusLight"
+	light.position = light_positions.get(kind, Vector3(0.0, BuildingDefs.size_of(kind).y + 0.25, 0.0))
+	model.add_child(light)
+	var lens: MeshInstance3D = MeshInstance3D.new()
+	lens.name = "StatusLens"
+	var sphere: SphereMesh = SphereMesh.new()
+	sphere.radius = 0.14
+	sphere.height = 0.28
+	sphere.radial_segments = 12
+	sphere.rings = 6
+	lens.mesh = sphere
+	lens.material_override = _emission_material(Color("434943"), false)
+	light.add_child(lens)
+
+func _update_status_light(root: Node3D, status: String, powered: bool, phase: float) -> void:
+	var light: Node3D = root.find_child("StatusLight", true, false) as Node3D
+	if light == null:
+		return
+	var lens: MeshInstance3D = light.find_child("StatusLens", true, false) as MeshInstance3D
+	if lens == null:
+		for child: Node in light.find_children("*", "MeshInstance3D", true, false):
+			if str(child.name).to_lower().contains("lens"):
+				lens = child as MeshInstance3D
+				break
+	if lens == null:
+		return
+	var color: Color = Color("434943")
+	var blink_rate: float = 0.0
+	var enabled: bool = true
+	if status.begins_with("No power") or not powered:
+		color = Color("f0443e")
+		blink_rate = 4.0
+	elif status.begins_with("Output full"):
+		color = Color("ffb236")
+		blink_rate = 7.0
+	elif status.begins_with("Missing input") or status.begins_with("Low power"):
+		color = Color("ffb236")
+		blink_rate = 1.4
+	elif status == "Running":
+		color = Color("4ddd75")
+	else:
+		enabled = false
+	var pulse: float = 1.0 if blink_rate <= 0.0 else 0.25 + 0.75 * maxf(0.0, sin(phase * blink_rate))
+	var material: StandardMaterial3D = null
+	if lens.has_meta("factory_status_material"):
+		material = lens.get_meta("factory_status_material") as StandardMaterial3D
+	else:
+		material = StandardMaterial3D.new()
+		material.roughness = 0.24
+		material.metallic = 0.06
+		lens.set_meta("factory_status_material", material)
+		lens.material_override = material
+	material.albedo_color = color if enabled else Color("434943")
+	material.emission = color
+	material.emission_enabled = enabled
+	material.emission_energy_multiplier = 1.8 * pulse if enabled else 0.0
 
 func apply_pbr_materials(model: Node) -> void:
 	for node: Node in model.find_children("*", "MeshInstance3D", true, false):
@@ -150,24 +265,30 @@ func _emission_material(color: Color, enabled: bool) -> StandardMaterial3D:
 	material.emission_energy_multiplier = 1.8 if enabled else 0.0
 	return material
 
-func _add_particles(parent: Node3D, node_name: String, offset: Vector3) -> void:
+func _add_particles(parent: Node3D, node_name: String, offset: Vector3, amount: int, color: Color) -> void:
 	var particles: CPUParticles3D = CPUParticles3D.new()
 	particles.name = node_name
 	particles.position = offset
-	particles.amount = 18
-	particles.lifetime = 2.2
+	particles.amount = amount
+	particles.lifetime = 1.4 if node_name in ["ConstructorSparks", "AssemblerSparks"] else 2.2
 	particles.direction = Vector3(0.0, 1.0, 0.0)
-	particles.spread = 14.0
-	particles.initial_velocity_min = 0.35
-	particles.initial_velocity_max = 0.95
+	particles.spread = 24.0 if node_name in ["ConstructorSparks", "AssemblerSparks"] else 14.0
+	particles.initial_velocity_min = 0.45 if node_name in ["ConstructorSparks", "AssemblerSparks"] else 0.35
+	particles.initial_velocity_max = 1.8 if node_name in ["ConstructorSparks", "AssemblerSparks"] else 0.95
 	particles.gravity = Vector3(0.0, 0.18, 0.0)
+	particles.emitting = false
+	particles.fixed_fps = 30
 	var puff: SphereMesh = SphereMesh.new()
-	puff.radius = 0.12
-	puff.height = 0.24
+	puff.radius = 0.07 if node_name in ["ConstructorSparks", "AssemblerSparks"] else 0.12
+	puff.height = 0.14 if node_name in ["ConstructorSparks", "AssemblerSparks"] else 0.24
 	particles.mesh = puff
 	var smoke: StandardMaterial3D = StandardMaterial3D.new()
-	smoke.albedo_color = Color("82827a")
+	smoke.albedo_color = color
 	smoke.roughness = 1.0
+	smoke.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	smoke.emission_enabled = node_name in ["ConstructorSparks", "AssemblerSparks"]
+	smoke.emission = color
+	smoke.emission_energy_multiplier = 1.2
 	particles.material_override = smoke
 	parent.add_child(particles)
 

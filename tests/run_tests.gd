@@ -16,6 +16,7 @@ func _run_all() -> void:
 	_test_production_and_port_routing()
 	_test_save_migration_and_refunds()
 	_test_diagnostics()
+	_test_visual_state()
 	_test_power_bypass()
 	_test_ore_boulders()
 	_test_foliage_state()
@@ -489,6 +490,43 @@ func _test_diagnostics() -> void:
 		lines.size() == 3 and lines[1].contains("Input Iron Ore: 0.0/min — needs 30.0/min")
 		and lines[2].contains("Output Iron Ingot: 0.0/min"), str(lines))
 	_check("unpowered machine has an actionable status", sim.status_for(smelter).begins_with("No power: needs 4 MW"), sim.status_for(smelter))
+	_finish_group()
+
+func _test_visual_state() -> void:
+	var sim: FactorySim = FactorySim.new()
+	var smelter: int = sim.add_entity("smelter", Vector3.ZERO)
+	sim.tick(0.05)
+	var idle: Dictionary = sim.visual_state(smelter)
+	_check("visual state exposes idle status without productivity",
+		idle.get("status", "") == "No recipe"
+		and float(idle.get("productivity", -1.0)) == 0.0
+		and bool(idle.get("powered", false)), str(idle))
+	sim.entities[smelter].recipe_id = "iron_ingot"
+	sim.tick(0.05)
+	var starved: Dictionary = sim.visual_state(smelter)
+	_check("visual state distinguishes input starvation",
+		str(starved.get("status", "")).begins_with("Missing input")
+		and float(starved.get("productivity", -1.0)) == 0.0, str(starved))
+	sim.entities[smelter].input_buffer["iron_ore"] = 1
+	sim.power.bypass = false
+	sim.tick(0.05)
+	var unpowered: Dictionary = sim.visual_state(smelter)
+	_check("visual state marks an unpowered consumer",
+		str(unpowered.get("status", "")).begins_with("No power")
+		and not bool(unpowered.get("powered", true))
+		and float(unpowered.get("productivity", -1.0)) == 0.0, str(unpowered))
+	sim.power.bypass = true
+	sim.tick(0.05)
+	var running: Dictionary = sim.visual_state(smelter)
+	_check("visual state scales productivity with powered running status",
+		running.get("status", "") == "Running"
+		and is_equal_approx(float(running.get("productivity", 0.0)), 1.0)
+		and bool(running.get("powered", false)), str(running))
+	var missing: Dictionary = sim.visual_state(-1)
+	_check("missing visual entities return a stopped state",
+		missing.get("status", "") == "Stopped"
+		and float(missing.get("productivity", -1.0)) == 0.0
+		and not bool(missing.get("powered", true)), str(missing))
 	_finish_group()
 
 func _test_power_bypass() -> void:

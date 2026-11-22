@@ -13,6 +13,7 @@ var machine_models: MachineModels = MachineModels.new()
 var foliage: FactoryFoliage
 var herd: BorebackHerd
 var hud: FactoryHUD
+var audio_manager: Node
 var viewmodel: FactoryViewmodel
 var build_system: FactoryBuildSystem = FactoryBuildSystem.new()
 var hotbar_model: HotbarModel = HotbarModel.new()
@@ -36,6 +37,7 @@ var autosave_enabled: bool = true
 var save_backup_pending: bool = false
 var unlocked_tiers: int = 0
 var hand_mine_elapsed: float = 0.0
+var hand_mining_swing_started: bool = false
 var spire_entity_id: int = -1
 var first_sighting: bool = false
 var show_help: bool = true
@@ -47,6 +49,8 @@ var dismantle_elapsed: float = 0.0
 var dismantle_pending: bool = false
 var demo_smelter_id: int = -1
 var capture_preview_override: bool = false
+var capture_aim_override: bool = false
+var capture_mining_override: bool = false
 
 func _ready() -> void:
 	FactoryPlayer.configure_input()
@@ -87,6 +91,11 @@ func _ready() -> void:
 	hud.tier_requested.connect(_buy_tier)
 	hud.craft_requested.connect(_hand_craft)
 	hud.quit_requested.connect(_quit_game)
+	audio_manager = load("res://scripts/world/audio_manager.gd").new() as Node
+	audio_manager.name = "FactoryAudio"
+	audio_manager.call("setup", sim, player)
+	add_child(audio_manager)
+	hud.audio_manager = audio_manager
 	viewmodel = FactoryViewmodel.new()
 	viewmodel.name = "Viewmodel"
 	viewmodel.setup(player, hud, visuals, machine_models, hotbar_model, build_system)
@@ -123,6 +132,9 @@ func _ready() -> void:
 		if argument == "--capture-v7":
 			call_deferred("_capture_v7_shots")
 			break
+		if argument == "--capture-v8":
+			call_deferred("_capture_v8_shots")
+			break
 		if argument.begins_with("--capture-"):
 			call_deferred("_capture_screenshot", argument.trim_prefix("--capture-"))
 			break
@@ -143,8 +155,10 @@ func _physics_process(delta: float) -> void:
 		if sim.spire_stage >= milestone_definitions.size():
 			hud.show_toast("Era 2 — Heavy Industry coming soon. Keep building.", 10.0)
 	visuals.interpolation_alpha = sim_accumulator / SIM_STEP
-	visuals.refresh()
 	_update_aim_status(delta)
+	visuals.viewer_position = player.global_position
+	visuals.aimed_entity_id = aimed_entity_id
+	visuals.refresh(delta)
 	if not capture_preview_override:
 		_update_preview()
 	_update_sightings()
@@ -152,6 +166,9 @@ func _physics_process(delta: float) -> void:
 func _process(delta: float) -> void:
 	if not mining_boulder_id.is_empty() and Input.is_key_pressed(KEY_E):
 		hand_mine_elapsed += delta
+		if hand_mine_elapsed >= 0.42 and not hand_mining_swing_started:
+			hand_mining_swing_started = true
+			viewmodel.play_mining_swing()
 		if hand_mine_elapsed >= 0.6:
 			var result: Dictionary = terrain.mine_boulder(mining_boulder_id)
 			if result.is_empty():
@@ -160,15 +177,21 @@ func _process(delta: float) -> void:
 				return
 			var item_id: String = str(result["item"])
 			player.inventory[item_id] = int(player.inventory.get(item_id, 0)) + 1
+			var impact_position: Vector3 = player.camera.global_position - player.camera.global_transform.basis.z * 1.8
+			audio_manager.call("play_one_shot", "pick_hit", impact_position)
+			visuals.spawn_mining_dust(impact_position)
 			hud.refresh_hotbar()
-			viewmodel.play_mining_swing()
 			hand_mine_elapsed -= 0.6
+			hand_mining_swing_started = false
 			hud.show_toast("Hand-mined 1 %s · %d left." % [Items.item_name(item_id), int(result["remaining"])], 1.0)
 			if bool(result["depleted"]):
 				mining_boulder_id = ""
 	elif not mining_boulder_id.is_empty():
 		hand_mine_elapsed = 0.0
+		hand_mining_swing_started = false
 		mining_boulder_id = ""
+	viewmodel.set_mining_active(capture_mining_override or
+		(not mining_boulder_id.is_empty() and Input.is_key_pressed(KEY_E)))
 	if dismantle_pending and Input.is_key_pressed(KEY_F):
 		dismantle_elapsed += delta
 		if dismantle_elapsed >= 0.35:
@@ -179,6 +202,10 @@ func _process(delta: float) -> void:
 		dismantle_elapsed = 0.0
 
 func _update_aim_status(delta: float) -> void:
+	if capture_aim_override:
+		var entity: FactoryEntity = sim.entities.get(aimed_entity_id) as FactoryEntity
+		hud.hint_label.text = "%s  ·  %s  [E]" % [entity.kind.replace("_", " ").capitalize(), entity.status] if entity != null else ""
+		return
 	var hit: Dictionary = _aim_hit(6.0)
 	var found_id: int = -1
 	if not hit.is_empty():
@@ -496,6 +523,7 @@ func _build_belt_click(hit: Dictionary) -> void:
 		hud.show_toast(str(result["reason"]))
 	else:
 		_pay_cost(total_cost, 1)
+		audio_manager.call("play_one_shot", "placement_confirm", ground_position)
 		belt_start = {"id": pole_id, "port": "out0"}
 
 func _nearest_port(position: Vector3, direction: String, include_occupied: bool = false) -> Dictionary:
@@ -534,6 +562,7 @@ func _entity_from_hit(hit: Dictionary) -> FactoryEntity:
 func _place_building(hit: Dictionary) -> void:
 	var cost: Dictionary = building_definitions[build_system.selected]["cost"]
 	if not _can_afford(cost, 1):
+		audio_manager.call("play_one_shot", "invalid_placement", player.global_position)
 		hud.show_toast("Not enough materials.")
 		return
 	var candidate: Vector3 = placement.snap_position(hit["position"], sim)
@@ -543,6 +572,7 @@ func _place_building(hit: Dictionary) -> void:
 		candidate = Vector3(node_position.x, terrain.height_at(node_position.x, node_position.z), node_position.z)
 	var validation: Dictionary = placement.fit_and_validate(build_system.selected, candidate, sim, terrain, player.global_position, node_id)
 	if not validation["ok"]:
+		audio_manager.call("play_one_shot", "invalid_placement", player.global_position)
 		hud.show_toast(str(validation["reason"]))
 		return
 	var entity_data: Dictionary = {"node_id": node_id}
@@ -550,10 +580,12 @@ func _place_building(hit: Dictionary) -> void:
 		entity_data["supply"] = 50.0
 	var entity_id: int = sim.add_entity(build_system.selected, validation["position"], placement.yaw, entity_data)
 	if entity_id < 0:
+		audio_manager.call("play_one_shot", "invalid_placement", player.global_position)
 		var check: Dictionary = sim.check_place(build_system.selected, validation["position"], placement.yaw, node_id)
 		hud.show_toast(str(check["reason"]))
 		return
 	_pay_cost(cost, 1)
+	audio_manager.call("play_one_shot", "placement_confirm", validation["position"])
 	foliage.remove_in_world_footprint(validation["position"], placement.yaw, BuildingDefs.size_of(build_system.selected))
 	hud.show_toast("Placed %s." % build_system.selected.replace("_", " "))
 
@@ -846,6 +878,7 @@ func _dismantle_aimed() -> void:
 	var refund: Dictionary = sim.remove_entity_with_refund(entity_id)
 	for item_id: String in refund:
 		player.inventory[item_id] = int(player.inventory.get(item_id, 0)) + int(refund[item_id])
+	audio_manager.call("play_one_shot", "dismantle", player.global_position)
 	hud.show_toast("Dismantled · connected belts, materials and buffers refunded.")
 
 func _save_game() -> void:
@@ -1052,6 +1085,107 @@ func _capture_v7_shots() -> void:
 	await get_tree().create_timer(0.45).timeout
 	_write_capture("inventory-hover-assign")
 	hud.close_panel()
+	get_tree().quit()
+
+func _capture_v8_shots() -> void:
+	autosave_enabled = false
+	hud.show_toast("", 0.0)
+	if hud.help_panel.visible:
+		hud.toggle_help()
+	if sim.entities.size() <= 1:
+		_build_demo_factory()
+	hud.show_toast("", 0.0)
+	for _step: int in range(240):
+		sim.tick(0.05)
+	visuals.refresh()
+	var factory_target: Vector3 = Vector3(-17.0, terrain.height_at(-17.0, 9.0) + 2.0, 9.0)
+	_set_capture_view(factory_target, factory_target + Vector3(5.0, 3.5, 8.0))
+	await get_tree().create_timer(0.45).timeout
+	_write_capture("running-factory")
+
+	var constructor: FactoryEntity = null
+	for entity: FactoryEntity in sim.entities.values():
+		if entity.kind == "constructor":
+			constructor = entity
+			break
+	if constructor != null:
+		constructor.input_buffer.clear()
+		sim.tick(0.05)
+		visuals.refresh()
+		hud.open_entity(constructor.id)
+		var target: Vector3 = constructor.position + Vector3(0.0, 1.8, 0.0)
+		_set_capture_view(target, target + Vector3(5.0, 2.5, 7.0))
+		await get_tree().create_timer(0.35).timeout
+		_write_capture("starved-constructor")
+		hud.close_panel()
+
+	sim.power.bypass = false
+	var geothermal_ids: Array[int] = []
+	for entity: FactoryEntity in sim.entities.values():
+		if entity.kind == "geo_tap":
+			geothermal_ids.append(entity.id)
+	for entity_id: int in geothermal_ids:
+		sim.remove_entity(entity_id)
+	if demo_smelter_id >= 0 and sim.entities.has(demo_smelter_id):
+		var unpowered: FactoryEntity = sim.entities[demo_smelter_id]
+		unpowered.input_buffer["iron_ore"] = 1
+		sim.tick(0.05)
+		visuals.refresh()
+		hud.open_entity(demo_smelter_id)
+		var target: Vector3 = unpowered.position + Vector3(0.0, 1.5, 0.0)
+		_set_capture_view(target, target + Vector3(5.0, 2.5, 7.0))
+		await get_tree().create_timer(0.35).timeout
+		_write_capture("unpowered-smelter")
+		hud.close_panel()
+
+	sim.power.bypass = true
+	visuals.refresh()
+	_set_capture_view(factory_target, factory_target + Vector3(5.0, 3.5, 8.0))
+	await get_tree().create_timer(0.2).timeout
+	_write_capture("power-bypass-hud")
+
+	player.position = Vector3(0.0, terrain.height_at(0.0, 38.0) + 0.1, 38.0)
+	player.rotation.y = 0.0
+	player.pitch = 0.0
+	player.camera.rotation.x = 0.0
+	hotbar_model.selected_index = -1
+	_apply_hotbar_selection(false)
+	await get_tree().create_timer(0.25).timeout
+	_write_capture("empty-hands")
+	hotbar_model.assign(7, "item", "iron_ore")
+	player.inventory["iron_ore"] = 40
+	hotbar_model.select_slot(7, unlocked_tiers)
+	_apply_hotbar_selection(false)
+	await get_tree().create_timer(0.4).timeout
+	_write_capture("held-ore")
+	capture_mining_override = true
+	viewmodel.set_mining_active(true)
+	viewmodel.play_mining_swing()
+	await get_tree().create_timer(0.18).timeout
+	_write_capture("pick-swing")
+	capture_mining_override = false
+	viewmodel.set_mining_active(false)
+
+	DirAccess.make_dir_recursive_absolute("/home/ubuntu/specs/shots/v8")
+	var hotbar_rect: Rect2 = hud.hotbar.get_node("SlotRow").get_global_rect()
+	var image: Image = get_viewport().get_texture().get_image()
+	var crop_rect: Rect2i = Rect2i(
+		maxi(0, int(hotbar_rect.position.x)), maxi(0, int(hotbar_rect.position.y)),
+		mini(image.get_width() - int(hotbar_rect.position.x), int(hotbar_rect.size.x)),
+		mini(image.get_height() - int(hotbar_rect.position.y), int(hotbar_rect.size.y)))
+	image.get_region(crop_rect).save_png("/home/ubuntu/specs/shots/v8/hotbar-item-icon-closeup.png")
+
+	if demo_smelter_id >= 0:
+		aimed_entity_id = demo_smelter_id
+		capture_aim_override = true
+		hud.show_toast("", 0.0)
+		var target: Vector3 = sim.entities[demo_smelter_id].position + Vector3(0.0, 2.0, 0.0)
+		_set_capture_view(target, target + Vector3(3.8, 2.2, 5.5))
+		await get_tree().create_timer(0.4).timeout
+		visuals.aimed_entity_id = aimed_entity_id
+		visuals.refresh()
+		_write_capture("aimed-machine-outline")
+		capture_aim_override = false
 	get_tree().quit()
 
 func _capture_machine_set() -> void:

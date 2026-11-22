@@ -699,3 +699,15 @@ func _add_items(target: Dictionary, source: Dictionary) -> void:
 
 func _port_key(entity_id: int, port_id: String) -> String:
 	return "%d:%s" % [entity_id, port_id]
+
+func visual_state(entity_id: int) -> Dictionary:
+	if not entities.has(entity_id):
+		return {"status": "Stopped", "productivity": 0.0, "powered": false}
+	var entity: FactoryEntity = entities[entity_id]
+	var satisfaction: float = power.satisfaction(entity_id, entities)
+	var running: bool = entity.status == "Running" or entity.status.begins_with("Low power")
+	return {
+		"status": entity.status,
+		"productivity": clampf(satisfaction, 0.0, 1.0) if running else 0.0,
+		"powered": satisfaction > 0.0
+	}

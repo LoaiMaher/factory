@@ -44,6 +44,7 @@ var help_elapsed: float = 0.0
 var selected_entity_id: int = -1
 var player: FactoryPlayer
 var unlocked_tiers: int = 0
+var audio_manager: Node
 
 func _ready() -> void:
 	root = Control.new()
@@ -125,6 +126,13 @@ func setup(factory_sim: FactorySim, factory_player: FactoryPlayer,
 	icon_cache = FactoryIconCache.new()
 	icon_machine_models = models
 	icon_visuals = factory_visuals
+
+func _input(event: InputEvent) -> void:
+	if audio_manager == null or player == null:
+		return
+	if event is InputEventMouseButton and event.pressed \
+			and event.button_index == MOUSE_BUTTON_LEFT and panel_is_open():
+		audio_manager.call("play_one_shot", "ui_click", player.global_position)
 
 func _process(delta: float) -> void:
 	toast_time = maxf(0.0, toast_time - delta)
