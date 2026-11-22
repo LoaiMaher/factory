@@ -2,6 +2,8 @@ extends Node3D
 
 const SIM_STEP: float = 0.05
 const BELT_BUILDINGS: Array[String] = ["belt_mk1", "belt_mk2"]
+const TERRAIN_COLLISION_MASK: int = 1
+const ENTITY_COLLISION_LAYER: int = 2
 
 var sim: FactorySim = FactorySim.new()
 var terrain: FactoryTerrain
@@ -55,6 +57,7 @@ func _ready() -> void:
 		sim.register_vent("vent_%02d" % index, terrain.vents[index])
 	player = FactoryPlayer.new()
 	player.name = "Player"
+	player.collision_mask = TERRAIN_COLLISION_MASK | ENTITY_COLLISION_LAYER
 	player.position = Vector3(0.0, terrain.height_at(0.0, 38.0) + 0.1, 38.0)
 	add_child(player)
 	foliage = FactoryFoliage.new()
@@ -292,11 +295,12 @@ func _toggle_build_menu() -> void:
 		hud.show_build_menu(_available_buildings())
 		player.set_panel_open(true)
 
-func _aim_hit(max_distance: float = 80.0) -> Dictionary:
+func _aim_hit(max_distance: float = 80.0, collision_mask: int = 0xFFFFFFFF) -> Dictionary:
 	var origin: Vector3 = player.camera.global_position
 	var end: Vector3 = origin + -player.camera.global_transform.basis.z * max_distance
 	var query: PhysicsRayQueryParameters3D = PhysicsRayQueryParameters3D.create(origin, end)
 	query.exclude = [player.get_rid()]
+	query.collision_mask = collision_mask
 	return get_world_3d().direct_space_state.intersect_ray(query)
 
 func _build_click() -> void:
@@ -306,7 +310,7 @@ func _build_click() -> void:
 		return
 	if build_system.selected.is_empty():
 		return
-	var hit: Dictionary = _aim_hit(25.0)
+	var hit: Dictionary = _aim_hit(25.0, 0xFFFFFFFF if BELT_BUILDINGS.has(build_system.selected) else TERRAIN_COLLISION_MASK)
 	if hit.is_empty():
 		return
 	if BELT_BUILDINGS.has(build_system.selected):
@@ -410,7 +414,7 @@ func _nearest_port(position: Vector3, direction: String, include_occupied: bool 
 func _belt_curve(from_port: Dictionary, to_port: Dictionary) -> PackedVector3Array:
 	var a: Dictionary = sim.port_world(int(from_port["id"]), str(from_port["port"]))
 	var b: Dictionary = sim.port_world(int(to_port["id"]), str(to_port["port"]))
-	var handle: float = clampf(a["pos"].distance_to(b["pos"]) * 0.4, 1.0, 8.0)
+	var handle: float = clampf(a["pos"].distance_to(b["pos"]) * 0.55, 1.5, 10.0)
 	return PackedVector3Array([a["pos"], a["pos"] + a["normal"] * handle,
 		b["pos"] + b["normal"] * handle, b["pos"]])
 
@@ -429,7 +433,10 @@ func _place_building(hit: Dictionary) -> void:
 		hud.show_toast("Not enough materials.")
 		return
 	var candidate: Vector3 = placement.snap_position(hit["position"], sim)
-	var node_id: int = _nearest_node_id(candidate) if build_system.selected == "miner_mk1" else -1
+	var node_id: int = _nearest_node_id(candidate, 3.0) if build_system.selected == "miner_mk1" else -1
+	if node_id >= 0:
+		var node_position: Vector3 = sim.nodes[node_id]["position"]
+		candidate = Vector3(node_position.x, terrain.height_at(node_position.x, node_position.z), node_position.z)
 	var validation: Dictionary = placement.fit_and_validate(build_system.selected, candidate, sim, terrain, player.global_position, node_id)
 	if not validation["ok"]:
 		hud.show_toast(str(validation["reason"]))
@@ -446,9 +453,9 @@ func _place_building(hit: Dictionary) -> void:
 	foliage.remove_in_world_footprint(validation["position"], placement.yaw, BuildingDefs.size_of(build_system.selected))
 	hud.show_toast("Placed %s." % build_system.selected.replace("_", " "))
 
-func _nearest_node_id(position: Vector3) -> int:
+func _nearest_node_id(position: Vector3, max_distance: float = 1.5) -> int:
 	var closest: int = -1
-	var distance: float = 1.5
+	var distance: float = max_distance
 	for node_id: Variant in sim.nodes:
 		var node_position: Vector3 = sim.nodes[node_id]["position"]
 		var candidate: float = Vector2(position.x - node_position.x, position.z - node_position.z).length()
@@ -467,6 +474,16 @@ func _pay_cost(cost: Dictionary, multiplier: int) -> void:
 	for item_id: String in cost:
 		player.inventory[item_id] = int(player.inventory.get(item_id, 0)) - int(cost[item_id]) * multiplier
 
+func _build_info(kind: String, status: String, cost: Dictionary, multiplier: int = 1) -> String:
+	var parts: Array[String] = []
+	for item_id: String in cost:
+		var amount: int = int(cost[item_id]) * multiplier
+		var part: String = "%d %s" % [amount, Items.item_name(item_id)]
+		if int(player.inventory.get(item_id, 0)) < amount:
+			part = "[color=#ff6258]%s[/color]" % part
+		parts.append(part)
+	return "%s · %s · %s" % [kind.replace("_", " ").capitalize(), status, ", ".join(parts)]
+
 func _update_preview() -> void:
 	if build_preview == null:
 		return
@@ -477,7 +494,7 @@ func _update_preview() -> void:
 		hud.set_build_info("")
 		hud.set_crosshair_hint("")
 		return
-	var hit: Dictionary = _aim_hit(25.0)
+	var hit: Dictionary = _aim_hit(25.0, 0xFFFFFFFF if BELT_BUILDINGS.has(build_system.selected) else TERRAIN_COLLISION_MASK)
 	if hit.is_empty():
 		build_preview.visible = false
 		_hide_belt_previews()
@@ -494,7 +511,10 @@ func _update_preview() -> void:
 	if preview_kind != build_system.selected:
 		_create_model_preview(build_system.selected)
 	var candidate: Vector3 = placement.snap_position(hit["position"], sim)
-	var node_id: int = _nearest_node_id(candidate) if build_system.selected == "miner_mk1" else -1
+	var node_id: int = _nearest_node_id(candidate, 3.0) if build_system.selected == "miner_mk1" else -1
+	if node_id >= 0:
+		var node_position: Vector3 = sim.nodes[node_id]["position"]
+		candidate = Vector3(node_position.x, terrain.height_at(node_position.x, node_position.z), node_position.z)
 	var validation: Dictionary = placement.fit_and_validate(build_system.selected, candidate, sim, terrain, player.global_position, node_id)
 	var valid: bool = bool(validation["ok"]) and _can_afford(building_definitions[build_system.selected]["cost"], 1)
 	var reason: String = str(validation["reason"])
@@ -511,7 +531,8 @@ func _update_preview() -> void:
 	build_preview.position = placement.preview_position
 	build_preview.rotation.y = placement.yaw
 	preview_material.set_shader_parameter("tint", Color(0.2, 1.0, 0.5) if valid else Color(1.0, 0.12, 0.1))
-	hud.set_build_info("%s · %s · %s" % [build_system.selected.replace("_", " "), reason if not valid else "Ready", str(building_definitions[build_system.selected]["cost"])])
+	hud.set_build_info(_build_info(build_system.selected, reason if not valid else "Ready",
+		building_definitions[build_system.selected]["cost"]))
 	hud.set_crosshair_hint(reason if not valid else "")
 
 func _update_belt_preview(hit: Dictionary) -> void:
@@ -530,7 +551,7 @@ func _update_belt_preview(hit: Dictionary) -> void:
 		var yaw: float = atan2(direction.x, direction.z)
 		var basis: Basis = Basis(Vector3.UP, yaw)
 		var target_port := {"pos": ground + basis * Vector3(0.0, 1.0, -0.4), "normal": basis * Vector3(0.0, 0.0, -1.0)}
-		var handle: float = clampf(source_port["pos"].distance_to(target_port["pos"]) * 0.4, 1.0, 8.0)
+		var handle: float = clampf(source_port["pos"].distance_to(target_port["pos"]) * 0.55, 1.5, 10.0)
 		var curve := PackedVector3Array([source_port["pos"], source_port["pos"] + source_port["normal"] * handle,
 			target_port["pos"] + target_port["normal"] * handle, target_port["pos"]])
 		var reason: String = ""
@@ -1013,7 +1034,7 @@ func _capture_screenshot(mode: String) -> void:
 func _write_capture(mode: String) -> void:
 	var capture_directory: String = OS.get_environment("FACTORY_CAPTURE_DIR")
 	if capture_directory.is_empty():
-		capture_directory = "/home/ubuntu/specs/shots/v5"
+		capture_directory = "/home/ubuntu/specs/shots/v6"
 	DirAccess.make_dir_recursive_absolute(capture_directory)
 	var filename_mode: String = mode.trim_prefix("v5-") if mode.begins_with("v5-") else mode.trim_prefix("machine-") if mode.begins_with("machine-") else mode
 	var filename: String = "%s/%s.png" % [capture_directory, filename_mode]
@@ -1121,7 +1142,10 @@ func _set_placement_preview(kind: String, position: Vector3) -> void:
 	placement.yaw = 0.0
 	placement.preview_initialized = true
 	_create_model_preview(kind)
-	var node_id: int = _nearest_node_id(position) if kind == "miner_mk1" else -1
+	var node_id: int = _nearest_node_id(position, 3.0) if kind == "miner_mk1" else -1
+	if node_id >= 0:
+		var node_position: Vector3 = sim.nodes[node_id]["position"]
+		position = Vector3(node_position.x, terrain.height_at(node_position.x, node_position.z), node_position.z)
 	var validation: Dictionary = placement.fit_and_validate(kind, position, sim, terrain, player.global_position, node_id)
 	build_preview.position = validation["position"]
 	build_preview.rotation.y = placement.yaw
@@ -1130,7 +1154,7 @@ func _set_placement_preview(kind: String, position: Vector3) -> void:
 	preview_material.set_shader_parameter("tint", Color(0.2, 1.0, 0.5) if valid else Color(1.0, 0.12, 0.1))
 	var reason: String = "" if valid else str(validation["reason"])
 	hud.set_crosshair_hint(reason)
-	hud.set_build_info("%s · %s" % [kind.replace("_", " "), "Ready" if valid else reason])
+	hud.set_build_info(_build_info(kind, "Ready" if valid else reason, building_definitions[kind]["cost"]))
 
 func _connect_belt(kind: String, from_id: int, from_port: String, to_id: int, to_port: String) -> Dictionary:
 	return sim.add_belt(kind, from_id, from_port, to_id, to_port, _belt_curve({"id": from_id, "port": from_port}, {"id": to_id, "port": to_port}))

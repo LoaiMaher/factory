@@ -276,6 +276,7 @@ func _add_trunk_collision(definition: Dictionary) -> void:
 	if not chunk_bodies.has(chunk):
 		var body: StaticBody3D = StaticBody3D.new()
 		body.name = "TreeCollision_%d_%d" % [chunk.x, chunk.y]
+		body.collision_layer = 2
 		body.position = Vector3(-WORLD_HALF_EXTENT + float(chunk.x) * CHUNK_SIZE, 0.0,
 			-WORLD_HALF_EXTENT + float(chunk.y) * CHUNK_SIZE)
 		chunk_bodies[chunk] = body

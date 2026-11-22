@@ -16,6 +16,8 @@ func _run_all() -> void:
 	_test_production_and_port_routing()
 	_test_save_migration_and_refunds()
 	_test_diagnostics()
+	_test_ore_boulders()
+	_test_foliage_state()
 	print("RESULT: %d/%d test groups passed" % [passed_groups, groups])
 	quit(1 if failures > 0 else 0)
 
@@ -408,6 +410,42 @@ func _test_diagnostics() -> void:
 		lines.size() == 2 and lines[0].contains("Input Iron Ore: 0.0/min — needs 30.0/min")
 		and lines[1].contains("Output Iron Ingot: 0.0/min"), str(lines))
 	_check("unpowered machine has an actionable status", sim.status_for(smelter) == "Not connected to power", sim.status_for(smelter))
+	_finish_group()
+
+func _test_ore_boulders() -> void:
+	var boulders: OreBoulders = OreBoulders.new()
+	boulders.register("iron_a", "iron_ore", 8)
+	var first: Dictionary = boulders.mine("iron_a", 3)
+	_check("ore boulder depletes by finite units", first.get("remaining", -1) == 5
+		and not bool(first.get("depleted", true)), str(first))
+	var saved: Dictionary = boulders.to_dict()
+	var restored: OreBoulders = OreBoulders.new()
+	restored.register("iron_a", "iron_ore", 8)
+	restored.from_dict(saved)
+	_check("partially mined boulder persists remaining quantity",
+		restored.remaining_for("iron_a") == 5, str(restored.to_dict()))
+	var last: Dictionary = restored.mine("iron_a", 5)
+	var exhausted: Dictionary = restored.mine("iron_a")
+	_check("depleted boulder stays empty and rejects further mining",
+		bool(last.get("depleted", false)) and restored.remaining_for("iron_a") == 0 and exhausted.is_empty(),
+		str([last, exhausted]))
+	var legacy: OreBoulders = OreBoulders.new()
+	legacy.register("iron_a", "iron_ore", 8)
+	legacy.from_dict({})
+	_check("legacy save without boulder state keeps deposits full",
+		legacy.remaining_for("iron_a") == 8, str(legacy.to_dict()))
+	_finish_group()
+
+func _test_foliage_state() -> void:
+	var foliage: FoliageState = FoliageState.new()
+	foliage.remove("tree_00002")
+	foliage.remove("rock_00001")
+	var restored: FoliageState = FoliageState.new()
+	restored.from_dict(foliage.to_dict())
+	_check("foliage removals survive state round-trip",
+		restored.is_removed("tree_00002") and restored.is_removed("rock_00001")
+		and not restored.is_removed("tree_00003")
+		and restored.to_dict() == ["rock_00001", "tree_00002"], str(restored.to_dict()))
 	_finish_group()
 
 func _connect(sim: FactorySim, kind: String, from_id: int, from_port: String, to_id: int, to_port: String) -> Dictionary:

@@ -19,7 +19,7 @@ var info_label: Label
 var toast_label: Label
 var hint_label: Label
 var crosshair_hint: Label
-var build_info_label: Label
+var build_info_label: RichTextLabel
 var panel: PanelContainer
 var panel_body: VBoxContainer
 var build_menu: PanelContainer
@@ -75,10 +75,14 @@ func _ready() -> void:
 	hint_label.position = Vector2(18, 660)
 	hint_label.add_theme_font_size_override("font_size", 18)
 	root.add_child(hint_label)
-	build_info_label = Label.new()
+	build_info_label = RichTextLabel.new()
 	build_info_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	build_info_label.bbcode_enabled = true
+	build_info_label.fit_content = true
+	build_info_label.scroll_active = false
+	build_info_label.custom_minimum_size.x = 680.0
 	build_info_label.position = Vector2(18, 690)
-	build_info_label.add_theme_font_size_override("font_size", 15)
+	build_info_label.add_theme_font_size_override("normal_font_size", 15)
 	root.add_child(build_info_label)
 	toast_label = Label.new()
 	toast_label.mouse_filter = Control.MOUSE_FILTER_IGNORE

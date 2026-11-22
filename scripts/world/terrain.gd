@@ -179,6 +179,7 @@ func _build_ground() -> void:
 			height_samples[z_index * vertex_count + x_index] = height_at(x, z)
 	var body: StaticBody3D = StaticBody3D.new()
 	body.name = "TerrainCollision"
+	body.collision_layer = 1
 	var shape: CollisionShape3D = CollisionShape3D.new()
 	var heightmap: HeightMapShape3D = HeightMapShape3D.new()
 	heightmap.map_width = vertex_count
@@ -299,6 +300,7 @@ func _uses_forward_plus() -> bool:
 func _build_boundaries() -> void:
 	var body: StaticBody3D = StaticBody3D.new()
 	body.name = "WorldBoundary"
+	body.collision_layer = 1
 	for wall_data: Dictionary in [
 		{"size": Vector3(1024.0, 600.0, 8.0), "position": Vector3(0.0, 250.0, -WORLD_HALF_EXTENT)},
 		{"size": Vector3(1024.0, 600.0, 8.0), "position": Vector3(0.0, 250.0, WORLD_HALF_EXTENT)},
@@ -511,6 +513,7 @@ func _make_node_visual(definition: Dictionary) -> void:
 		chunk.material_override = chunk_material
 		root.add_child(chunk)
 	var collision_body: StaticBody3D = StaticBody3D.new()
+	collision_body.collision_layer = 2
 	var collision_shape: CollisionShape3D = CollisionShape3D.new()
 	var patch_shape: BoxShape3D = BoxShape3D.new()
 	patch_shape.size = Vector3(5.4, 0.3, 5.4)
@@ -664,6 +667,7 @@ func _make_boulder_visual(definition: Dictionary) -> void:
 	veins.material_override = _boulder_material(item_id, true)
 	root.add_child(veins)
 	var collision_body: StaticBody3D = StaticBody3D.new()
+	collision_body.collision_layer = 2
 	var collision_shape: CollisionShape3D = CollisionShape3D.new()
 	var sphere: SphereShape3D = SphereShape3D.new()
 	sphere.radius = 1.12
@@ -852,6 +856,7 @@ func _build_landing_site() -> void:
 	hub.set_meta("interactable", "hub")
 	add_child(hub)
 	var hub_body: StaticBody3D = StaticBody3D.new()
+	hub_body.collision_layer = 2
 	var hub_collision: CollisionShape3D = CollisionShape3D.new()
 	var hub_box: BoxShape3D = BoxShape3D.new()
 	hub_box.size = Vector3(4.0, 3.5, 3.0)
