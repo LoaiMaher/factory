@@ -14,6 +14,7 @@ func _run_all() -> void:
 	_test_belt_validation_and_flow()
 	_test_splitter_merger_backpressure()
 	_test_production_and_port_routing()
+	_test_full_chain_power_and_round_trip()
 	_test_save_migration_and_refunds()
 	_test_diagnostics()
 	_test_visual_state()
@@ -293,6 +294,113 @@ func _test_production_and_port_routing() -> void:
 		and int(pole_sim.entities[pole_storage].input_buffer.get("iron_ore", 0)) == 5
 		and pole_sim.entities[pole].input_buffer.is_empty(),
 		str([pole_sim.entities[pole_storage].input_buffer, pole_sim.entities[pole].input_buffer]))
+	_finish_group()
+
+func _belt_items_match(expected: Array, actual: Array) -> bool:
+	if expected.size() != actual.size():
+		return false
+	for index: int in range(expected.size()):
+		var expected_item: Dictionary = expected[index]
+		var actual_item: Dictionary = actual[index]
+		if str(expected_item.get("item", "")) != str(actual_item.get("item", "")):
+			return false
+		for field: String in ["s", "born_at"]:
+			if not expected_item.has(field) or not actual_item.has(field):
+				return false
+			if absf(float(expected_item[field]) - float(actual_item[field])) > 0.0001:
+				return false
+	return true
+
+func _test_full_chain_power_and_round_trip() -> void:
+	var sim: FactorySim = FactorySim.new()
+	sim.power.bypass = true
+	sim.register_node(41, "iron_ore", "normal", Vector3.ZERO, 60.0)
+	var miner: int = sim.add_entity("miner_mk1", Vector3.ZERO, 0.0, {"node_id": 41})
+	var smelter: int = sim.add_entity("smelter", Vector3(0.0, 0.0, 6.0), 0.0, {"recipe": "iron_ingot"})
+	var constructor: int = sim.add_entity("constructor", Vector3(0.0, 0.0, 12.0), 0.0, {"recipe": "iron_plate"})
+	var storage: int = sim.add_entity("storage", Vector3(0.0, 0.0, 19.0))
+	var first_belt: int = int(_connect(sim, "belt_mk1", miner, "out0", smelter, "in0").get("id", -1))
+	var second_belt: int = int(_connect(sim, "belt_mk1", smelter, "out0", constructor, "in0").get("id", -1))
+	var third_belt: int = int(_connect(sim, "belt_mk1", constructor, "out0", storage, "in0").get("id", -1))
+	_run_for(sim, 120.0)
+	var bypass_rate: float = sim.get_rate(storage, "iron_plate")
+	_check("full chain delivers bypass-on plates at the expected 20/min ±10%",
+		miner > 0 and smelter > 0 and constructor > 0 and storage > 0
+		and first_belt > 0 and second_belt > 0 and third_belt > 0
+		and absf(bypass_rate - 20.0) <= 2.0,
+		"rate=%.1f/min expected=20/min" % bypass_rate)
+
+	sim.power.bypass = false
+	_run_for(sim, 90.0)
+	var no_power_diagnostics: bool = (
+		not sim.diagnostics(miner).is_empty()
+		and sim.diagnostics(miner)[0].begins_with("No power")
+		and sim.diagnostics(smelter)[0].begins_with("No power")
+		and sim.diagnostics(constructor)[0].begins_with("No power"))
+	_check("full chain stops without power and diagnostics report No power",
+		no_power_diagnostics and is_equal_approx(sim.get_rate(storage, "iron_plate"), 0.0),
+		str([sim.get_rate(storage, "iron_plate"), sim.diagnostics(smelter)]))
+
+	sim.register_vent("vent_full_chain", Vector3(-8.0, 0.0, 0.0))
+	var tap: int = sim.add_entity("geo_tap", Vector3(-8.0, 0.0, 0.0))
+	var pole_a: int = sim.add_entity("power_pole", Vector3(-4.0, 0.0, 0.0))
+	var pole_b: int = sim.add_entity("power_pole", Vector3(-4.0, 0.0, 12.0))
+	_run_for(sim, 120.0)
+	var recovered_rate: float = sim.get_rate(storage, "iron_plate")
+	_check("Geo Tap and poles restore full-chain production",
+		tap > 0 and pole_a > 0 and pole_b > 0 and recovered_rate >= 18.0
+		and not sim.diagnostics(smelter)[0].begins_with("No power"),
+		"rate=%.1f/min diagnostics=%s" % [recovered_rate, str(sim.diagnostics(smelter))])
+
+	_run_for(sim, 0.37)
+	var belt_ids: Array[int] = [first_belt, second_belt, third_belt]
+	var entity_ids: Array[int] = [miner, smelter, constructor, storage]
+	var saved_belt_items: Dictionary = {}
+	var saved_buffers: Dictionary = {}
+	var belt_items_present: bool = false
+	for belt_id: int in belt_ids:
+		var belt: FactoryEntity = sim.entities[belt_id]
+		saved_belt_items[belt_id] = belt.belt_items.duplicate(true)
+		belt_items_present = belt_items_present or not belt.belt_items.is_empty()
+	for entity_id: int in entity_ids:
+		var entity: FactoryEntity = sim.entities[entity_id]
+		saved_buffers[entity_id] = {
+			"input": entity.input_buffer.duplicate(true),
+			"output": entity.output_buffer.duplicate(true)
+		}
+	var buffered_items_present: bool = not sim.entities[storage].input_buffer.is_empty()
+	var save_system: FactorySaveSystem = FactorySaveSystem.new()
+	save_system.save_path = "user://full_chain_qa_test.json"
+	var player: FactoryPlayer = FactoryPlayer.new()
+	get_root().add_child(player)
+	var save_ok: bool = save_system.save_game(sim, player, 0, {}, {}, sim.power.bypass)
+	var restored: FactorySim = FactorySim.new()
+	restored.register_node(41, "iron_ore", "normal", Vector3.ZERO, 60.0)
+	restored.register_vent("vent_full_chain", Vector3(-8.0, 0.0, 0.0))
+	var restored_player: FactoryPlayer = FactoryPlayer.new()
+	get_root().add_child(restored_player)
+	var loaded: Dictionary = save_system.load_game(restored, restored_player) if save_ok else {}
+	var belt_items_preserved: bool = not loaded.is_empty()
+	for belt_id: int in belt_ids:
+		var restored_belt: FactoryEntity = restored.entities.get(belt_id)
+		belt_items_preserved = belt_items_preserved and restored_belt != null
+		if restored_belt != null:
+			belt_items_preserved = (belt_items_preserved
+				and _belt_items_match(saved_belt_items[belt_id], restored_belt.belt_items))
+	var buffers_preserved: bool = not loaded.is_empty()
+	for entity_id: int in entity_ids:
+		var restored_entity: FactoryEntity = restored.entities.get(entity_id)
+		var expected_buffers: Dictionary = saved_buffers[entity_id]
+		buffers_preserved = (buffers_preserved and restored_entity != null
+			and restored_entity.input_buffer == expected_buffers["input"]
+			and restored_entity.output_buffer == expected_buffers["output"])
+	_check("mid-run save/load preserves moving belt items and non-empty buffers",
+		save_ok and belt_items_present and buffered_items_present
+		and belt_items_preserved and buffers_preserved,
+		str([belt_items_present, buffered_items_present, belt_items_preserved, buffers_preserved]))
+	DirAccess.remove_absolute(ProjectSettings.globalize_path(save_system.save_path))
+	player.queue_free()
+	restored_player.queue_free()
 	_finish_group()
 
 func _test_save_migration_and_refunds() -> void:
