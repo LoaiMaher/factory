@@ -3,8 +3,8 @@ class_name FactoryEntity
 
 var id: int = -1
 var kind: String = ""
-var cell: Vector2i = Vector2i.ZERO
-var rotation: int = 0
+var position: Vector3 = Vector3.ZERO
+var yaw: float = 0.0
 var recipe_id: String = ""
 var input_buffer: Dictionary = {}
 var output_buffer: Dictionary = {}
