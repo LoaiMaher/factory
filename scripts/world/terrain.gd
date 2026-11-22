@@ -18,6 +18,11 @@ var height_samples: PackedFloat32Array = PackedFloat32Array()
 var nodes: Array[Dictionary] = []
 var vents: Array[Vector3] = []
 var resource_sites: Array[Vector2] = []
+var boulder_definitions: Array[Dictionary] = []
+var boulder_nodes: Dictionary = {}
+var boulder_meshes: Dictionary = {}
+var boulder_materials: Dictionary = {}
+var ore_boulders: OreBoulders = OreBoulders.new()
 var hidden_iron: Vector3 = Vector3(260.0, 0.0, -40.0)
 var spire_position: Vector3 = Vector3(0.0, 0.0, -28.0)
 var landing_position: Vector3 = Vector3(0.0, 0.0, 12.0)
@@ -33,6 +38,7 @@ func _ready() -> void:
 	_build_backdrop()
 	_build_lake()
 	_build_nodes()
+	_build_boulders()
 	_build_vents()
 	_build_landing_site()
 
@@ -134,6 +140,18 @@ func forest_density_at(x: float, z: float) -> float:
 	var wooded_slope: float = maxf(_smoothstep(95.0, 260.0, absf(x)), _smoothstep(120.0, 290.0, z))
 	var variation: float = noise.get_noise_2d(x + 720.0, z - 510.0) * 0.24 + 0.7
 	return clampf(maxf(outward * 0.5, wooded_slope) * variation, 0.0, 0.92)
+
+func mine_boulder(boulder_id: String) -> Dictionary:
+	var result: Dictionary = ore_boulders.mine(boulder_id)
+	if result.is_empty():
+		return {}
+	_update_boulder_visual(boulder_id)
+	return result
+
+func restore_boulders(data: Dictionary) -> void:
+	ore_boulders.from_dict(data)
+	for boulder_id: String in ore_boulders.deposits:
+		_update_boulder_visual(boulder_id)
 
 func _building_size(building_id: String, rotation: int = 0) -> Vector2i:
 	var size: Vector2i = building_definitions.get(building_id, {}).get("size", Vector2i.ONE)
@@ -502,6 +520,175 @@ func _make_node_visual(definition: Dictionary) -> void:
 	label.visibility_range_fade_mode = GeometryInstance3D.VISIBILITY_RANGE_FADE_SELF
 	root.add_child(label)
 	add_child(root)
+
+func _build_boulders() -> void:
+	var rng: RandomNumberGenerator = RandomNumberGenerator.new()
+	rng.seed = 70217
+	for resource: Dictionary in [
+		{"item": "iron_ore", "count": 15, "prefix": "near_iron"},
+		{"item": "copper_ore", "count": 10, "prefix": "near_copper"},
+		{"item": "limestone", "count": 10, "prefix": "near_limestone"}
+	]:
+		for index: int in range(int(resource["count"])):
+			var point: Vector3 = _nearby_boulder_position(rng)
+			var boulder_id: String = "%s_%02d" % [resource["prefix"], index]
+			_add_boulder(boulder_id, str(resource["item"]), rng.randi_range(8, 20), point)
+	for index: int in range(125):
+		var point: Vector3 = Vector3.ZERO
+		var attempts: int = 0
+		while attempts < 80:
+			attempts += 1
+			point.x = rng.randf_range(-482.0, 482.0)
+			point.z = rng.randf_range(-482.0, 482.0)
+			if Vector2(point.x, point.z).distance_to(LAKE_CENTER) < 125.0:
+				continue
+			if Vector2(point.x, point.z).distance_to(Vector2(0.0, 38.0)) < 105.0:
+				continue
+			break
+		var item_id: String = ["iron_ore", "copper_ore", "limestone"][rng.randi_range(0, 2)]
+		point.y = height_at(point.x, point.z)
+		_add_boulder("world_%03d" % index, item_id, rng.randi_range(8, 20), point)
+
+func _nearby_boulder_position(rng: RandomNumberGenerator) -> Vector3:
+	var point: Vector3 = Vector3.ZERO
+	for attempt: int in range(80):
+		var angle: float = rng.randf_range(0.0, TAU)
+		var radius: float = rng.randf_range(24.0, 78.0)
+		point.x = cos(angle) * radius
+		point.z = 38.0 + sin(angle) * radius
+		var overlaps_node: bool = false
+		for node: Dictionary in nodes:
+			if Vector2(point.x, point.z).distance_to(Vector2(node["position"].x, node["position"].z)) < 6.0:
+				overlaps_node = true
+				break
+		if not overlaps_node and _boulder_spacing_ok(point):
+			break
+	point.y = height_at(point.x, point.z)
+	return point
+
+func _boulder_spacing_ok(point: Vector3) -> bool:
+	for existing: Dictionary in boulder_definitions:
+		if Vector2(point.x, point.z).distance_to(Vector2(existing["position"].x, existing["position"].z)) < 5.5:
+			return false
+	return true
+
+func _add_boulder(boulder_id: String, item_id: String, amount: int, point: Vector3) -> void:
+	var definition: Dictionary = {
+		"id": boulder_id,
+		"item": item_id,
+		"remaining": amount,
+		"position": point
+	}
+	boulder_definitions.append(definition)
+	ore_boulders.register(boulder_id, item_id, amount)
+	if DisplayServer.get_name() != "headless":
+		_make_boulder_visual(definition)
+
+func _make_boulder_visual(definition: Dictionary) -> void:
+	var boulder_id: String = str(definition["id"])
+	var item_id: String = str(definition["item"])
+	var root: Node3D = Node3D.new()
+	root.name = "OreBoulder_%s" % boulder_id
+	root.position = definition["position"]
+	root.set_meta("ore_boulder", boulder_id)
+	for part: Dictionary in [
+		{"position": Vector3(0.0, 0.96, 0.0), "scale": Vector3(0.82, 0.96, 0.72)},
+		{"position": Vector3(-0.56, 0.48, 0.18), "scale": Vector3(0.54, 0.55, 0.5)},
+		{"position": Vector3(0.48, 0.42, -0.28), "scale": Vector3(0.42, 0.47, 0.43)}
+	]:
+		var rock: MeshInstance3D = MeshInstance3D.new()
+		rock.mesh = _boulder_mesh("rock")
+		rock.position = part["position"]
+		rock.scale = part["scale"]
+		rock.material_override = _boulder_material(item_id, false)
+		root.add_child(rock)
+	for index: int in range(3):
+		var vein: MeshInstance3D = MeshInstance3D.new()
+		vein.mesh = _boulder_mesh("vein")
+		vein.position = Vector3(-0.2 + float(index) * 0.24, 0.88 + float(index % 2) * 0.23, 0.59)
+		vein.scale = Vector3(0.19, 0.11, 0.06)
+		vein.rotation.z = -0.35 + float(index) * 0.23
+		vein.material_override = _boulder_material(item_id, true)
+		root.add_child(vein)
+	var collision_body: StaticBody3D = StaticBody3D.new()
+	var collision_shape: CollisionShape3D = CollisionShape3D.new()
+	var sphere: SphereShape3D = SphereShape3D.new()
+	sphere.radius = 1.12
+	collision_shape.shape = sphere
+	collision_shape.position.y = 0.9
+	collision_body.add_child(collision_shape)
+	root.add_child(collision_body)
+	boulder_nodes[boulder_id] = root
+	add_child(root)
+
+func _boulder_mesh(kind: String) -> SphereMesh:
+	if not boulder_meshes.has(kind):
+		var mesh: SphereMesh = SphereMesh.new()
+		mesh.radius = 1.0
+		mesh.height = 2.0
+		mesh.radial_segments = 12 if kind == "rock" else 8
+		mesh.rings = 6 if kind == "rock" else 4
+		boulder_meshes[kind] = mesh
+	return boulder_meshes[kind]
+
+func _boulder_material(item_id: String, vein: bool) -> StandardMaterial3D:
+	var cache_key: String = "%s_%s" % [item_id, "vein" if vein else "rock"]
+	if not boulder_materials.has(cache_key):
+		var rock_colors: Dictionary = {
+			"iron_ore": Color("55443d"),
+			"copper_ore": Color("3f625f"),
+			"limestone": Color("827f72")
+		}
+		var vein_colors: Dictionary = {
+			"iron_ore": Color("a5593a"),
+			"copper_ore": Color("d68649"),
+			"limestone": Color("c9c3a7")
+		}
+		var material: StandardMaterial3D = StandardMaterial3D.new()
+		material.albedo_color = vein_colors[item_id] if vein else rock_colors[item_id]
+		material.roughness = 0.92 if not vein else 0.72
+		material.metallic = 0.1 if vein else 0.02
+		boulder_materials[cache_key] = material
+	return boulder_materials[cache_key]
+
+func _update_boulder_visual(boulder_id: String) -> void:
+	if not boulder_nodes.has(boulder_id):
+		return
+	var root: Node3D = boulder_nodes[boulder_id]
+	var remaining: int = ore_boulders.remaining_for(boulder_id)
+	if remaining <= 0:
+		_spawn_boulder_burst(root.position)
+		root.queue_free()
+		boulder_nodes.erase(boulder_id)
+		return
+	var capacity: int = int(ore_boulders.deposits[boulder_id]["capacity"])
+	var size: float = maxf(0.42, pow(float(remaining) / float(capacity), 0.58))
+	root.scale = Vector3.ONE * size
+
+func _spawn_boulder_burst(point: Vector3) -> void:
+	var particles: CPUParticles3D = CPUParticles3D.new()
+	particles.name = "OreBoulderBurst"
+	particles.position = point + Vector3(0.0, 0.8, 0.0)
+	particles.amount = 18
+	particles.lifetime = 0.7
+	particles.one_shot = true
+	particles.explosiveness = 0.92
+	particles.direction = Vector3.UP
+	particles.spread = 150.0
+	particles.initial_velocity_min = 1.2
+	particles.initial_velocity_max = 3.2
+	particles.gravity = Vector3(0.0, -6.0, 0.0)
+	var dust_mesh: SphereMesh = SphereMesh.new()
+	dust_mesh.radius = 0.12
+	dust_mesh.height = 0.2
+	particles.mesh = dust_mesh
+	var dust_material: StandardMaterial3D = StandardMaterial3D.new()
+	dust_material.albedo_color = Color("9b8772")
+	dust_material.roughness = 1.0
+	particles.material_override = dust_material
+	add_child(particles)
+	particles.finished.connect(particles.queue_free)
+	particles.emitting = true
 
 func _build_vents() -> void:
 	for point: Vector3 in [

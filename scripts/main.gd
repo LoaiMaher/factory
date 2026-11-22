@@ -27,7 +27,7 @@ var hand_mine_elapsed: float = 0.0
 var spire_entity_id: int = -1
 var first_sighting: bool = false
 var show_help: bool = true
-var mining_node: Dictionary = {}
+var mining_boulder_id: String = ""
 var aimed_entity_id: int = -1
 var aim_time: float = 0.0
 var last_spire_stage: int = 0
@@ -43,7 +43,7 @@ func _ready() -> void:
 	add_child(terrain)
 	player = FactoryPlayer.new()
 	player.name = "Player"
-	player.position = Vector3(0.0, 1.0, 38.0)
+	player.position = Vector3(0.0, terrain.height_at(0.0, 38.0) + 0.1, 38.0)
 	add_child(player)
 	visuals = FactoryVisuals.new()
 	visuals.name = "Visuals"
@@ -110,16 +110,23 @@ func _physics_process(delta: float) -> void:
 	_update_aim_status(delta)
 
 func _process(delta: float) -> void:
-	if not mining_node.is_empty() and Input.is_key_pressed(KEY_E):
+	if not mining_boulder_id.is_empty() and Input.is_key_pressed(KEY_E):
 		hand_mine_elapsed += delta
 		if hand_mine_elapsed >= 0.6:
-			var item_id: String = str(mining_node.get("item", "iron_ore"))
+			var result: Dictionary = terrain.mine_boulder(mining_boulder_id)
+			if result.is_empty():
+				mining_boulder_id = ""
+				hand_mine_elapsed = 0.0
+				return
+			var item_id: String = str(result["item"])
 			player.inventory[item_id] = int(player.inventory.get(item_id, 0)) + 1
 			hand_mine_elapsed -= 0.6
-			hud.show_toast("Hand-mined 1 %s." % Items.item_name(item_id), 1.0)
-	elif not mining_node.is_empty():
+			hud.show_toast("Hand-mined 1 %s · %d left." % [Items.item_name(item_id), int(result["remaining"])], 1.0)
+			if bool(result["depleted"]):
+				mining_boulder_id = ""
+	elif not mining_boulder_id.is_empty():
 		hand_mine_elapsed = 0.0
-		mining_node = {}
+		mining_boulder_id = ""
 	if dismantle_pending and Input.is_key_pressed(KEY_F):
 		dismantle_elapsed += delta
 		if dismantle_elapsed >= 0.35:
@@ -522,11 +529,14 @@ func _interact() -> void:
 			if object.has_meta("entity_id"):
 				hud.open_entity(int(object.get_meta("entity_id")))
 				return
-			if object.has_meta("resource_node"):
-				var node: Dictionary = object.get_meta("resource_node")
-				mining_node = node
+			if object.has_meta("ore_boulder"):
+				mining_boulder_id = str(object.get_meta("ore_boulder"))
 				hand_mine_elapsed = 0.0
-				hud.show_toast("Hold E to mine %s" % Items.item_name(str(node["item"])), 4.0)
+				hud.show_toast("Hold E to mine this ore boulder.", 4.0)
+				return
+			if object.has_meta("resource_node"):
+				mining_boulder_id = ""
+				hud.show_toast("Place a Miner here.", 4.0)
 				return
 			if object.has_meta("interactable"):
 				if str(object.get_meta("interactable")) == "hub":
@@ -576,7 +586,8 @@ func _save_game() -> void:
 			hud.show_toast("Save skipped · couldn't back up the existing save.", 6.0)
 			return
 		save_backup_pending = false
-	if save_system.save_game(sim, player, unlocked_tiers):
+	var world_state: Dictionary = {"boulders": terrain.ore_boulders.to_dict()}
+	if save_system.save_game(sim, player, unlocked_tiers, world_state):
 		hud.show_toast("Saved to user://save.json")
 	else:
 		hud.show_toast("Save failed.")
@@ -591,6 +602,8 @@ func _load_saved_game(show_toast: bool) -> bool:
 			hud.show_toast("No compatible save found.")
 		return false
 	unlocked_tiers = int(loaded["unlocked_tiers"])
+	var world_state: Dictionary = loaded.get("world", {})
+	terrain.restore_boulders(world_state.get("boulders", {}))
 	hud.unlocked_tiers = unlocked_tiers
 	hud._update_hotbar()
 	last_spire_stage = sim.spire_stage

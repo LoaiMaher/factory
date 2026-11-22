@@ -17,7 +17,8 @@ func _run_all() -> void:
 	_test_spire_progress()
 	_test_save_round_trip()
 	_test_save_backup()
-	print("RESULT: %d/8 test groups passed" % passed_groups)
+	_test_ore_boulders()
+	print("RESULT: %d/9 test groups passed" % passed_groups)
 	quit(1 if failures > 0 else 0)
 
 func _test_belt_throughput() -> void:
@@ -292,12 +293,15 @@ func _test_save_round_trip() -> void:
 	sim.discovered_nodes["hidden_iron"] = true
 	var save_system: FactorySaveSystem = FactorySaveSystem.new()
 	save_system.save_path = "user://factory_round_trip_test.json"
+	var world_state: Dictionary = {"boulders": {
+		"near_iron_00": {"item": "iron_ore", "remaining": 7, "capacity": 15}
+	}}
 	var player: FactoryPlayer = FactoryPlayer.new()
 	get_root().add_child(player)
 	player.set_panel_open(true)
 	player.position = Vector3(4.0, 2.0, 9.0)
 	player.inventory["cable"] = 17
-	var saved: bool = save_system.save_game(sim, player, 2)
+	var saved: bool = save_system.save_game(sim, player, 2, world_state)
 	var restored: FactorySim = FactorySim.new()
 	var restored_player: FactoryPlayer = FactoryPlayer.new()
 	get_root().add_child(restored_player)
@@ -328,9 +332,38 @@ func _test_save_round_trip() -> void:
 		"IDs %s, next %d" % [str(restored.entities.keys()), restored.next_id])
 	_check("save/load preserves player inventory, transform and tier", restored_player.inventory == player.inventory and restored_player.position.is_equal_approx(player.position) and int(loaded.get("unlocked_tiers", -1)) == 2,
 		"inventory %s, position %s, tier %s" % [str(restored_player.inventory), str(restored_player.position), str(loaded.get("unlocked_tiers", -1))])
+	_check("save/load preserves world resource state", loaded.get("world", {}) == world_state, str(loaded.get("world", {})))
+
+	var legacy_data: Dictionary = {
+		"version": FactorySaveSystem.SAVE_VERSION,
+		"sim": sim.to_dict(),
+		"player": {
+			"position": [0.0, 1.0, 0.0],
+			"rotation_y": 0.0,
+			"pitch": 0.0,
+			"inventory": {}
+		},
+		"unlocked_tiers": 0
+	}
+	var legacy_file: FileAccess = FileAccess.open(save_system.save_path, FileAccess.WRITE)
+	if legacy_file != null:
+		legacy_file.store_string(JSON.stringify(legacy_data))
+		legacy_file.close()
+	var legacy_sim: FactorySim = FactorySim.new()
+	var legacy_player: FactoryPlayer = FactoryPlayer.new()
+	get_root().add_child(legacy_player)
+	legacy_player.set_panel_open(true)
+	var legacy_loaded: Dictionary = save_system.load_game(legacy_sim, legacy_player)
+	var legacy_boulders: OreBoulders = OreBoulders.new()
+	legacy_boulders.register("near_iron_00", "iron_ore", 15)
+	legacy_boulders.from_dict(legacy_loaded.get("world", {}).get("boulders", {}))
+	_check("old saves without boulder data restore full boulders",
+		legacy_loaded.get("world", {}).get("boulders", {}).is_empty() and legacy_boulders.remaining_for("near_iron_00") == 15,
+		str(legacy_loaded.get("world", {})))
 	DirAccess.remove_absolute(ProjectSettings.globalize_path(save_system.save_path))
 	player.queue_free()
 	restored_player.queue_free()
+	legacy_player.queue_free()
 	_finish_group()
 
 func _test_save_backup() -> void:
@@ -356,6 +389,34 @@ func _test_save_backup() -> void:
 		DirAccess.remove_absolute(ProjectSettings.globalize_path(save_system.save_path))
 	if FileAccess.file_exists(save_system.backup_path):
 		DirAccess.remove_absolute(ProjectSettings.globalize_path(save_system.backup_path))
+	_finish_group()
+
+func _test_ore_boulders() -> void:
+	var deposits: OreBoulders = OreBoulders.new()
+	deposits.register("iron_0", "iron_ore", 8)
+	var mined: Dictionary = {}
+	for _index: int in range(8):
+		mined = deposits.mine("iron_0")
+	_check("ore boulder yields finite units and depletes", int(mined.get("remaining", -1)) == 0
+		and bool(mined.get("depleted", false)) and deposits.mine("iron_0").is_empty(),
+		"remaining %d, last result %s" % [deposits.remaining_for("iron_0"), str(mined)])
+
+	var partially_mined: OreBoulders = OreBoulders.new()
+	partially_mined.register("copper_0", "copper_ore", 14)
+	for _index: int in range(5):
+		partially_mined.mine("copper_0")
+	var restored: OreBoulders = OreBoulders.new()
+	restored.register("copper_0", "copper_ore", 14)
+	restored.from_dict(partially_mined.to_dict())
+	_check("ore boulder save/load preserves item and remaining count",
+		restored.item_for("copper_0") == "copper_ore" and restored.remaining_for("copper_0") == 9,
+		str(restored.to_dict()))
+
+	var old_save: OreBoulders = OreBoulders.new()
+	old_save.register("limestone_0", "limestone", 11)
+	old_save.from_dict({})
+	_check("missing boulder key leaves legacy deposits full", old_save.remaining_for("limestone_0") == 11,
+		str(old_save.to_dict()))
 	_finish_group()
 
 func _run_for(sim: FactorySim, seconds: float) -> void:
