@@ -107,20 +107,21 @@ func _pbr_material(key: String) -> Material:
 	if material_cache.has(key):
 		return material_cache[key]
 	var paint_tints: Dictionary = {
-		"Paint_Orange": Color("d56b2b"), "Paint_Dark": Color("272f2c"),
-		"Steel": Color("929d98"), "Concrete": Color("77766b"),
+		"Paint_Orange": Color("e8792b"), "Paint_Dark": Color("2b2e33"),
+		"Steel": Color("b2b8b8"), "Concrete": Color("77766b"),
 		"Glass": Color("75aeb2"), "Rubber": Color("252826"),
 		"Foliage": Color("49643b"), "Bark": Color("594532"),
 		"Ore_Iron": Color("a75a3d"), "Ore_Copper": Color("5f9c76"),
 		"Ore_Limestone": Color("bcb48a")
 	}
 	if key == "Paint_Orange" or key == "Paint_Dark":
-		var paint: ShaderMaterial = ShaderMaterial.new()
-		paint.shader = load("res://shaders/machine_paint.gdshader") as Shader
-		paint.set_shader_parameter("paint_tint", paint_tints[key])
-		paint.set_shader_parameter("plate_albedo", load("res://assets/textures/metal_plate_diff_1k.jpg"))
-		paint.set_shader_parameter("plate_normal", load("res://assets/textures/metal_plate_nor_gl_1k.jpg"))
-		paint.set_shader_parameter("plate_roughness", load("res://assets/textures/metal_plate_rough_1k.jpg"))
+		var paint: StandardMaterial3D = StandardMaterial3D.new()
+		paint.albedo_color = paint_tints[key]
+		paint.metallic = 0.3 if key == "Paint_Orange" else 0.24
+		paint.roughness = 0.45
+		paint.normal_enabled = true
+		paint.normal_texture = load("res://assets/textures/metal_plate_nor_gl_1k.jpg")
+		paint.normal_scale = 0.08
 		material_cache[key] = paint
 		return paint
 	if key == "Hazard":
@@ -130,8 +131,8 @@ func _pbr_material(key: String) -> Material:
 		return hazard
 	var material: StandardMaterial3D = StandardMaterial3D.new()
 	material.albedo_color = paint_tints.get(key, Color("777c72"))
-	material.roughness = 0.78
-	material.metallic = 0.58 if key == "Steel" else 0.08
+	material.roughness = 0.58 if key == "Steel" else 0.78
+	material.metallic = 0.8 if key == "Steel" else 0.08
 	if key == "Glass":
 		material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
 		material.albedo_color.a = 0.62
