@@ -1,6 +1,8 @@
 extends RefCounted
 class_name FactoryIconCache
 
+signal icons_ready
+
 const ICON_SIZE: int = 128
 
 var icons: Dictionary = {}
@@ -81,6 +83,7 @@ func prepare(host: Node, machine_models: MachineModels, visuals: FactoryVisuals)
 	viewport.render_target_update_mode = SubViewport.UPDATE_DISABLED
 	viewport.queue_free()
 	prepared = true
+	icons_ready.emit()
 
 func _building_preview(id: String, machine_models: MachineModels, visuals: FactoryVisuals) -> Node3D:
 	if id == "belt_pole":

@@ -124,6 +124,7 @@ func setup(factory_sim: FactorySim, factory_player: FactoryPlayer,
 	player = factory_player
 	hotbar_model = factory_hotbar if factory_hotbar != null else HotbarModel.new()
 	icon_cache = FactoryIconCache.new()
+	icon_cache.icons_ready.connect(_on_hotbar_icons_ready)
 	icon_machine_models = models
 	icon_visuals = factory_visuals
 
@@ -427,6 +428,9 @@ func _prepare_hotbar_icons() -> void:
 	if icon_cache == null or icon_machine_models == null or icon_visuals == null:
 		return
 	await icon_cache.prepare(self, icon_machine_models, icon_visuals)
+	_update_hotbar()
+
+func _on_hotbar_icons_ready() -> void:
 	_update_hotbar()
 
 func _update_hotbar() -> void:
