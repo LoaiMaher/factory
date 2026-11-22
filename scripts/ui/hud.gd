@@ -163,6 +163,12 @@ func open_entity(entity_id: int) -> void:
 		insert.pressed.connect(_insert_inventory)
 		panel_body.add_child(insert)
 		panel_body.add_child(_label(_buffer_summary(entity), 15))
+	elif entity.kind == "storage":
+		panel_body.add_child(_label(_buffer_summary(entity), 15))
+		var take_all: Button = Button.new()
+		take_all.text = "Take all"
+		take_all.pressed.connect(_take_storage)
+		panel_body.add_child(take_all)
 	elif entity.kind == "spire":
 		_add_spire_panel(entity)
 	else:
@@ -376,6 +382,12 @@ func _on_recipe_selected(index: int, recipe_names: Array[String]) -> void:
 
 func _take_output() -> void:
 	var items: Dictionary = sim.take_output(selected_entity_id)
+	for item_id: String in items:
+		player.inventory[item_id] = int(player.inventory.get(item_id, 0)) + int(items[item_id])
+	refresh_entity_panel()
+
+func _take_storage() -> void:
+	var items: Dictionary = sim.take_storage(selected_entity_id)
 	for item_id: String in items:
 		player.inventory[item_id] = int(player.inventory.get(item_id, 0)) + int(items[item_id])
 	refresh_entity_panel()

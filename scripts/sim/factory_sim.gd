@@ -257,6 +257,14 @@ func take_output(entity_id: int) -> Dictionary:
 	entity.output_buffer.clear()
 	return taken
 
+func take_storage(entity_id: int) -> Dictionary:
+	if not entities.has(entity_id) or entities[entity_id].kind != "storage":
+		return {}
+	var entity: FactoryEntity = entities[entity_id]
+	var taken: Dictionary = entity.input_buffer.duplicate(true)
+	entity.input_buffer.clear()
+	return taken
+
 func insert_input(entity_id: int, item_id: String, amount: int) -> int:
 	if not entities.has(entity_id) or amount <= 0:
 		return 0

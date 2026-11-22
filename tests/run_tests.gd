@@ -56,6 +56,10 @@ func _test_production_line() -> void:
 	_check("plate recipe rate is near 20/min", absf(plate_rate - 20.0) <= 2.0, "observed %.1f/min" % plate_rate)
 	_check("miner applies back pressure when the downstream line is saturated", sim.status_for(miner_id) == "Output full",
 		"status %s" % sim.status_for(miner_id))
+	var stored_plates: int = int(storage.input_buffer.get("iron_plate", 0))
+	var withdrawn_storage: Dictionary = sim.take_storage(storage_id)
+	_check("storage Take all returns and clears stored items", int(withdrawn_storage.get("iron_plate", 0)) == stored_plates
+		and stored_plates > 0 and sim.entities[storage_id].input_buffer.is_empty(), str(withdrawn_storage))
 	var assembler_id: int = sim.add_entity("assembler", Vector2i(20, 20), 0, {"recipe": "hull_panel"})
 	var assembler_ports: Array[Vector2i] = sim.port_cells("assembler", Vector2i(20, 20), 0)["input"]
 	var left_accepted: bool = sim.try_insert(assembler_id, "iron_plate", assembler_ports[0])
