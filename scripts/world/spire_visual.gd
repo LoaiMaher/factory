@@ -11,7 +11,7 @@ func _ready() -> void:
 	keel_mesh.size = Vector3(4.0, 0.45, 0.8)
 	keel.mesh = keel_mesh
 	keel.position = Vector3(5.0, 4.0, 5.0)
-	keel.material_override = _material(Color("b8c3bd"))
+	keel.material_override = _material(Color("46504b"))
 	keel.visible = false
 	add_child(keel)
 	hull_frame = MeshInstance3D.new()
@@ -19,7 +19,7 @@ func _ready() -> void:
 	frame_mesh.size = Vector3(7.0, 0.45, 0.75)
 	hull_frame.mesh = frame_mesh
 	hull_frame.position = Vector3(5.0, 3.0, 5.0)
-	hull_frame.material_override = _material(Color("9cbbc0"))
+	hull_frame.material_override = _material(Color("b88d3d"))
 	hull_frame.visible = false
 	add_child(hull_frame)
 
@@ -41,6 +41,6 @@ func set_stage(stage: int) -> void:
 func _material(color: Color) -> StandardMaterial3D:
 	var material: StandardMaterial3D = StandardMaterial3D.new()
 	material.albedo_color = color
-	material.metallic = 0.42
-	material.roughness = 0.55
+	material.metallic = 0.62
+	material.roughness = 0.76
 	return material

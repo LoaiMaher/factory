@@ -88,6 +88,7 @@ func _physics_process(delta: float) -> void:
 		hud.show_toast("Milestone complete · gantry lifting the next ship section.", 8.0)
 		if sim.spire_stage >= milestone_definitions.size():
 			hud.show_toast("Era 2 — Heavy Industry coming soon. Keep building.", 10.0)
+	visuals.interpolation_alpha = sim_accumulator / SIM_STEP
 	visuals.refresh()
 	_update_preview()
 	_update_sightings()
@@ -252,10 +253,19 @@ func _build_click() -> void:
 			build_system.belt_start = _belt_endpoint_cell(hit, true)
 			hud.show_toast("Belt start set · click the end cell.")
 			return
-		cell = _belt_endpoint_cell(hit, false)
-		var path: Array[Dictionary] = build_system.belt_path(build_system.belt_start, cell)
+		var target_entity: FactoryEntity = _entity_from_hit(hit)
+		var path: Array[Dictionary]
+		if target_entity != null and target_entity.kind.begins_with("belt_"):
+			path = build_system.belt_path_to_belt(build_system.belt_start, target_entity.cell, target_entity.rotation)
+		else:
+			cell = _belt_endpoint_cell(hit, false)
+			var end_rotation: int = target_entity.rotation if target_entity != null and cell == sim.back_port_for(target_entity.id) else -1
+			path = build_system.belt_path(build_system.belt_start, cell, end_rotation)
 		var cost: Dictionary = building_definitions[build_system.selected]["cost"]
 		var total: int = path.size()
+		if path.is_empty():
+			hud.show_toast("No valid belt connection from this point.")
+			return
 		for path_cell: Dictionary in path:
 			if not terrain.is_buildable(path_cell["cell"], build_system.selected, int(path_cell["rotation"])):
 				hud.show_toast("Belt route crosses terrain that is too steep.")
@@ -335,6 +345,8 @@ func _pay_cost(cost: Dictionary, multiplier: int) -> void:
 		player.inventory[item_id] = int(player.inventory.get(item_id, 0)) - int(cost[item_id]) * multiplier
 
 func _update_preview() -> void:
+	if build_preview == null:
+		return
 	if build_system.selected.is_empty() or hud.panel_is_open() or hud.build_menu.visible:
 		build_preview.visible = false
 		_hide_belt_previews()
@@ -372,8 +384,18 @@ func _update_preview() -> void:
 	hud.set_build_info("%s · cost %s" % [build_system.selected.replace("_", " "), str(building_definitions[build_system.selected]["cost"])])
 
 func _update_belt_preview(hit: Dictionary) -> void:
-	var end_cell: Vector2i = _belt_endpoint_cell(hit, build_system.belt_start == null)
-	var path: Array[Dictionary] = build_system.belt_path(end_cell, end_cell) if build_system.belt_start == null else build_system.belt_path(build_system.belt_start, end_cell)
+	var is_start: bool = build_system.belt_start == null
+	var target_entity: FactoryEntity = _entity_from_hit(hit)
+	var path: Array[Dictionary]
+	if is_start:
+		var start_cell: Vector2i = _belt_endpoint_cell(hit, true)
+		path = build_system.belt_path(start_cell, start_cell)
+	elif target_entity != null and target_entity.kind.begins_with("belt_"):
+		path = build_system.belt_path_to_belt(build_system.belt_start, target_entity.cell, target_entity.rotation)
+	else:
+		var end_cell: Vector2i = _belt_endpoint_cell(hit, false)
+		var end_rotation: int = target_entity.rotation if target_entity != null and end_cell == sim.back_port_for(target_entity.id) else -1
+		path = build_system.belt_path(build_system.belt_start, end_cell, end_rotation)
 	var kind: String = build_system.selected
 	var cost: Dictionary = building_definitions[kind]["cost"]
 	var valid: bool = _can_afford(cost, path.size())
@@ -429,6 +451,8 @@ func _set_port_markers_visible(visible: bool) -> void:
 		marker.visible = visible
 
 func _create_preview() -> void:
+	if DisplayServer.get_name() == "headless":
+		return
 	build_preview = MeshInstance3D.new()
 	var box: BoxMesh = BoxMesh.new()
 	box.size = Vector3.ONE
@@ -620,24 +644,41 @@ func _build_demo_factory() -> void:
 		player.inventory["concrete"] = 100
 
 func _capture_screenshot(mode: String) -> void:
-	if mode == "line" or mode == "panel":
+	if hud.help_panel.visible:
+		hud.toggle_help()
+	if mode == "line" or mode == "panel" or mode == "overview":
 		if sim.entities.size() <= 1:
 			_build_demo_factory()
 			visuals.refresh()
-		player.position = Vector3(-12.0, terrain.height_at(-12.0, 22.0) + 1.0, 22.0)
+	if mode == "overview":
+		player.position = Vector3(-17.0, terrain.height_at(-17.0, 33.0) + 25.0, 33.0)
+		player.velocity = Vector3.ZERO
 		player.rotation.y = 0.0
-		player.pitch = -0.32
+		player.pitch = -PI / 4.0
 		player.camera.rotation.x = player.pitch
+		player.set_physics_process(false)
+		await get_tree().create_timer(0.8).timeout
+	elif mode == "line" or mode == "panel":
+		player.position = Vector3(-34.0, terrain.height_at(-34.0, 12.0) + 10.0, 12.0)
+		player.velocity = Vector3.ZERO
+		player.set_physics_process(false)
+		player.rotation.y = -PI / 2.0
+		player.pitch = -0.55
+		player.camera.rotation.x = player.pitch
+		if mode == "line":
+			player.camera.fov = 58.0
 		await get_tree().create_timer(13.0).timeout
 		if mode == "panel" and demo_smelter_id >= 0:
-			player.position = Vector3(-17.0, terrain.height_at(-17.0, 14.0) + 1.0, 14.0)
-			player.pitch = 0.0
-			player.camera.rotation.x = 0.0
+			player.position = Vector3(-30.0, terrain.height_at(-30.0, 5.0) + 1.0, 5.0)
+			player.rotation.y = -PI / 2.0
+			player.pitch = -0.08
+			player.camera.rotation.x = player.pitch
+			player.camera.fov = 70.0
 			hud.open_entity(demo_smelter_id)
 			await get_tree().create_timer(0.8).timeout
 	else:
 		await get_tree().create_timer(1.5).timeout
 	await get_tree().process_frame
-	var filename: String = "/home/ubuntu/specs/shots/%s.png" % mode
+	var filename: String = "/home/ubuntu/specs/shots/v2/%s.png" % mode
 	var error: Error = get_viewport().get_texture().get_image().save_png(filename)
 	print("SCREENSHOT: %s (%s)" % [filename, error_string(error)])

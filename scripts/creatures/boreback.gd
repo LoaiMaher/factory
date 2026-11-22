@@ -17,13 +17,15 @@ func setup(factory_terrain: FactoryTerrain) -> void:
 		Vector3(5.0, 0.0, -12.0), Vector3(42.0, 0.0, -30.0),
 		terrain.hidden_iron
 	]
+	if DisplayServer.get_name() == "headless":
+		return
 	for index: int in range(3):
 		var beast: Node3D = _make_beast(index)
 		members.append(beast)
 		add_child(beast)
 
 func _process(delta: float) -> void:
-	if terrain == null or waypoints.is_empty():
+	if terrain == null or waypoints.is_empty() or members.is_empty():
 		return
 	dig_timer = maxf(0.0, dig_timer - delta)
 	flee_timer = maxf(0.0, flee_timer - delta)
@@ -73,8 +75,9 @@ func _make_beast(index: int) -> Node3D:
 	body.rotation.z = PI / 2.0
 	body.position.y = 1.25
 	var hide: StandardMaterial3D = StandardMaterial3D.new()
-	hide.albedo_color = Color("80684d")
-	hide.roughness = 1.0
+	hide.albedo_color = Color("4d4940")
+	hide.roughness = 0.88
+	hide.metallic = 0.08
 	body.material_override = hide
 	root.add_child(body)
 	for x: float in [-0.52, 0.52]:
@@ -91,10 +94,14 @@ func _make_beast(index: int) -> Node3D:
 	for spike_index: int in range(4):
 		var spike: MeshInstance3D = MeshInstance3D.new()
 		var spike_mesh: PrismMesh = PrismMesh.new()
-		spike_mesh.size = Vector3(0.45, 0.55, 0.4)
+		spike_mesh.size = Vector3(0.55, 0.75, 0.5)
 		spike.mesh = spike_mesh
-		spike.position = Vector3(-0.5 + float(spike_index) * 0.35, 2.15, 0.0)
-		spike.material_override = hide
+		spike.position = Vector3(-0.62 + float(spike_index) * 0.42, 2.05, 0.0)
+		var plate_material: StandardMaterial3D = StandardMaterial3D.new()
+		plate_material.albedo_color = Color("74664e")
+		plate_material.roughness = 0.82
+		plate_material.metallic = 0.18
+		spike.material_override = plate_material
 		root.add_child(spike)
 	root.position = Vector3(-62.0 + float(index) * 2.0, terrain.height_at(-62.0, -45.0), -45.0)
 	return root

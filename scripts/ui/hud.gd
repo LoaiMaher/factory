@@ -17,7 +17,6 @@ var tier_definitions: Array[Dictionary] = Progression.tiers()
 var root: Control
 var info_label: Label
 var toast_label: Label
-var message_log_label: Label
 var hint_label: Label
 var build_info_label: Label
 var panel: PanelContainer
@@ -26,12 +25,12 @@ var build_menu: PanelContainer
 var build_grid: GridContainer
 var help_panel: PanelContainer
 var hotbar_label: Label
-var entity_status_label: Label
+var entity_status_label: RichTextLabel
 var diagnostic_labels: Array[Label] = []
 var inventory_open: bool = false
 var active_panel: bool = false
 var toast_time: float = 0.0
-var message_log: Array[String] = []
+var help_elapsed: float = 0.0
 var selected_entity_id: int = -1
 var player: FactoryPlayer
 var unlocked_tiers: int = 0
@@ -69,11 +68,6 @@ func _ready() -> void:
 	toast_label.add_theme_font_size_override("font_size", 18)
 	toast_label.add_theme_color_override("font_color", Color("f2d992"))
 	root.add_child(toast_label)
-	message_log_label = Label.new()
-	message_log_label.position = Vector2(20, 730)
-	message_log_label.size = Vector2(600, 110)
-	message_log_label.add_theme_font_size_override("font_size", 13)
-	root.add_child(message_log_label)
 	_create_panel()
 	_create_build_menu()
 	_create_help_panel()
@@ -105,21 +99,23 @@ func _process(delta: float) -> void:
 				var current_rate: float = spire.rate(item_id, sim.time) if spire != null else 0.0
 				rates.append("%s %.1f/%.1f" % [Items.item_name(item_id), current_rate, float(milestone["requirements"][item_id])])
 			requirement_status = " · ".join(rates)
-		info_label.text = "POWER  %0.0f / %0.0f MW\nTIER %d  ·  %s\n%s" % [totals.x, totals.y, unlocked_tiers, milestone_status, requirement_status]
+		info_label.text = "Power  %0.0f / %0.0f MW\nTIER %d  ·  %s\n%s" % [totals.y, totals.x, unlocked_tiers, milestone_status, requirement_status]
+		info_label.add_theme_color_override("font_color", Color("e35c4e") if totals.y > totals.x else Color("d4ddd1"))
 		if selected_entity_id >= 0 and sim.entities.has(selected_entity_id) and entity_status_label != null:
 			var entity: FactoryEntity = sim.entities[selected_entity_id]
-			entity_status_label.text = "%s  ·  %s" % [entity.kind.replace("_", " ").capitalize(), entity.status]
+			entity_status_label.text = _status_markup("%s  ·  %s" % [entity.kind.replace("_", " ").capitalize(), entity.status])
 			var lines: Array[String] = sim.diagnostics(selected_entity_id)
 			for index: int in range(mini(lines.size(), diagnostic_labels.size())):
 				diagnostic_labels[index].text = lines[index]
+	if help_panel.visible:
+		help_elapsed += delta
+		if help_elapsed >= 20.0:
+			help_panel.visible = false
+			help_elapsed = 0.0
 
 func show_toast(message: String, duration: float = 4.0) -> void:
 	toast_label.text = message
 	toast_time = duration
-	message_log.append(message)
-	if message_log.size() > 5:
-		message_log.pop_front()
-	message_log_label.text = "\n".join(message_log)
 
 func set_build_info(text_value: String) -> void:
 	build_info_label.text = text_value
@@ -130,7 +126,12 @@ func open_entity(entity_id: int) -> void:
 	selected_entity_id = entity_id
 	var entity: FactoryEntity = sim.entities[entity_id]
 	_set_panel("%s diagnostics" % entity.kind.replace("_", " ").capitalize())
-	entity_status_label = _label("%s  ·  %s" % [entity.kind.replace("_", " ").capitalize(), entity.status], 18)
+	entity_status_label = RichTextLabel.new()
+	entity_status_label.bbcode_enabled = true
+	entity_status_label.fit_content = true
+	entity_status_label.custom_minimum_size.y = 30.0
+	entity_status_label.add_theme_font_size_override("normal_font_size", 18)
+	entity_status_label.text = _status_markup("%s  ·  %s" % [entity.kind.replace("_", " ").capitalize(), entity.status])
 	panel_body.add_child(entity_status_label)
 	if entity.kind in ["smelter", "constructor", "assembler"]:
 		var recipe_select: OptionButton = OptionButton.new()
@@ -154,12 +155,11 @@ func open_entity(entity_id: int) -> void:
 		insert.text = "Insert from inventory"
 		insert.pressed.connect(_insert_inventory)
 		panel_body.add_child(insert)
-		panel_body.add_child(_label("Input: %s   Output: %s" % [str(entity.input_buffer), str(entity.output_buffer)], 13))
+		panel_body.add_child(_label(_buffer_summary(entity), 15))
 	elif entity.kind == "spire":
 		_add_spire_panel(entity)
 	else:
-		panel_body.add_child(_label(str(entity.input_buffer), 15))
-		panel_body.add_child(_label(str(entity.output_buffer), 15))
+		panel_body.add_child(_label(_buffer_summary(entity), 15))
 	var close: Button = Button.new()
 	close.text = "Close  [Esc]"
 	close.pressed.connect(close_panel)
@@ -245,6 +245,7 @@ func close_build_menu() -> void:
 
 func toggle_help() -> void:
 	help_panel.visible = not help_panel.visible
+	help_elapsed = 0.0
 
 func close_panel() -> void:
 	if not active_panel:
@@ -296,12 +297,12 @@ func _create_build_menu() -> void:
 func _create_help_panel() -> void:
 	help_panel = PanelContainer.new()
 	help_panel.position = Vector2(18.0, 84.0)
-	help_panel.custom_minimum_size = Vector2(390.0, 150.0)
+	help_panel.custom_minimum_size = Vector2(720.0, 150.0)
 	root.add_child(help_panel)
 	var guide: VBoxContainer = VBoxContainer.new()
 	help_panel.add_child(guide)
 	guide.add_child(_label("PLANETARY FIELD GUIDE", 19))
-	guide.add_child(_label("WASD move · Shift sprint · Space jump · Mouse look\nE interact / hold to mine · B build · R rotate · F dismantle\nX dismantle mode · Tab inventory & craft · F5/F9 save/load", 15))
+	guide.add_child(_label("WASD move · Shift sprint · Space jump · Mouse look\nE interact / mine · B build · R rotate · F dismantle · X dismantle mode\nTab inventory and craft · F5 save · F9 load · H toggle this guide", 15))
 
 func _update_hotbar() -> void:
 	if hotbar_label == null:
@@ -334,6 +335,26 @@ func _label(text_value: String, font_size: int) -> Label:
 	label.add_theme_font_size_override("font_size", font_size)
 	label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	return label
+
+func _status_markup(text_value: String) -> String:
+	var color: Color = Color("64c887")
+	if text_value.contains("Low") or text_value.contains("power"):
+		color = Color("e4b94d")
+	elif text_value.contains("full") or text_value.contains("Starved") or text_value.contains("No "):
+		color = Color("e26d59")
+	return "[color=#%s][b]● %s[/b][/color]" % [color.to_html(false), text_value]
+
+func _buffer_summary(entity: FactoryEntity) -> String:
+	var recipe: Dictionary = recipe_definitions.get(entity.recipe_id, {})
+	var inputs: Dictionary = recipe.get("inputs", entity.input_buffer)
+	var outputs: Dictionary = recipe.get("outputs", entity.output_buffer)
+	return "Buffer: %s → %s" % [_format_counts(inputs, entity.input_buffer), _format_counts(outputs, entity.output_buffer)]
+
+func _format_counts(item_types: Dictionary, buffer: Dictionary) -> String:
+	var parts: Array[String] = []
+	for item_id: String in item_types:
+		parts.append("%s ×%d" % [Items.item_name(item_id), int(buffer.get(item_id, 0))])
+	return "Empty" if parts.is_empty() else ", ".join(parts)
 
 func _on_recipe_selected(index: int, recipe_names: Array[String]) -> void:
 	if index > 0 and selected_entity_id >= 0 and index - 1 < recipe_names.size():
