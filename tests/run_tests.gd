@@ -18,7 +18,8 @@ func _run_all() -> void:
 	_test_save_round_trip()
 	_test_save_backup()
 	_test_ore_boulders()
-	print("RESULT: %d/9 test groups passed" % passed_groups)
+	_test_foliage_state()
+	print("RESULT: %d/10 test groups passed" % passed_groups)
 	quit(1 if failures > 0 else 0)
 
 func _test_belt_throughput() -> void:
@@ -293,9 +294,10 @@ func _test_save_round_trip() -> void:
 	sim.discovered_nodes["hidden_iron"] = true
 	var save_system: FactorySaveSystem = FactorySaveSystem.new()
 	save_system.save_path = "user://factory_round_trip_test.json"
-	var world_state: Dictionary = {"boulders": {
-		"near_iron_00": {"item": "iron_ore", "remaining": 7, "capacity": 15}
-	}}
+	var world_state: Dictionary = {
+		"boulders": {"near_iron_00": {"item": "iron_ore", "remaining": 7, "capacity": 15}},
+		"foliage": ["tree_00001", "rock_00002"]
+	}
 	var player: FactoryPlayer = FactoryPlayer.new()
 	get_root().add_child(player)
 	player.set_panel_open(true)
@@ -417,6 +419,19 @@ func _test_ore_boulders() -> void:
 	old_save.from_dict({})
 	_check("missing boulder key leaves legacy deposits full", old_save.remaining_for("limestone_0") == 11,
 		str(old_save.to_dict()))
+	_finish_group()
+
+func _test_foliage_state() -> void:
+	var state: FoliageState = FoliageState.new()
+	state.remove("tree_00001")
+	state.remove("bush_00008")
+	var restored: FoliageState = FoliageState.new()
+	restored.from_dict(state.to_dict())
+	_check("foliage removal IDs survive save/load", restored.is_removed("tree_00001")
+		and restored.is_removed("bush_00008") and restored.to_dict().size() == 2, str(restored.to_dict()))
+	var empty_state: FoliageState = FoliageState.new()
+	empty_state.from_dict([])
+	_check("missing foliage data starts with all foliage present", empty_state.to_dict().is_empty(), str(empty_state.to_dict()))
 	_finish_group()
 
 func _run_for(sim: FactorySim, seconds: float) -> void:

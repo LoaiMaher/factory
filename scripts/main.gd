@@ -7,6 +7,7 @@ var sim: FactorySim = FactorySim.new()
 var terrain: FactoryTerrain
 var player: FactoryPlayer
 var visuals: FactoryVisuals
+var foliage: FactoryFoliage
 var herd: BorebackHerd
 var hud: FactoryHUD
 var build_system: FactoryBuildSystem = FactoryBuildSystem.new()
@@ -45,6 +46,10 @@ func _ready() -> void:
 	player.name = "Player"
 	player.position = Vector3(0.0, terrain.height_at(0.0, 38.0) + 0.1, 38.0)
 	add_child(player)
+	foliage = FactoryFoliage.new()
+	foliage.name = "Foliage"
+	foliage.setup(terrain, player)
+	add_child(foliage)
 	visuals = FactoryVisuals.new()
 	visuals.name = "Visuals"
 	visuals.setup(sim, terrain)
@@ -297,6 +302,8 @@ func _build_click() -> void:
 			return
 		if build_system.place_path(sim, path, build_system.selected):
 			_pay_cost(cost, total)
+			for path_cell: Dictionary in path:
+				foliage.remove_in_footprint(path_cell["cell"], Vector2i.ONE)
 			build_system.belt_start = null
 			hud.show_toast("Placed %d belts." % total)
 		else:
@@ -361,6 +368,7 @@ func _place_building(cell: Vector2i) -> void:
 		hud.show_toast("That footprint is blocked.")
 		return
 	_pay_cost(cost, 1)
+	foliage.remove_in_footprint(cell, _building_size(build_system.selected, build_system.rotation))
 	hud.show_toast("Placed %s." % build_system.selected.replace("_", " "))
 
 func _find_node(cell: Vector2i) -> Dictionary:
@@ -586,7 +594,10 @@ func _save_game() -> void:
 			hud.show_toast("Save skipped · couldn't back up the existing save.", 6.0)
 			return
 		save_backup_pending = false
-	var world_state: Dictionary = {"boulders": terrain.ore_boulders.to_dict()}
+	var world_state: Dictionary = {
+		"boulders": terrain.ore_boulders.to_dict(),
+		"foliage": foliage.state.to_dict()
+	}
 	if save_system.save_game(sim, player, unlocked_tiers, world_state):
 		hud.show_toast("Saved to user://save.json")
 	else:
@@ -604,6 +615,7 @@ func _load_saved_game(show_toast: bool) -> bool:
 	unlocked_tiers = int(loaded["unlocked_tiers"])
 	var world_state: Dictionary = loaded.get("world", {})
 	terrain.restore_boulders(world_state.get("boulders", {}))
+	foliage.restore_state(world_state.get("foliage", []))
 	hud.unlocked_tiers = unlocked_tiers
 	hud._update_hotbar()
 	last_spire_stage = sim.spire_stage
