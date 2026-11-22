@@ -20,6 +20,7 @@ func _run_all() -> void:
 	_test_ore_boulders()
 	_test_foliage_state()
 	_test_hotbar_model()
+	_test_full_hotbar_build_menu_selection()
 	_test_hotbar_input_filtering()
 	print("RESULT: %d/%d test groups passed" % [passed_groups, groups])
 	quit(1 if failures > 0 else 0)
@@ -722,6 +723,42 @@ func _test_hotbar_model() -> void:
 		and full_build_system.selected == "smelter"
 		and full_result.get("reason", "") == "Hotbar full — hover an entry and press 1–0 to assign",
 		str([full_result, full_model.to_dict(), full_build_system.selected]))
+	_finish_group()
+
+func _test_full_hotbar_build_menu_selection() -> void:
+	var main_script: Script = load("res://scripts/main.gd") as Script
+	var app: Node = main_script.new() as Node
+	var player: FactoryPlayer = FactoryPlayer.new()
+	var model: HotbarModel = app.get("hotbar_model") as HotbarModel
+	for index: int in range(HotbarModel.SLOT_COUNT):
+		model.assign(index, "building", "miner_mk1")
+	model.selected_index = 3
+	var build_system: FactoryBuildSystem = app.get("build_system") as FactoryBuildSystem
+	build_system.choose("belt_mk1")
+	var hud: FactoryHUD = FactoryHUD.new()
+	hud.setup(app.get("sim") as FactorySim, player, model)
+	get_root().add_child(hud)
+	hud.show_build_menu(["storage"])
+	var viewmodel: FactoryViewmodel = FactoryViewmodel.new()
+	app.set("hud", hud)
+	app.set("player", player)
+	app.set("viewmodel", viewmodel)
+	app.set("unlocked_tiers", 1)
+	app.set("belt_start", {"id": 12, "port": "out0"})
+	var belt_preview: MeshInstance3D = MeshInstance3D.new()
+	belt_preview.visible = true
+	app.set("belt_preview_visual", belt_preview)
+	app.call("_select_building", "storage")
+	_check("full-hotbar build selection clears stale shortcut and belt state",
+		model.selected_index == -1 and app.get("belt_start").is_empty()
+		and build_system.selected == "storage" and not belt_preview.visible
+		and viewmodel.desired_action == {"type": "building", "id": "storage"},
+		str([model.selected_index, app.get("belt_start"), build_system.selected, viewmodel.desired_action]))
+	belt_preview.free()
+	viewmodel.free()
+	app.free()
+	hud.queue_free()
+	player.free()
 	_finish_group()
 
 func _test_hotbar_input_filtering() -> void:

@@ -317,8 +317,7 @@ func _apply_hotbar_selection(show_toast: bool = true) -> void:
 	var action: Dictionary = hotbar_model.apply_to_build_system(build_system)
 	if viewmodel != null:
 		viewmodel.set_action(action)
-	placement.preview_initialized = false
-	belt_start.clear()
+	_reset_placement_state()
 	if action.get("type", "") == "building":
 		if player.panel_open and not hud.panel_is_open():
 			player.set_panel_open(false)
@@ -329,6 +328,14 @@ func _apply_hotbar_selection(show_toast: bool = true) -> void:
 	elif show_toast:
 		hud.show_toast("Empty hands.", 1.5)
 	hud.refresh_hotbar()
+
+func _reset_placement_state() -> void:
+	placement.preview_initialized = false
+	belt_start.clear()
+	_hide_belt_previews()
+	_set_port_markers_visible(false)
+	hud.set_build_info("")
+	hud.set_crosshair_hint("")
 
 func _clear_hotbar_selection() -> void:
 	if hud.panel_is_open() or hud.build_menu.visible:
@@ -366,7 +373,11 @@ func _select_building(building_id: String) -> void:
 	if not bool(result.get("ok", false)):
 		hud.show_toast(str(result.get("reason", "Unable to select building")))
 		if bool(result.get("full", false)):
+			hotbar_model.selected_index = -1
 			build_system.choose(building_id)
+			_reset_placement_state()
+			if viewmodel != null:
+				viewmodel.set_action({"type": "building", "id": building_id})
 			hud.refresh_hotbar()
 		hud.close_build_menu()
 		if player.panel_open and not hud.panel_is_open():
