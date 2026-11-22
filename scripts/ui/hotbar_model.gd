@@ -57,6 +57,8 @@ func select_slot(index: int, unlocked_tiers: int,
 	if index < 0 or index >= SLOT_COUNT:
 		return {"ok": false, "reason": "Invalid hotbar slot", "index": index}
 	if is_locked(index, unlocked_tiers, building_definitions):
+		if selected_index == index:
+			selected_index = -1
 		var slot: Dictionary = slot_at(index)
 		var definitions: Dictionary = BuildingDefs.all() if building_definitions.is_empty() else building_definitions
 		var tier: int = int(definitions.get(str(slot.get("id", "")), {}).get("tier", 0))
@@ -120,7 +122,7 @@ func select_or_assign(slot_type: String, id: String, unlocked_tiers: int,
 	if index < 0:
 		index = selected_index if selected_index >= 0 else slots.find({})
 		if index < 0:
-			index = 0
+			return {"ok": false, "reason": "No empty hotbar slots"}
 		if not assign(index, slot_type, id):
 			return {"ok": false, "reason": "Invalid hotbar item"}
 	if is_locked(index, unlocked_tiers, building_definitions):
