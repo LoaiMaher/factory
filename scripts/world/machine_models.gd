@@ -17,6 +17,7 @@ func build(kind: String, root: Node3D, size: Vector2i, body_position: Vector3) -
 	model.position = body_position
 	root.add_child(model)
 	apply_pbr_materials(model)
+	_validate_ports(kind, model, root)
 	if kind == "smelter":
 		_add_particles(model, "SmelterSmoke", Vector3(0.85, 4.8, -0.65))
 	elif kind == "geo_tap":
@@ -80,6 +81,27 @@ func apply_pbr_materials(model: Node) -> void:
 			var replacement: Material = _pbr_material(key)
 			if replacement != null:
 				mesh_instance.set_surface_override_material(surface, replacement)
+
+func _validate_ports(kind: String, model: Node3D, root: Node3D) -> void:
+	if not OS.is_debug_build():
+		return
+	for definition: Dictionary in BuildingDefs.all().get(kind, {}).get("ports", []):
+		var port: Node3D = model.find_child("Port_%s_%d" % [str(definition["dir"]).capitalize(), int(str(definition["id"]).trim_prefix(str(definition["dir"])))], true, false) as Node3D
+		if port == null:
+			push_warning("Missing model port %s on %s" % [definition["id"], kind])
+			continue
+		var local_transform: Transform3D = port.transform
+		var ancestor: Node = port.get_parent()
+		while ancestor != null and ancestor != root:
+			local_transform = (ancestor as Node3D).transform * local_transform
+			ancestor = ancestor.get_parent()
+		if ancestor != root:
+			push_warning("Model port %s is outside %s" % [definition["id"], kind])
+			continue
+		var local_position: Vector3 = local_transform.origin
+		var local_normal: Vector3 = (local_transform.basis * Vector3.FORWARD).normalized()
+		if local_position.distance_to(definition["pos"]) > 0.05 or local_normal.distance_to(definition["normal"]) > 0.05:
+			push_warning("Model port mismatch %s on %s" % [definition["id"], kind])
 
 func _pbr_material(key: String) -> Material:
 	if material_cache.has(key):

@@ -18,6 +18,7 @@ var root: Control
 var info_label: Label
 var toast_label: Label
 var hint_label: Label
+var crosshair_hint: Label
 var build_info_label: Label
 var panel: PanelContainer
 var panel_body: VBoxContainer
@@ -50,6 +51,17 @@ func _ready() -> void:
 	crosshair.position = Vector2(-20, -24)
 	crosshair.size = Vector2(40, 48)
 	root.add_child(crosshair)
+	crosshair_hint = Label.new()
+	crosshair_hint.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	crosshair_hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	crosshair_hint.add_theme_font_size_override("font_size", 15)
+	crosshair_hint.add_theme_color_override("font_color", Color("fff3d0"))
+	crosshair_hint.add_theme_color_override("font_outline_color", Color("141a17"))
+	crosshair_hint.add_theme_constant_override("outline_size", 3)
+	crosshair_hint.set_anchors_and_offsets_preset(Control.PRESET_CENTER)
+	crosshair_hint.position = Vector2(-180, 18)
+	crosshair_hint.size = Vector2(360, 28)
+	root.add_child(crosshair_hint)
 	info_label = Label.new()
 	info_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	info_label.set_anchors_preset(Control.PRESET_TOP_RIGHT)
@@ -88,7 +100,7 @@ func _process(delta: float) -> void:
 	if toast_time <= 0.0:
 		toast_label.text = ""
 	if sim != null:
-		var totals: Vector2 = sim.power.totals_near(Vector2i.ZERO)
+		var totals: Vector2 = sim.power.totals_near(player.global_position if player != null else Vector3.ZERO)
 		var milestone_status: String = "SHIPYARD COMPLETE"
 		var requirement_status: String = ""
 		if sim.spire_stage < milestone_definitions.size():
@@ -125,6 +137,9 @@ func show_toast(message: String, duration: float = 4.0) -> void:
 
 func set_build_info(text_value: String) -> void:
 	build_info_label.text = text_value
+
+func set_crosshair_hint(text_value: String) -> void:
+	crosshair_hint.text = text_value
 
 func open_entity(entity_id: int) -> void:
 	if sim == null or not sim.entities.has(entity_id):
