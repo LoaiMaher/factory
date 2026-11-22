@@ -25,9 +25,9 @@ func _ready() -> void:
 	add_child(collision)
 	camera = Camera3D.new()
 	camera.position.y = 1.62
-	camera.current = true
 	camera.fov = 78.0
 	add_child(camera)
+	camera.make_current()
 	_set_mouse_capture(true)
 
 func _physics_process(delta: float) -> void:

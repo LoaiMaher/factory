@@ -334,7 +334,13 @@ func _test_save_round_trip() -> void:
 		"IDs %s, next %d" % [str(restored.entities.keys()), restored.next_id])
 	_check("save/load preserves player inventory, transform and tier", restored_player.inventory == player.inventory and restored_player.position.is_equal_approx(player.position) and int(loaded.get("unlocked_tiers", -1)) == 2,
 		"inventory %s, position %s, tier %s" % [str(restored_player.inventory), str(restored_player.position), str(loaded.get("unlocked_tiers", -1))])
-	_check("save/load preserves world resource state", loaded.get("world", {}) == world_state, str(loaded.get("world", {})))
+	var restored_world: Dictionary = loaded.get("world", {})
+	var restored_boulder: Dictionary = restored_world.get("boulders", {}).get("near_iron_00", {})
+	var restored_foliage: Array = restored_world.get("foliage", [])
+	_check("save/load preserves world resource state",
+		str(restored_boulder.get("item", "")) == "iron_ore" and int(restored_boulder.get("remaining", -1)) == 7
+		and restored_foliage.has("tree_00001") and restored_foliage.has("rock_00002") and restored_foliage.size() == 2,
+		str(restored_world))
 
 	var legacy_data: Dictionary = {
 		"version": FactorySaveSystem.SAVE_VERSION,

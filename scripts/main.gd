@@ -89,6 +89,9 @@ func _ready() -> void:
 		hud.show_toast("Press H for controls · E to interact · B to build.", 6.0)
 	visuals.refresh()
 	for argument: String in OS.get_cmdline_user_args():
+		if argument == "--capture-all":
+			call_deferred("_capture_all")
+			break
 		if argument.begins_with("--capture-"):
 			call_deferred("_capture_screenshot", argument.trim_prefix("--capture-"))
 			break
@@ -696,6 +699,12 @@ func _reveal_discovered_nodes() -> void:
 func _quit_game() -> void:
 	get_tree().quit()
 
+func _capture_all() -> void:
+	for mode: String in ["spawn", "overview", "forestlake", "mountains", "line", "factory", "orepatch",
+			"boulder-before", "boulder-mid", "boulder-after", "panel"]:
+		await _capture_screenshot(mode)
+	get_tree().quit()
+
 func _build_demo_factory() -> void:
 	var node: Dictionary = _find_node(Vector2i(-9, -2))
 	var miner: int = sim.add_entity("miner_mk1", Vector2i(-9, -2), 0, {"node": node})
@@ -710,7 +719,11 @@ func _build_demo_factory() -> void:
 	var pole: int = sim.add_entity("power_pole", Vector2i(-26, 2))
 	sim.add_entity("power_pole", Vector2i(-16, 3))
 	sim.add_entity("power_pole", Vector2i(-10, 3))
+	sim.add_entity("power_pole", Vector2i(1, 10))
 	sim.add_entity("geo_tap", Vector2i(-28, 2))
+	sim.add_entity("splitter", Vector2i(-15, 10))
+	sim.add_entity("merger", Vector2i(-13, 10))
+	sim.add_entity("assembler", Vector2i(-3, 10), 0, {"recipe": "rotor"})
 	if miner >= 0 and demo_smelter_id >= 0 and constructor >= 0 and storage >= 0 and pole >= 0:
 		hud.show_toast("Demo line: Miner → Smelter → Constructor → Storage", 5.0)
 		player.inventory["iron_plate"] = 500
@@ -719,17 +732,54 @@ func _build_demo_factory() -> void:
 func _capture_screenshot(mode: String) -> void:
 	if hud.help_panel.visible:
 		hud.toggle_help()
-	if mode == "line" or mode == "panel" or mode == "overview":
+	var needs_demo: bool = mode in ["line", "panel", "overview", "factory", "orepatch", "fps-demo"]
+	if needs_demo:
 		if sim.entities.size() <= 1:
 			_build_demo_factory()
 			visuals.refresh()
-	if mode == "overview":
+	if mode == "overview" or mode == "factory":
 		player.position = Vector3(-17.0, terrain.height_at(-17.0, 33.0) + 25.0, 33.0)
 		player.velocity = Vector3.ZERO
 		player.rotation.y = 0.0
 		player.pitch = -PI / 4.0
 		player.camera.rotation.x = player.pitch
 		player.set_physics_process(false)
+		await get_tree().create_timer(0.8).timeout
+	elif mode == "spawn" or mode == "fps-spawn":
+		player.position = Vector3(0.0, terrain.height_at(0.0, 38.0) + 0.1, 38.0)
+		player.velocity = Vector3.ZERO
+		player.rotation.y = 0.0
+		player.pitch = 0.0
+		player.camera.rotation.x = 0.0
+		player.set_physics_process(false)
+		await get_tree().create_timer(7.0).timeout
+	elif mode == "forestlake":
+		_set_capture_view(Vector3(-90.0, terrain.height_at(-90.0, 120.0) + 30.0, 120.0),
+			Vector3(-205.0, terrain.height_at(-205.0, 190.0) + 7.0, 190.0))
+		await get_tree().create_timer(0.8).timeout
+	elif mode == "mountains":
+		_set_capture_view(Vector3(0.0, terrain.height_at(0.0, -500.0) + 80.0, -500.0),
+			Vector3(0.0, terrain.height_at(0.0, -300.0) + 6.0, -300.0))
+		await get_tree().create_timer(0.8).timeout
+	elif mode == "orepatch":
+		_set_capture_view(terrain.point_for_cell(Vector2i(-9, -2)) + Vector3(0.0, 0.5, 0.0),
+			terrain.point_for_cell(Vector2i(-5, 0)) + Vector3(0.0, 4.0, 4.0))
+		await get_tree().create_timer(5.0).timeout
+	elif mode in ["boulder-before", "boulder-mid", "boulder-after"]:
+		var definition: Dictionary = terrain.boulder_definitions[0]
+		var boulder_id: String = str(definition["id"])
+		var boulder_position: Vector3 = definition["position"]
+		if mode == "boulder-mid":
+			for _index: int in range(int(definition["remaining"]) / 2):
+				terrain.mine_boulder(boulder_id)
+		elif mode == "boulder-after":
+			while terrain.ore_boulders.remaining_for(boulder_id) > 0:
+				terrain.mine_boulder(boulder_id)
+			await get_tree().process_frame
+			print("BOULDER_CAPTURE remaining: %d, visual_present: %s" % [
+				terrain.ore_boulders.remaining_for(boulder_id), terrain.boulder_nodes.has(boulder_id)
+			])
+		_set_capture_view(boulder_position + Vector3(0.0, 0.8, 0.0), boulder_position + Vector3(0.0, 3.5, 7.5))
 		await get_tree().create_timer(0.8).timeout
 	elif mode == "line" or mode == "panel":
 		player.position = Vector3(-34.0, terrain.height_at(-34.0, 12.0) + 10.0, 12.0)
@@ -749,9 +799,42 @@ func _capture_screenshot(mode: String) -> void:
 			player.camera.fov = 70.0
 			hud.open_entity(demo_smelter_id)
 			await get_tree().create_timer(0.8).timeout
+	elif mode == "fps-demo":
+		player.position = Vector3(-34.0, terrain.height_at(-34.0, 12.0) + 10.0, 12.0)
+		player.rotation.y = -PI / 2.0
+		player.pitch = -0.4
+		player.camera.rotation.x = player.pitch
+		player.set_physics_process(false)
+		await get_tree().create_timer(2.0).timeout
+		var fps_total: float = 0.0
+		for _frame: int in range(30):
+			await get_tree().process_frame
+			fps_total += float(Engine.get_frames_per_second())
+		print("FPS_CAPTURE %s: %.1f" % [mode, fps_total / 30.0])
 	else:
 		await get_tree().create_timer(1.5).timeout
 	await get_tree().process_frame
-	var filename: String = "/home/ubuntu/specs/shots/v2/%s.png" % mode
+	if mode == "fps-spawn":
+		await get_tree().create_timer(2.0).timeout
+		var fps_total: float = 0.0
+		for _frame: int in range(30):
+			await get_tree().process_frame
+			fps_total += float(Engine.get_frames_per_second())
+		print("FPS_CAPTURE %s: %.1f" % [mode, fps_total / 30.0])
+	var capture_directory: String = OS.get_environment("FACTORY_CAPTURE_DIR")
+	if capture_directory.is_empty():
+		capture_directory = "/home/ubuntu/specs/shots/v2"
+	DirAccess.make_dir_recursive_absolute(capture_directory)
+	var filename: String = "%s/%s.png" % [capture_directory, mode]
 	var error: Error = get_viewport().get_texture().get_image().save_png(filename)
 	print("SCREENSHOT: %s (%s)" % [filename, error_string(error)])
+
+func _set_capture_view(target: Vector3, camera_position: Vector3) -> void:
+	player.position = camera_position
+	player.velocity = Vector3.ZERO
+	player.set_physics_process(false)
+	var direction: Vector3 = target - camera_position
+	player.rotation.y = atan2(-direction.x, -direction.z)
+	player.pitch = atan2(direction.y, Vector2(direction.x, direction.z).length())
+	player.camera.rotation.x = player.pitch
+	player.camera.fov = 65.0
