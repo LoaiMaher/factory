@@ -360,6 +360,9 @@ func _select_building(building_id: String) -> void:
 	var result: Dictionary = hotbar_model.select_or_assign("building", building_id, unlocked_tiers)
 	if not bool(result.get("ok", false)):
 		hud.show_toast(str(result.get("reason", "Unable to select building")))
+		if bool(result.get("full", false)):
+			build_system.choose(building_id)
+			hud.refresh_hotbar()
 		hud.close_build_menu()
 		if player.panel_open and not hud.panel_is_open():
 			player.set_panel_open(false)

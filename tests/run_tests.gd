@@ -583,6 +583,31 @@ func _test_hotbar_model() -> void:
 	_check("old saves without hotbar data receive the defaults",
 		old_save.slot_at(0) == {"type": "building", "id": "miner_mk1"}
 		and old_save.selected_index == -1, str(old_save.to_dict()))
+
+	var assignment_model: HotbarModel = HotbarModel.new()
+	assignment_model.selected_index = 0
+	var assignment: Dictionary = assignment_model.select_or_assign("building", "storage", 1)
+	_check("build-menu assignment uses the first empty slot instead of overwriting selection",
+		bool(assignment.get("ok", false)) and assignment.get("selected_index", -1) == 7
+		and assignment_model.slot_at(0) == {"type": "building", "id": "miner_mk1"}
+		and assignment_model.slot_at(7) == {"type": "building", "id": "storage"},
+		str([assignment, assignment_model.to_dict()]))
+
+	var full_model: HotbarModel = HotbarModel.new()
+	for index: int in range(HotbarModel.SLOT_COUNT):
+		full_model.assign(index, "item", "iron_ore")
+	full_model.selected_index = 5
+	var full_slots: Array[Dictionary] = full_model.slots.duplicate(true)
+	var full_result: Dictionary = full_model.select_or_assign("building", "smelter", 0)
+	var full_build_system: FactoryBuildSystem = FactoryBuildSystem.new()
+	if bool(full_result.get("full", false)):
+		full_build_system.choose("smelter")
+	_check("full hotbar leaves assignments unchanged and still allows building placement",
+		not bool(full_result.get("ok", true)) and bool(full_result.get("full", false))
+		and full_model.slots == full_slots and full_model.selected_index == 5
+		and full_build_system.selected == "smelter"
+		and full_result.get("reason", "") == "Hotbar full — hover an entry and press 1–0 to assign",
+		str([full_result, full_model.to_dict(), full_build_system.selected]))
 	_finish_group()
 
 func _test_hotbar_input_filtering() -> void:

@@ -120,9 +120,13 @@ func select_or_assign(slot_type: String, id: String, unlocked_tiers: int,
 		building_definitions: Dictionary = {}) -> Dictionary:
 	var index: int = find_slot(slot_type, id)
 	if index < 0:
-		index = selected_index if selected_index >= 0 else slots.find({})
+		index = slots.find({})
 		if index < 0:
-			return {"ok": false, "reason": "No empty hotbar slots"}
+			return {
+				"ok": false,
+				"full": true,
+				"reason": "Hotbar full — hover an entry and press 1–0 to assign"
+			}
 		if not assign(index, slot_type, id):
 			return {"ok": false, "reason": "Invalid hotbar item"}
 	if is_locked(index, unlocked_tiers, building_definitions):
