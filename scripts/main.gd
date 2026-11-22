@@ -1456,6 +1456,50 @@ func _capture_phase2_scenario(mode: String) -> void:
 		var position: Vector3 = _find_valid_capture_position("smelter", Vector3(40.0, 0.0, 70.0))
 		_set_placement_preview("smelter", position)
 		_set_capture_view(position + Vector3(0.0, 2.5, 0.0), position + Vector3(8.0, 5.0, 9.0))
+	elif mode == "v5-belt-into-smelter":
+		_build_demo_factory()
+		hud.show_toast("", 0.0)
+		sim.power.bypass = true
+		var utility_ids: Array[int] = []
+		for entity: FactoryEntity in sim.entities.values():
+			if entity.kind in ["geo_tap", "power_pole"]:
+				utility_ids.append(entity.id)
+		for entity_id: int in utility_ids:
+			sim.remove_entity(entity_id)
+		await get_tree().create_timer(8.0).timeout
+		var miner_id: int = -1
+		var constructor_id: int = -1
+		for entity: FactoryEntity in sim.entities.values():
+			if entity.kind == "miner_mk1":
+				miner_id = entity.id
+			elif entity.kind == "constructor":
+				constructor_id = entity.id
+		var input_belt_id: int = int(sim.port_links.get("%d:out0" % miner_id, -1))
+		var output_belt_id: int = int(sim.port_links.get("%d:out0" % demo_smelter_id, -1))
+		var input_belt: FactoryEntity = sim.entities.get(input_belt_id) as FactoryEntity
+		var output_belt: FactoryEntity = sim.entities.get(output_belt_id) as FactoryEntity
+		if input_belt != null:
+			var input_length: float = float(input_belt.extra.get("length", 0.0))
+			input_belt.belt_items = [
+				{"item": "iron_ore", "s": maxf(0.0, input_length - 1.15), "born_at": sim.time},
+				{"item": "iron_ore", "s": maxf(0.0, input_length - 0.15), "born_at": sim.time}
+			]
+		if output_belt != null:
+			output_belt.belt_items = [{"item": "iron_ingot", "s": 0.8, "born_at": sim.time}]
+		visuals.refresh()
+		set_physics_process(false)
+		viewmodel.visible = false
+		hud.hotbar.visible = false
+		var input_port: Dictionary = sim.port_world(demo_smelter_id, "in0")
+		var target: Vector3 = input_port.get("pos", Vector3.ZERO) + Vector3(0.0, 0.15, 0.0)
+		_set_capture_view(target, target + Vector3(-7.0, 4.0, -7.0))
+		await get_tree().create_timer(0.5).timeout
+		print("BELT_CAPTURE_STATE: miner=%d smelter=%d constructor=%d input=%s output=%s belts=%s/%s" % [
+			miner_id, demo_smelter_id, constructor_id,
+			str(sim.entities[demo_smelter_id].input_buffer), str(sim.entities[demo_smelter_id].output_buffer),
+			str(input_belt.belt_items if input_belt != null else []),
+			str(output_belt.belt_items if output_belt != null else [])
+		])
 	elif mode == "v5-red-overlap":
 		var position: Vector3 = _find_valid_capture_position("constructor", Vector3(50.0, 0.0, 82.0))
 		sim.add_entity("constructor", position)
