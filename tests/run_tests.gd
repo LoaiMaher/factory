@@ -134,6 +134,7 @@ func _test_belt_validation_and_flow() -> void:
 		str(blocked_belt.belt_items))
 
 	var incompatible: FactorySim = FactorySim.new()
+	incompatible.power.bypass = false
 	incompatible.register_node(1, "iron_ore", "normal", Vector3.ZERO, 60.0)
 	var miner: int = incompatible.add_entity("miner_mk1", Vector3.ZERO, 0.0, {"node_id": 1})
 	var copper_smelter: int = incompatible.add_entity("smelter", Vector3(0.0, 0.0, 10.0), 0.0, {"recipe": "copper_ingot"})
@@ -273,6 +274,7 @@ func _test_production_and_port_routing() -> void:
 		str(spire_sim.entities[spire].last_delivery_time))
 
 	var pole_sim: FactorySim = FactorySim.new()
+	pole_sim.power.bypass = false
 	pole_sim.register_node(4, "iron_ore", "normal", Vector3.ZERO, 60.0)
 	var pole_miner: int = pole_sim.add_entity("miner_mk1", Vector3.ZERO, 0.0, {"node_id": 4})
 	var pole: int = pole_sim.add_entity("belt_pole", Vector3(0.0, 0.0, 8.0))
@@ -477,6 +479,7 @@ func _test_save_migration_and_refunds() -> void:
 
 func _test_diagnostics() -> void:
 	var sim: FactorySim = FactorySim.new()
+	sim.power.bypass = false
 	var smelter: int = sim.add_entity("smelter", Vector3.ZERO, 0.0, {"recipe": "iron_ingot"})
 	var lines: Array[String] = sim.diagnostics(smelter)
 	sim.entities[smelter].input_buffer["iron_ore"] = 1
@@ -531,9 +534,15 @@ func _test_power_bypass() -> void:
 	var real_smelt: FactoryEntity = real_power.entities[real_power.next_id - 1]
 	var bypass_smelt: FactoryEntity = bypass_power.entities[bypass_power.next_id - 1]
 	var real_satisfaction: float = real_power.power.satisfaction(real_smelt.id, real_power.entities)
+	var real_network: int = int(real_power.power.network_for.get(real_smelt.id, -1))
 	_check("overloaded network browns out in real-power mode",
-		real_satisfaction > 0.0 and real_satisfaction < 1.0 and real_smelt.progress < bypass_smelt.progress,
-		str([real_satisfaction, real_smelt.progress, bypass_smelt.progress]))
+		real_satisfaction > 0.0 and real_satisfaction < 1.0
+		and is_equal_approx(float(real_power.power.supply_for.get(real_network, 0.0)), 50.0)
+		and is_equal_approx(float(real_power.power.demand_for.get(real_network, 0.0)), 52.0)
+		and real_smelt.progress < bypass_smelt.progress,
+		str([real_satisfaction, real_smelt.progress, bypass_smelt.progress,
+			real_power.power.supply_for.get(real_network, 0.0),
+			real_power.power.demand_for.get(real_network, 0.0), real_power.entities.size()]))
 	_check("overloaded network runs at full speed with bypass",
 		is_equal_approx(bypass_power.power.satisfaction(bypass_smelt.id, bypass_power.entities), 1.0)
 		and is_equal_approx(bypass_smelt.progress, 1.0), str(bypass_smelt.progress))
@@ -577,9 +586,9 @@ func _test_power_bypass() -> void:
 
 func _make_overloaded_power_sim(bypass_mode: bool) -> FactorySim:
 	var sim: FactorySim = FactorySim.new()
-	sim.register_vent("vent_overload", Vector3(-20.0, 0.0, 0.0))
-	sim.add_entity("geo_tap", Vector3(-20.0, 0.0, 0.0))
-	for x: float in [-20.0, 0.0, 20.0]:
+	sim.register_vent("vent_overload", Vector3(-40.0, 0.0, 0.0))
+	sim.add_entity("geo_tap", Vector3(-40.0, 0.0, 0.0))
+	for x: float in [-28.0, -8.0, 12.0, 32.0]:
 		sim.add_entity("power_pole", Vector3(x, 0.0, 8.0))
 	for index: int in range(13):
 		var x: float = -25.0 + float(index) * 4.0
