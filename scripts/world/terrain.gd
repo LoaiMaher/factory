@@ -257,6 +257,11 @@ func _terrain_normal(x_index: int, z_index: int) -> Vector3:
 	var south_height: float = height_samples[south * (max_index + 1) + x_index]
 	return Vector3(-(right_height - left_height) / dx, 1.0, -(south_height - north_height) / dz).normalized()
 
+func world_surface_normal_at(x: float, z: float) -> Vector3:
+	var slope_x: float = (height_at(x + 1.0, z) - height_at(x - 1.0, z)) * 0.5
+	var slope_z: float = (height_at(x, z + 1.0) - height_at(x, z - 1.0)) * 0.5
+	return Vector3(-slope_x, 1.0, -slope_z).normalized()
+
 func _terrain_masks(x: float, z: float, height: float, normal: Vector3) -> Color:
 	var radius: float = Vector2(x, z).length()
 	var lake_distance: float = Vector2(x, z).distance_to(LAKE_CENTER)
@@ -524,7 +529,7 @@ func _make_node_visual(definition: Dictionary) -> void:
 			ore_material.set_shader_parameter("patina_strength", 0.55 if item == "copper_ore" else 0.0)
 			ore_material.set_shader_parameter("vein_glow", 0.18 if purity == "pure" else 0.0)
 			mesh.material_override = ore_material
-	var normal: Vector3 = _terrain_normal(point.x, point.z)
+	var normal: Vector3 = world_surface_normal_at(point.x, point.z)
 	root.basis = Basis(Quaternion(Vector3.UP, normal))
 	var collision_body: StaticBody3D = StaticBody3D.new()
 	collision_body.collision_layer = 2

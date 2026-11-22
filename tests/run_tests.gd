@@ -12,6 +12,7 @@ func _run_all() -> void:
 	_test_placement_and_ports()
 	_test_glb_model_ports()
 	_test_ore_node_model()
+	_test_ore_node_world_normal()
 	_test_deposit_reservations()
 	_test_belt_validation_and_flow()
 	_test_splitter_merger_backpressure()
@@ -98,6 +99,21 @@ func _test_ore_node_model() -> void:
 	_check("shared ore-node shader is available",
 		load("res://shaders/resource_node.gdshader") is Shader,
 		"shaders/resource_node.gdshader")
+	_finish_group()
+
+func _test_ore_node_world_normal() -> void:
+	var terrain: FactoryTerrain = FactoryTerrain.new()
+	terrain._configure_noise()
+	var x: float = 15.0
+	var z: float = 340.0
+	var slope_x: float = (terrain.height_at(x + 1.0, z) - terrain.height_at(x - 1.0, z)) * 0.5
+	var slope_z: float = (terrain.height_at(x, z + 1.0) - terrain.height_at(x, z - 1.0)) * 0.5
+	var expected: Vector3 = Vector3(-slope_x, 1.0, -slope_z).normalized()
+	var actual: Vector3 = terrain.world_surface_normal_at(x, z)
+	_check("sloped resource-node normal follows world height gradient",
+		expected.y < 0.99999 and actual.distance_to(expected) < 0.00001,
+		str([actual, expected, slope_x, slope_z]))
+	terrain.free()
 	_finish_group()
 
 func _test_deposit_reservations() -> void:
