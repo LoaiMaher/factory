@@ -69,9 +69,9 @@ func refresh(factory_model: HotbarModel, current_inventory: Dictionary, tier: in
 		slot_locks[index].visible = locked
 		if locked:
 			var building_id: String = str(slot.get("id", ""))
-			var tier: int = int(BuildingDefs.all().get(building_id, {}).get("tier", 0))
+			var locked_tier: int = int(BuildingDefs.all().get(building_id, {}).get("tier", 0))
 			var lock_label: Label = slot_locks[index].get_node("LockLabel") as Label
-			lock_label.text = "LOCK T%d" % tier
+			lock_label.text = "LOCK T%d" % locked_tier
 		slot_buttons[index].modulate = Color(0.55, 0.58, 0.6, 0.5) if not has_count else Color.WHITE
 		slot_buttons[index].mouse_filter = Control.MOUSE_FILTER_STOP if interactive else Control.MOUSE_FILTER_IGNORE
 

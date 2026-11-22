@@ -81,14 +81,18 @@ func _process(delta: float) -> void:
 	var idle_y: float = cos(animation_time * 1.4) * 0.005
 	var switch_offset: float = _update_switch(delta)
 	if hand_left != null:
+		hand_left.scale = Vector3.ONE * 0.62
 		hand_left.position = left_hand_base + Vector3(idle_x - mouse_lag.x, bob + idle_y + mouse_lag.y + switch_offset, 0.0)
-		hand_left.rotation.z = -0.08 + mouse_lag.x * 0.2
+		hand_left.rotation = Vector3(-0.12, 0.0, -0.08 + mouse_lag.x * 0.2)
 	if hand_right != null:
-		hand_right.position = right_hand_base + Vector3(idle_x + mouse_lag.x, bob - idle_y + mouse_lag.y + switch_offset, 0.0)
 		var mining_rotation: float = _mining_swing_rotation(delta)
-		hand_right.rotation.x = -0.04 - mining_rotation
+		var swing_offset: Vector3 = Vector3(0.0, mining_rotation * 0.3, -mining_rotation * 0.1)
+		hand_right.scale = Vector3.ONE * 0.62
+		hand_right.position = right_hand_base + Vector3(idle_x + mouse_lag.x,
+			bob - idle_y + mouse_lag.y + switch_offset, 0.0) + swing_offset
+		hand_right.rotation.x = -0.12 - mining_rotation * 0.4
 		if build_tool != null:
-			build_tool.rotation.x = mining_rotation * 0.65
+			build_tool.rotation.x = mining_rotation * 0.75
 	if build_tool != null:
 		var dismantling: bool = build_system != null and build_system.dismantle_mode
 		build_tool.visible = current_action.get("type", "empty") == "building" or dismantling
@@ -168,7 +172,8 @@ func _create_overlay() -> void:
 		build_tool = tool_scene.instantiate() as Node3D
 		build_tool.name = "BuildTool"
 		hand_right.add_child(build_tool)
-		build_tool.position = Vector3(0.03, 0.09, 0.1)
+		build_tool.position = Vector3(-0.03, 0.4, 0.1)
+		build_tool.scale = Vector3.ONE * 0.95
 		build_tool.rotation = Vector3(-0.08, 0.0, 0.0)
 		machine_models.apply_pbr_materials(build_tool)
 		_set_viewmodel_layers(build_tool)
@@ -181,6 +186,7 @@ func _create_overlay() -> void:
 		held_item.name = "HeldItem"
 		held_item.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 		held_item.position = Vector3(0.0, 0.26, -0.19)
+		held_item.scale = Vector3.ONE * 0.72
 		hand_right.add_child(held_item)
 		_set_viewmodel_layers(held_item)
 		held_item.visible = false
