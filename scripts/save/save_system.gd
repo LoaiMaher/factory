@@ -2,7 +2,7 @@ extends RefCounted
 class_name FactorySaveSystem
 
 const SAVE_PATH: String = "user://save.json"
-const SAVE_VERSION: int = 1
+const SAVE_VERSION: int = 3
 
 var save_path: String = SAVE_PATH
 var backup_path: String = "user://save.bak.json"
@@ -46,10 +46,11 @@ func load_game(sim: FactorySim, player: FactoryPlayer) -> Dictionary:
 	if file == null:
 		return {}
 	var parsed: Variant = JSON.parse_string(file.get_as_text())
-	if not parsed is Dictionary or int(parsed.get("version", 0)) != SAVE_VERSION:
+	if not parsed is Dictionary or int(parsed.get("version", 0)) not in [1, 2, SAVE_VERSION]:
 		return {}
 	var data: Dictionary = parsed
-	sim.from_dict(data.get("sim", {}))
+	var source_version: int = int(data.get("version", 0))
+	var belt_refund: Dictionary = sim.from_dict(data.get("sim", {}))
 	var player_data: Dictionary = data.get("player", {})
 	var position: Array = player_data.get("position", [0.0, 1.0, 12.0])
 	player.position = Vector3(float(position[0]), float(position[1]), float(position[2]))
@@ -63,4 +64,5 @@ func load_game(sim: FactorySim, player: FactoryPlayer) -> Dictionary:
 	var world_state: Variant = data.get("world", {})
 	if not world_state is Dictionary:
 		world_state = {}
-	return {"unlocked_tiers": int(data.get("unlocked_tiers", 0)), "world": (world_state as Dictionary).duplicate(true)}
+	return {"unlocked_tiers": int(data.get("unlocked_tiers", 0)), "world": (world_state as Dictionary).duplicate(true),
+		"migrated_from": source_version if source_version < SAVE_VERSION else 0, "belt_refund": belt_refund}
