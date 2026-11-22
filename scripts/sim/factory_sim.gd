@@ -86,6 +86,8 @@ func add_entity(kind: String, position: Vector3, yaw: float = 0.0, data: Diction
 	entity.yaw = yaw
 	entity.extra = data.duplicate(true)
 	entity.recipe_id = str(data.get("recipe", ""))
+	if entity.recipe_id.is_empty():
+		entity.recipe_id = Recipes.default_for(kind)
 	entity.cost = building_definitions[kind].get("cost", {}).duplicate(true)
 	if kind == "miner_mk1":
 		entity.extra["node_id"] = node_id
@@ -204,8 +206,21 @@ func try_insert(entity_id: int, item_id: String, port_id: String) -> bool:
 			entity.extra["received"] = int(entity.extra.get("received", 0)) + 1
 			entity.input_buffer[item_id] = int(entity.input_buffer.get(item_id, 0)) + 1
 		return true
-	if not _is_machine(entity.kind) or not _valid_input(entity, item_id):
+	if not _is_machine(entity.kind):
 		return false
+	if not _valid_input(entity, item_id):
+		if _inventory_total(entity.input_buffer) > 0 or _inventory_total(entity.output_buffer) > 0:
+			return false
+		var compatible_recipe: String = ""
+		for recipe_id: String in Recipes.for_machine(entity.kind):
+			var candidate: Dictionary = recipe_definitions.get(recipe_id, {})
+			if candidate.get("inputs", {}).has(item_id):
+				compatible_recipe = recipe_id
+				break
+		if compatible_recipe.is_empty():
+			return false
+		entity.recipe_id = compatible_recipe
+		entity.progress = 0.0
 	var recipe: Dictionary = recipe_definitions[entity.recipe_id]
 	var maximum: int = maxi(10, int(recipe["inputs"].get(item_id, 0)) * 2)
 	if int(entity.input_buffer.get(item_id, 0)) >= maximum:
@@ -389,7 +404,9 @@ func from_dict(data: Dictionary) -> Dictionary:
 			restore_failure_count += 1
 			continue
 		var entity: FactoryEntity = entities[entity_id]
-		entity.recipe_id = str(saved.get("recipe", entity.recipe_id))
+		var saved_recipe: String = str(saved.get("recipe", ""))
+		if not saved_recipe.is_empty():
+			entity.recipe_id = saved_recipe
 		entity.input_buffer = _int_dict(saved.get("input", saved.get("input_buffer", {})))
 		entity.output_buffer = _int_dict(saved.get("output", saved.get("output_buffer", {})))
 		entity.belt_items.assign(saved.get("items", saved.get("belt_items", [])))

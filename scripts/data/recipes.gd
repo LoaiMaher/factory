@@ -21,3 +21,7 @@ static func for_machine(machine_id: String) -> Array[String]:
 		if str(all()[recipe_id]["machine"]) == machine_id:
 			result.append(recipe_id)
 	return result
+
+static func default_for(machine_id: String) -> String:
+	var recipes: Array[String] = for_machine(machine_id)
+	return recipes[0] if not recipes.is_empty() else ""

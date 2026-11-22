@@ -14,6 +14,8 @@ func _run_all() -> void:
 	_test_belt_validation_and_flow()
 	_test_splitter_merger_backpressure()
 	_test_production_and_port_routing()
+	_test_recipe_less_smelter_repro()
+	_test_recipe_defaults_and_input_autoselect()
 	_test_full_chain_power_and_round_trip()
 	_test_save_migration_and_refunds()
 	_test_diagnostics()
@@ -142,6 +144,7 @@ func _test_belt_validation_and_flow() -> void:
 	incompatible.register_node(1, "iron_ore", "normal", Vector3.ZERO, 60.0)
 	var miner: int = incompatible.add_entity("miner_mk1", Vector3.ZERO, 0.0, {"node_id": 1})
 	var copper_smelter: int = incompatible.add_entity("smelter", Vector3(0.0, 0.0, 10.0), 0.0, {"recipe": "copper_ingot"})
+	incompatible.entities[copper_smelter].output_buffer["copper_ingot"] = 1
 	var incompatible_result: Dictionary = _connect(incompatible, "belt_mk1", miner, "out0", copper_smelter, "in0")
 	incompatible.try_push_from_port(miner, "out0", "iron_ore")
 	incompatible.tick(10.0)
@@ -294,6 +297,85 @@ func _test_production_and_port_routing() -> void:
 		and int(pole_sim.entities[pole_storage].input_buffer.get("iron_ore", 0)) == 5
 		and pole_sim.entities[pole].input_buffer.is_empty(),
 		str([pole_sim.entities[pole_storage].input_buffer, pole_sim.entities[pole].input_buffer]))
+	_finish_group()
+
+func _test_recipe_less_smelter_repro() -> void:
+	var sim: FactorySim = FactorySim.new()
+	sim.power.bypass = true
+	sim.register_node(51, "iron_ore", "normal", Vector3.ZERO, 60.0)
+	var miner: int = sim.add_entity("miner_mk1", Vector3.ZERO, 0.0, {"node_id": 51})
+	var smelter: int = sim.add_entity("smelter", Vector3(0.0, 0.0, 6.0))
+	var belt_id: int = int(_connect(sim, "belt_mk1", miner, "out0", smelter, "in0").get("id", -1))
+	_run_for(sim, 25.0)
+	var smelter_entity: FactoryEntity = sim.entities[smelter]
+	var belt: FactoryEntity = sim.entities[belt_id]
+	_check("recipe-less smelter receives miner ore and produces iron ingots",
+		miner > 0 and smelter > 0 and belt_id > 0
+		and int(smelter_entity.output_buffer.get("iron_ingot", 0)) > 0,
+		str([smelter_entity.recipe_id, belt.belt_items,
+			smelter_entity.input_buffer, smelter_entity.output_buffer]))
+	_finish_group()
+
+func _test_recipe_defaults_and_input_autoselect() -> void:
+	_check("machine recipe defaults use the first recipe in definitions",
+		Recipes.default_for("smelter") == "iron_ingot"
+		and Recipes.default_for("constructor") == "iron_plate"
+		and Recipes.default_for("assembler") == "hull_panel",
+		str([Recipes.default_for("smelter"), Recipes.default_for("constructor"),
+			Recipes.default_for("assembler")]))
+
+	var copper_sim: FactorySim = FactorySim.new()
+	var copper_smelter: int = copper_sim.add_entity("smelter", Vector3.ZERO)
+	var switched: bool = copper_sim.try_insert(copper_smelter, "copper_ore", "in0")
+	_run_for(copper_sim, 2.1)
+	var copper_entity: FactoryEntity = copper_sim.entities[copper_smelter]
+	_check("fresh smelter auto-selects copper ingots and processes copper ore",
+		copper_entity.recipe_id == "copper_ingot" and switched
+		and int(copper_entity.output_buffer.get("copper_ingot", 0)) > 0,
+		str([copper_entity.recipe_id, copper_entity.input_buffer, copper_entity.output_buffer]))
+
+	var input_buffer_sim: FactorySim = FactorySim.new()
+	var input_buffer_smelter: int = input_buffer_sim.add_entity("smelter", Vector3.ZERO)
+	input_buffer_sim.entities[input_buffer_smelter].input_buffer["iron_ore"] = 1
+	var input_buffer_switch: bool = input_buffer_sim.try_insert(input_buffer_smelter, "copper_ore", "in0")
+	_check("smelter with input buffered never switches recipes",
+		not input_buffer_switch
+		and input_buffer_sim.entities[input_buffer_smelter].recipe_id == "iron_ingot",
+		str(input_buffer_sim.entities[input_buffer_smelter].input_buffer))
+
+	var output_buffer_sim: FactorySim = FactorySim.new()
+	var output_buffer_smelter: int = output_buffer_sim.add_entity("smelter", Vector3.ZERO)
+	output_buffer_sim.entities[output_buffer_smelter].output_buffer["iron_ingot"] = 1
+	var output_buffer_switch: bool = output_buffer_sim.try_insert(output_buffer_smelter, "copper_ore", "in0")
+	_check("smelter with output buffered never switches recipes",
+		not output_buffer_switch
+		and output_buffer_sim.entities[output_buffer_smelter].recipe_id == "iron_ingot",
+		str(output_buffer_sim.entities[output_buffer_smelter].output_buffer))
+
+	var saved_sim: FactorySim = FactorySim.new()
+	var saved_smelter: int = saved_sim.add_entity("smelter", Vector3.ZERO, 0.0, {"recipe": "copper_ingot"})
+	var saved_data: Dictionary = saved_sim.to_dict()
+	var restored: FactorySim = FactorySim.new()
+	restored.from_dict(saved_data)
+	_check("save/load retains an explicitly selected machine recipe",
+		restored.entities.has(saved_smelter)
+		and restored.entities[saved_smelter].recipe_id == "copper_ingot",
+		str(restored.entities.get(saved_smelter).recipe_id if restored.entities.has(saved_smelter) else "missing"))
+
+	var legacy_data: Dictionary = saved_data.duplicate(true)
+	var legacy_entities: Array = legacy_data["entities"]
+	var legacy_smelter: Dictionary = legacy_entities[0].duplicate(true)
+	legacy_smelter.erase("recipe")
+	legacy_smelter["extra"].erase("recipe")
+	legacy_entities[0] = legacy_smelter
+	legacy_data["entities"] = legacy_entities
+	var legacy_restored: FactorySim = FactorySim.new()
+	legacy_restored.from_dict(legacy_data)
+	_check("saved machines without a recipe receive the machine default",
+		legacy_restored.entities.has(saved_smelter)
+		and legacy_restored.entities[saved_smelter].recipe_id == "iron_ingot",
+		str(legacy_restored.entities.get(saved_smelter).recipe_id
+			if legacy_restored.entities.has(saved_smelter) else "missing"))
 	_finish_group()
 
 func _belt_items_match(expected: Array, actual: Array) -> bool:
@@ -607,7 +689,7 @@ func _test_visual_state() -> void:
 	sim.tick(0.05)
 	var idle: Dictionary = sim.visual_state(smelter)
 	_check("visual state exposes idle status without productivity",
-		idle.get("status", "") == "No recipe"
+		idle.get("status", "") == "Missing input: Iron Ore"
 		and float(idle.get("productivity", -1.0)) == 0.0
 		and bool(idle.get("powered", false)), str(idle))
 	sim.entities[smelter].recipe_id = "iron_ingot"
