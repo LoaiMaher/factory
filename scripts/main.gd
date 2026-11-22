@@ -624,9 +624,9 @@ func _capture_screenshot(mode: String) -> void:
 		if sim.entities.size() <= 1:
 			_build_demo_factory()
 			visuals.refresh()
-		player.position = Vector3(-17.0, terrain.height_at(-17.0, 24.0) + 1.0, 24.0)
+		player.position = Vector3(-12.0, terrain.height_at(-12.0, 22.0) + 1.0, 22.0)
 		player.rotation.y = 0.0
-		player.pitch = -0.12
+		player.pitch = -0.32
 		player.camera.rotation.x = player.pitch
 		await get_tree().create_timer(13.0).timeout
 		if mode == "panel" and demo_smelter_id >= 0:
