@@ -11,17 +11,17 @@ from mathutils import Matrix, Vector
 
 ROOT = Path(__file__).resolve().parents[2]
 MODEL_DIR = ROOT / "assets" / "models"
-PREVIEW_DIR = Path("/home/ubuntu/specs/shots/v4/models")
+PREVIEW_DIR = Path("/home/ubuntu/specs/shots/v11/models")
 PREVIEW_DIR.mkdir(parents=True, exist_ok=True)
 MODEL_DIR.mkdir(parents=True, exist_ok=True)
 
 MATERIALS = {
-    "Paint_Orange": ((0.86, 0.22, 0.055, 1.0), 0.24, 0.38),
-    "Paint_Dark": ((0.105, 0.135, 0.13, 1.0), 0.42, 0.42),
-    "Steel": ((0.34, 0.39, 0.37, 1.0), 0.68, 0.36),
+    "Paint_Orange": ((0.78, 0.27, 0.025, 1.0), 0.3, 0.45),
+    "Paint_Dark": ((0.055, 0.065, 0.075, 1.0), 0.6, 0.45),
+    "Steel": ((0.48, 0.52, 0.55, 1.0), 0.8, 0.45),
     "Concrete": ((0.35, 0.37, 0.33, 1.0), 0.02, 0.92),
     "Glass": ((0.11, 0.35, 0.39, 1.0), 0.3, 0.18),
-    "Rubber": ((0.035, 0.045, 0.043, 1.0), 0.0, 0.86),
+    "Rubber": ((0.025, 0.029, 0.032, 1.0), 0.0, 0.86),
     "Glove_Charcoal": ((0.13, 0.14, 0.15, 1.0), 0.02, 0.62),
     "Pick_Wood": ((0.42, 0.24, 0.11, 1.0), 0.0, 0.82),
     "Hazard": ((0.95, 0.57, 0.055, 1.0), 0.22, 0.48),
@@ -104,7 +104,7 @@ def finish_mesh(obj, mat_name, bevel=0.025, segments=2, smooth=False):
     if bevel > 0.0:
         bevel_mod = obj.modifiers.new("Machined_Edge_Bevel", "BEVEL")
         bevel_mod.width = bevel
-        bevel_mod.segments = 1
+        bevel_mod.segments = max(2, segments)
         bevel_mod.limit_method = "ANGLE"
         bevel_mod.angle_limit = math.radians(28.0)
         bevel_mod.harden_normals = True
@@ -115,14 +115,14 @@ def finish_mesh(obj, mat_name, bevel=0.025, segments=2, smooth=False):
 
 
 def cube(parent, name, location, dimensions, mat_name="Paint_Dark",
-         bevel=0.04, rotation=(0.0, 0.0, 0.0)):
+         bevel=0.05, rotation=(0.0, 0.0, 0.0)):
     bpy.ops.mesh.primitive_cube_add(size=1.0)
     obj = bpy.context.object
     obj.name = name
     obj.dimensions = dimensions
     bpy.ops.object.transform_apply(location=False, rotation=False, scale=True)
     attach(obj, parent, location, rotation)
-    return finish_mesh(obj, mat_name, min(bevel, min(dimensions) * 0.28), 1)
+    return finish_mesh(obj, mat_name, min(bevel, min(dimensions) * 0.28), 2)
 
 
 def cylinder(parent, name, location, radius, depth, mat_name="Steel",
@@ -322,35 +322,82 @@ def build_miner():
 
 def build_smelter():
     root, body = machine_root()
-    add_frame(body, 3.65, 3.65, 0.18, 0.18)
-    for x in (-1.36, 1.36):
-        for y in (-1.25, 1.25):
-            cylinder(body, "Furnace_Leg", (x, y, 0.52), 0.17, 0.7, "Steel", 16)
-    cylinder(body, "Furnace_Belly", (0.0, 0.0, 1.35), 1.42, 2.05, "Paint_Dark", 12, 0.06)
-    for z, radius in ((0.52, 1.5), (0.72, 1.48), (2.25, 1.48), (2.42, 1.37)):
-        torus(body, "Furnace_Armor_Ring", (0.0, 0.0, z), radius, 0.075, "Steel")
-    for index in range(12):
-        angle = math.tau * index / 12
-        x, y = math.cos(angle) * 1.43, math.sin(angle) * 1.43
-        cylinder(body, "Furnace_Rivet", (x, y, 1.4), 0.075, 0.07, "Hazard", 12, 0.006,
-                 (math.pi / 2, 0.0, angle))
-    cube(body, "Furnace_Front_Fascia", (0.0, -1.43, 1.4), (1.9, 0.25, 1.2), "Paint_Orange", 0.09)
-    inset_panel(body, "Furnace_Service_Panel", (0.0, -1.57, 1.7), 1.4, 0.58, "Paint_Dark")
-    for x in (-0.44, 0.0, 0.44):
-        bolt(body, "Service_Panel_Bolt", (x, -1.61, 1.93), "Hazard", 0.045)
-    cube(body, "Furnace_Mouth_Rim", (0.0, -1.6, 0.97), (1.22, 0.22, 0.72), "Hazard")
-    glow = empty("Furnace_Glow", root, (0.0, -1.74, 0.98))
-    cube(glow, "Furnace_Glow_Mesh", (0.0, 0.0, 0.0), (0.82, 0.08, 0.42), "Emissive_Furnace")
-    cube(body, "Crucible_Housing", (0.0, 0.0, 2.62), (2.8, 2.8, 0.46), "Paint_Orange")
-    cone(body, "Top_Hopper", (0.0, 0.0, 3.15), 0.68, 0.38, 0.65, "Steel", 12)
-    cylinder(body, "Hopper_Rim", (0.0, 0.0, 3.51), 0.72, 0.11, "Hazard", 20)
-    cylinder(body, "Chimney", (0.85, 0.65, 3.55), 0.28, 2.1, "Steel", 20)
-    for z in (2.62, 4.32):
-        torus(body, "Chimney_Flange", (0.85, 0.65, z), 0.36, 0.07, "Hazard")
-    torus(body, "Chimney_Elbow", (0.6, 0.65, 4.25), 0.23, 0.07, "Steel", (math.pi / 2, 0.0, 0.0))
-    for x in (-1.2, -0.85, 0.85, 1.2):
-        vent_bank(body, (x, -1.52, 1.5), 4, 0.36, "Steel")
-    add_status_light(body, (1.35, -1.65, 2.4))
+    cube(body, "Furnace_Base_Plate", (0.0, 0.0, 0.2), (3.9, 3.9, 0.34), "Paint_Dark", 0.08)
+    for x in (-1.68, 1.68):
+        for y in (-1.68, 1.68):
+            cube(body, "Furnace_Foot", (x, y, 0.15), (0.52, 0.52, 0.3), "Steel", 0.07)
+            cube(body, "Furnace_Foot_Guard", (x, y, 0.33), (0.42, 0.42, 0.09), "Hazard", 0.035)
+    for y in (-1.93, 1.93):
+        cube(body, "Furnace_Base_Hazard_Rail", (0.0, y, 0.43), (3.45, 0.13, 0.2), "Hazard", 0.04)
+    add_frame(body, 3.55, 3.55, 0.57, 0.18, "Paint_Dark")
+    for x in (-1.57, 1.57):
+        for y in (-1.57, 1.57):
+            cube(body, "Crucible_Frame_Pylon", (x, y, 2.72), (0.2, 0.2, 4.2), "Steel", 0.045)
+            cube(body, "Pylon_Armor_Collar", (x, y, 1.18), (0.27, 0.27, 0.18), "Paint_Orange", 0.045)
+            cylinder_between(body, "Frame_Diagonal_Brace",
+                             (x, y, 1.35), (-x * 0.92, y, 4.52), 0.055, "Steel", 16)
+    for z in (0.78, 4.72):
+        for y in (-1.6, 1.6):
+            cube(body, "Furnace_Gantry_Rail", (0.0, y, z), (3.5, 0.18, 0.2), "Paint_Dark", 0.05)
+        for x in (-1.6, 1.6):
+            cube(body, "Furnace_Gantry_Cross_Rail", (x, 0.0, z), (0.18, 3.5, 0.2), "Paint_Dark", 0.05)
+
+    cylinder(body, "Crucible_Shell", (0.0, 0.0, 2.23), 1.24, 2.92, "Paint_Dark", 32, 0.06)
+    for z, radius in ((0.82, 1.25), (1.0, 1.28), (3.53, 1.28), (3.72, 1.16)):
+        torus(body, "Crucible_Steel_Band", (0.0, 0.0, z), radius, 0.085, "Steel")
+    for angle_index in range(24):
+        angle = math.tau * angle_index / 24
+        x, y = math.cos(angle) * 1.27, math.sin(angle) * 1.27
+        bolt(body, "Crucible_Bolt", (x, y, 2.24), "Steel", 0.035, "Z")
+    for side in (-1.0, 1.0):
+        cube(body, "Orange_Crucible_Armor", (side * 0.55, -1.28, 2.55),
+             (0.72, 0.16, 1.75), "Paint_Orange", 0.07, (0.0, side * math.radians(4), 0.0))
+        cube(body, "Armor_Hinge", (side * 0.96, -1.29, 2.55), (0.1, 0.24, 1.92), "Steel", 0.035)
+        for z in (2.05, 2.35, 2.65, 2.95):
+            cube(body, "Armor_Rib", (side * 0.91, -1.39, z), (0.08, 0.08, 0.08), "Paint_Dark", 0.025)
+    for y in (-1.0, 1.0):
+        cube(body, "Crucible_Slit_Shroud", (0.0, y * 1.27, 2.55), (0.42, 0.22, 1.9), "Paint_Dark", 0.04)
+        glow = empty("Furnace_Glow", root, (0.0, y * 1.34, 2.55))
+        cube(glow, "Furnace_Glow_Slit", (0.0, 0.0, 0.0), (0.22, 0.08, 1.5), "Emissive_Furnace", 0.025)
+        for z in (1.9, 2.35, 2.8, 3.25):
+            cube(body, "Slit_Guard_Bar", (0.0, y * 1.4, z), (0.42, 0.12, 0.07), "Steel", 0.025)
+
+    cube(body, "Furnace_Service_Panel", (1.25, -0.72, 1.35), (0.22, 1.1, 0.86), "Paint_Orange", 0.055)
+    cube(body, "Service_Panel_Display", (1.38, -0.72, 1.43), (0.035, 0.52, 0.32), "Glass", 0.015)
+    for z in (1.1, 1.37, 1.64):
+        cylinder(body, "Service_Control", (1.42, -0.48, z), 0.045, 0.08, "Steel", 16,
+                 rotation=(0.0, math.pi / 2.0, 0.0))
+
+    cylinder(body, "Crucible_Crown", (0.0, 0.0, 3.82), 1.17, 0.3, "Paint_Orange", 32, 0.04)
+    cone(body, "Feed_Hopper", (0.0, 0.0, 4.17), 0.74, 0.46, 0.52, "Steel", 24)
+    torus(body, "Feed_Hopper_Rim", (0.0, 0.0, 4.45), 0.76, 0.07, "Steel")
+    cylinder(body, "Chimney_Stack", (0.82, 0.72, 4.15), 0.26, 1.42, "Paint_Dark", 24, 0.035)
+    for z in (3.48, 4.68):
+        torus(body, "Chimney_Flange", (0.82, 0.72, z), 0.33, 0.06, "Steel")
+    cylinder(body, "Chimney_Cap", (0.82, 0.72, 4.93), 0.39, 0.12, "Paint_Orange", 24, 0.025)
+    for angle_index in range(12):
+        angle = math.tau * angle_index / 12
+        cylinder_between(body, "Chimney_Cap_Standoff",
+                         (0.82 + math.cos(angle) * 0.29, 0.72 + math.sin(angle) * 0.29, 4.72),
+                         (0.82 + math.cos(angle) * 0.29, 0.72 + math.sin(angle) * 0.29, 4.87),
+                         0.025, "Steel", 10)
+    for x in (-1.15, 1.15):
+        cylinder_between(body, "Crucible_Pressure_Pipe", (x, -1.18, 1.0), (x, -1.18, 3.3), 0.11, "Steel", 20)
+        for z in (1.1, 2.0, 2.9):
+            torus(body, "Pipe_Flange", (x, -1.18, z), 0.15, 0.035, "Steel")
+        for y in (-1.37, -0.99):
+            cube(body, "Pressure_Pipe_Clamp", (x, y, 2.1), (0.24, 0.1, 0.13), "Paint_Orange", 0.03)
+
+    ladder(body, (-1.78, -0.72, 0.58), 3.9, 0.5, "Steel")
+    for z in (1.05, 1.8, 2.55, 3.3):
+        cube(body, "Access_Platform", (1.5, 0.0, z), (0.48, 1.8, 0.09), "Paint_Dark", 0.035)
+        for y in (-0.8, 0.8):
+            cylinder_between(body, "Platform_Railing", (1.76, y, z + 0.05), (1.76, y, z + 0.42), 0.025, "Steel", 10)
+    piston = empty("Piston", root, (0.0, 0.0, 4.0))
+    cylinder(piston, "Piston_Hydraulic_Barrel", (0.0, 0.0, 0.0), 0.17, 0.9, "Paint_Dark", 24)
+    cylinder(piston, "Piston_Chrome_Rod", (0.0, 0.0, -0.62), 0.08, 0.65, "Steel", 20)
+    cylinder(piston, "Piston_Head", (0.0, 0.0, -0.98), 0.29, 0.14, "Paint_Orange", 24)
+    add_status_light(body, (1.42, -1.7, 4.45))
     return root, (4.0, 4.0, 5.0)
 
 
@@ -986,22 +1033,61 @@ def clear_scene():
 
 def prepare_preview(camera_target, max_dimension):
     scene = bpy.context.scene
-    scene.render.engine = "BLENDER_WORKBENCH"
-    scene.render.resolution_x = 640
-    scene.render.resolution_y = 640
+    scene.render.engine = "BLENDER_EEVEE_NEXT"
+    scene.render.resolution_x = 1024
+    scene.render.resolution_y = 1024
     scene.render.resolution_percentage = 100
     scene.render.image_settings.file_format = "PNG"
     scene.render.film_transparent = False
-    scene.display.shading.light = "STUDIO"
-    scene.display.shading.studio_light = "paint.sl"
-    scene.display.shading.color_type = "MATERIAL"
-    scene.display.shading.show_shadows = True
-    scene.display.shading.show_cavity = True
-    scene.display.shading.cavity_type = "BOTH"
-    scene.display.shading.curvature_ridge_factor = 1.2
-    scene.display.shading.curvature_valley_factor = 0.8
-    scene.display.shading.background_type = "WORLD"
-    scene.world.color = (0.075, 0.085, 0.075)
+    scene.render.engine = "BLENDER_EEVEE_NEXT"
+    scene.render.image_settings.color_mode = "RGBA"
+    scene.render.resolution_percentage = 100
+    scene.world.use_nodes = True
+    scene.view_settings.view_transform = "Standard"
+    world_nodes = scene.world.node_tree.nodes
+    world_links = scene.world.node_tree.links
+    world_nodes.clear()
+    output = world_nodes.new("ShaderNodeOutputWorld")
+    background = world_nodes.new("ShaderNodeBackground")
+    environment = world_nodes.new("ShaderNodeTexEnvironment")
+    environment.image = bpy.data.images.load(str(ROOT / "assets" / "hdris" / "kloppenheim_06_puresky_2k.hdr"), check_existing=True)
+    coordinates = world_nodes.new("ShaderNodeTexCoord")
+    world_links.new(coordinates.outputs["Generated"], environment.inputs["Vector"])
+    mix = world_nodes.new("ShaderNodeMixRGB")
+    mix.blend_type = "MIX"
+    mix.inputs[0].default_value = 0.18
+    mix.inputs[2].default_value = (0.25, 0.26, 0.27, 1.0)
+    world_links.new(environment.outputs["Color"], mix.inputs[1])
+    world_links.new(mix.outputs["Color"], background.inputs["Color"])
+    background.inputs["Strength"].default_value = 0.3
+    world_links.new(background.outputs["Background"], output.inputs["Surface"])
+
+    for name, location, energy, size, color in [
+        ("Studio_Key", (5.0, -6.0, 8.0), 1200.0, 5.0, (1.0, 0.9, 0.82)),
+        ("Studio_Fill", (-6.0, -2.0, 4.5), 700.0, 4.0, (0.82, 0.88, 0.95)),
+        ("Studio_Rim", (1.0, 5.0, 7.5), 1300.0, 3.5, (1.0, 0.84, 0.69)),
+    ]:
+        light_data = bpy.data.lights.new(name, "AREA")
+        light_data.energy = energy
+        light_data.shape = "DISK"
+        light_data.size = size
+        light_data.color = color
+        light = bpy.data.objects.new(name, light_data)
+        bpy.context.collection.objects.link(light)
+        light.location = location
+        light.rotation_euler = (Vector((0.0, 0.0, camera_target[2] * 0.6)) - light.location).to_track_quat("-Z", "Y").to_euler()
+
+    bpy.ops.mesh.primitive_plane_add(size=max_dimension * 6.0, location=(0.0, 0.0, 0.0))
+    ground = bpy.context.object
+    ground.name = "Studio_Ground"
+    ground_material = bpy.data.materials.new("Studio_Grey")
+    ground_material.diffuse_color = (0.28, 0.29, 0.3, 1.0)
+    ground_material.use_nodes = True
+    ground_shader = ground_material.node_tree.nodes.get("Principled BSDF")
+    ground_shader.inputs["Base Color"].default_value = ground_material.diffuse_color
+    ground_shader.inputs["Roughness"].default_value = 0.92
+    ground.data.materials.append(ground_material)
+    ground.location.z = -0.03
     data = bpy.data.cameras.new("Turntable_Camera")
     camera = bpy.data.objects.new("Turntable_Camera", data)
     bpy.context.collection.objects.link(camera)
@@ -1193,8 +1279,9 @@ def build_asset(kind, builder):
             join_group(group, group.name + "_Mesh")
     objects = list(bpy.context.scene.objects)
     triangles = model_triangles(objects)
-    if not (kind.startswith("tree_") or kind.startswith("grass_") or kind in ("hands", "build_tool", "hand_pick")) and not 2000 <= triangles <= 15000:
-        raise RuntimeError("%s has %d triangles; expected 2,000–15,000" % (kind, triangles))
+    if kind in {"miner_mk1", "smelter", "constructor", "assembler", "geo_tap",
+                "power_pole", "storage", "splitter", "merger", "belt"} and not 12000 <= triangles <= 40000:
+        raise RuntimeError("%s has %d triangles; expected 12,000–40,000" % (kind, triangles))
     TRI_COUNTS[kind] = triangles
     glb_path = MODEL_DIR / (kind + ".glb")
     bpy.ops.object.select_all(action="DESELECT")
