@@ -130,6 +130,7 @@ func _ready() -> void:
 			break
 		if argument == "--capture-machine-set":
 			call_deferred("_capture_machine_set")
+			break
 		if argument == "--capture-v11":
 			call_deferred("_capture_v11_shots")
 			break
@@ -1271,6 +1272,7 @@ func _capture_machine_set() -> void:
 	hud.show_toast("", 0.0)
 	hud.hide()
 	visuals.visible = false
+	viewmodel.visible = false
 	for kind: String in ["miner_mk1", "smelter", "constructor", "assembler", "geo_tap",
 			"power_pole", "storage", "splitter", "merger", "belt", "belt_pole",
 			"spire", "hub", "drop_pod"]:
@@ -1289,9 +1291,25 @@ func _capture_machine_set() -> void:
 		var camera_distance: float = maxf(4.5, maxf(model_size.x, maxf(model_size.z, model_size.y)) * 1.25)
 		_set_capture_view(target, target + Vector3(camera_distance * 0.35, camera_distance * 0.32, camera_distance))
 		await get_tree().create_timer(0.7).timeout
-		_write_capture("machine-" + kind)
+		var capture_name: String = "ascent_spire" if kind == "spire" else kind
+		_write_capture("machine-" + capture_name)
 		capture_root.queue_free()
 		await get_tree().process_frame
+	var ore_source: Node3D = terrain.find_child("iron_ore_normal", true, false) as Node3D
+	if ore_source == null:
+		push_error("Missing iron resource node for machine montage")
+		get_tree().quit()
+		return
+	var ore_capture: Node3D = ore_source.duplicate() as Node3D
+	ore_capture.name = "IronOreNodeCapture"
+	ore_capture.position = Vector3(0.0, terrain.height_at(0.0, 0.0), 0.0)
+	add_child(ore_capture)
+	var ore_target: Vector3 = ore_capture.position + Vector3.UP * 0.8
+	_set_capture_view(ore_target, ore_target + Vector3(2.1, 2.2, 5.7))
+	await get_tree().create_timer(0.7).timeout
+	_write_capture("machine-ore_node")
+	ore_capture.queue_free()
+	await get_tree().process_frame
 	get_tree().quit()
 
 func _capture_v11_shots() -> void:
@@ -1333,8 +1351,13 @@ func _capture_v11_shots() -> void:
 					break
 			if occupied_by_miner:
 				continue
-			var target: Vector3 = node_position + Vector3.UP * 0.3
-			_set_capture_view(target, target + Vector3(0.0, 8.0, 2.0))
+			var target: Vector3 = node_position + Vector3.UP * 0.65
+			var camera_offset: Vector3 = Vector3(4.2, 0.0, 4.2)
+			var camera_x: float = node_position.x + camera_offset.x
+			var camera_z: float = node_position.z + camera_offset.z
+			var camera_position: Vector3 = Vector3(
+				camera_x, terrain.height_at(camera_x, camera_z) + 1.7, camera_z)
+			_set_capture_view(target, camera_position)
 			await get_tree().create_timer(0.8).timeout
 			_write_capture("ore-node-" + item.trim_suffix("_ore"))
 			break
