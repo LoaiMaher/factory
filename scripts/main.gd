@@ -20,6 +20,8 @@ var belt_preview_cells: Array[MeshInstance3D] = []
 var port_markers: Array[MeshInstance3D] = []
 var sim_accumulator: float = 0.0
 var autosave_elapsed: float = 0.0
+var autosave_enabled: bool = true
+var save_backup_pending: bool = false
 var unlocked_tiers: int = 0
 var hand_mine_elapsed: float = 0.0
 var spire_entity_id: int = -1
@@ -63,9 +65,21 @@ func _ready() -> void:
 	hud.quit_requested.connect(_quit_game)
 	spire_entity_id = sim.add_entity("spire", Vector2i(-3, -20))
 	_create_preview()
-	if OS.get_cmdline_user_args().has("--demo-factory"):
+	var arguments: PackedStringArray = OS.get_cmdline_user_args()
+	if arguments.has("--demo-factory"):
+		autosave_enabled = false
+		save_backup_pending = FileAccess.file_exists(save_system.save_path)
 		_build_demo_factory()
 		hud.show_toast("Demo factory loaded · diagnostics and item flow are live.", 8.0)
+	elif arguments.has("--new-game"):
+		save_backup_pending = FileAccess.file_exists(save_system.save_path)
+		hud.show_toast("New game started.", 6.0)
+	elif FileAccess.file_exists(save_system.save_path):
+		if _load_saved_game(false):
+			hud.show_toast("Loaded save.", 6.0)
+		else:
+			save_backup_pending = true
+			hud.show_toast("Save couldn't be loaded; starting a new game.", 6.0)
 	else:
 		hud.show_toast("Press H for controls · E to interact · B to build.", 6.0)
 	visuals.refresh()
@@ -76,10 +90,11 @@ func _ready() -> void:
 
 func _physics_process(delta: float) -> void:
 	sim_accumulator += delta
-	autosave_elapsed += delta
-	if autosave_elapsed >= 120.0:
-		autosave_elapsed = 0.0
-		_save_game()
+	if autosave_enabled:
+		autosave_elapsed += delta
+		if autosave_elapsed >= 120.0:
+			autosave_elapsed = 0.0
+			_save_game()
 	while sim_accumulator >= SIM_STEP:
 		sim.tick(SIM_STEP)
 		sim_accumulator -= SIM_STEP
@@ -534,16 +549,25 @@ func _dismantle_aimed() -> void:
 	hud.show_toast("Dismantled · materials and buffers refunded.")
 
 func _save_game() -> void:
+	if save_backup_pending:
+		if not save_system.backup_existing_save():
+			hud.show_toast("Save skipped · couldn't back up the existing save.", 6.0)
+			return
+		save_backup_pending = false
 	if save_system.save_game(sim, player, unlocked_tiers):
 		hud.show_toast("Saved to user://save.json")
 	else:
 		hud.show_toast("Save failed.")
 
 func _load_game() -> void:
+	_load_saved_game(true)
+
+func _load_saved_game(show_toast: bool) -> bool:
 	var loaded: Dictionary = save_system.load_game(sim, player)
 	if loaded.is_empty():
-		hud.show_toast("No compatible save found.")
-		return
+		if show_toast:
+			hud.show_toast("No compatible save found.")
+		return false
 	unlocked_tiers = int(loaded["unlocked_tiers"])
 	hud.unlocked_tiers = unlocked_tiers
 	hud._update_hotbar()
@@ -554,7 +578,9 @@ func _load_game() -> void:
 			break
 	visuals.refresh()
 	_reveal_discovered_nodes()
-	hud.show_toast("Factory loaded.")
+	if show_toast:
+		hud.show_toast("Factory loaded.")
+	return true
 
 func _buy_tier(index: int) -> void:
 	if index != unlocked_tiers + 1:

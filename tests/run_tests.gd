@@ -16,7 +16,8 @@ func _run_all() -> void:
 	_test_diagnostics()
 	_test_spire_progress()
 	_test_save_round_trip()
-	print("RESULT: %d/7 test groups passed" % passed_groups)
+	_test_save_backup()
+	print("RESULT: %d/8 test groups passed" % passed_groups)
 	quit(1 if failures > 0 else 0)
 
 func _test_belt_throughput() -> void:
@@ -284,6 +285,31 @@ func _test_save_round_trip() -> void:
 	DirAccess.remove_absolute(ProjectSettings.globalize_path(save_system.save_path))
 	player.queue_free()
 	restored_player.queue_free()
+	_finish_group()
+
+func _test_save_backup() -> void:
+	var save_system: FactorySaveSystem = FactorySaveSystem.new()
+	var suffix: String = str(int(Time.get_unix_time_from_system()))
+	save_system.save_path = "user://factory_backup_source_%s.json" % suffix
+	save_system.backup_path = "user://factory_backup_target_%s.json" % suffix
+	var source_file: FileAccess = FileAccess.open(save_system.save_path, FileAccess.WRITE)
+	if source_file == null:
+		_check("new game backs up an existing save", false, "source save could not be written")
+		_finish_group()
+		return
+	source_file.store_string("existing save data")
+	source_file.close()
+	var backed_up: bool = save_system.backup_existing_save()
+	var backup_file: FileAccess = FileAccess.open(save_system.backup_path, FileAccess.READ)
+	var backup_text: String = backup_file.get_as_text() if backup_file != null else ""
+	if backup_file != null:
+		backup_file.close()
+	_check("new game backs up an existing save", backed_up and not FileAccess.file_exists(save_system.save_path) and backup_text == "existing save data",
+		"backup contents %s" % backup_text)
+	if FileAccess.file_exists(save_system.save_path):
+		DirAccess.remove_absolute(ProjectSettings.globalize_path(save_system.save_path))
+	if FileAccess.file_exists(save_system.backup_path):
+		DirAccess.remove_absolute(ProjectSettings.globalize_path(save_system.backup_path))
 	_finish_group()
 
 func _run_for(sim: FactorySim, seconds: float) -> void:
