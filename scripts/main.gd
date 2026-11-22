@@ -44,6 +44,7 @@ var last_spire_stage: int = 0
 var dismantle_elapsed: float = 0.0
 var dismantle_pending: bool = false
 var demo_smelter_id: int = -1
+var capture_preview_override: bool = false
 
 func _ready() -> void:
 	FactoryPlayer.configure_input()
@@ -132,7 +133,8 @@ func _physics_process(delta: float) -> void:
 	visuals.interpolation_alpha = sim_accumulator / SIM_STEP
 	visuals.refresh()
 	_update_aim_status(delta)
-	_update_preview()
+	if not capture_preview_override:
+		_update_preview()
 	_update_sightings()
 
 func _process(delta: float) -> void:
@@ -369,7 +371,7 @@ func _build_belt_click(hit: Dictionary) -> void:
 	var pole_basis: Basis = Basis(Vector3.UP, pole_yaw)
 	var pole_input := {"pos": ground_position + pole_basis * Vector3(0.0, 1.0, -0.4), "normal": pole_basis * Vector3(0.0, 0.0, -1.0)}
 	var pole_curve_distance: float = source_port["pos"].distance_to(pole_input["pos"])
-	var pole_handle: float = clampf(pole_curve_distance * 0.4, 1.0, 8.0)
+	var pole_handle: float = _belt_handle(pole_curve_distance)
 	belt_curve = PackedVector3Array([source_port["pos"], source_port["pos"] + source_port["normal"] * pole_handle,
 		pole_input["pos"] + pole_input["normal"] * pole_handle, pole_input["pos"]])
 	var pole_cost: Dictionary = building_definitions["belt_pole"]["cost"]
@@ -414,9 +416,12 @@ func _nearest_port(position: Vector3, direction: String, include_occupied: bool 
 func _belt_curve(from_port: Dictionary, to_port: Dictionary) -> PackedVector3Array:
 	var a: Dictionary = sim.port_world(int(from_port["id"]), str(from_port["port"]))
 	var b: Dictionary = sim.port_world(int(to_port["id"]), str(to_port["port"]))
-	var handle: float = clampf(a["pos"].distance_to(b["pos"]) * 0.55, 1.5, 10.0)
+	var handle: float = _belt_handle(a["pos"].distance_to(b["pos"]))
 	return PackedVector3Array([a["pos"], a["pos"] + a["normal"] * handle,
 		b["pos"] + b["normal"] * handle, b["pos"]])
+
+func _belt_handle(distance: float) -> float:
+	return clampf(distance * 0.45, 0.5, 8.0)
 
 func _entity_from_hit(hit: Dictionary) -> FactoryEntity:
 	var object: Node = hit.get("collider") as Node
@@ -551,7 +556,7 @@ func _update_belt_preview(hit: Dictionary) -> void:
 		var yaw: float = atan2(direction.x, direction.z)
 		var basis: Basis = Basis(Vector3.UP, yaw)
 		var target_port := {"pos": ground + basis * Vector3(0.0, 1.0, -0.4), "normal": basis * Vector3(0.0, 0.0, -1.0)}
-		var handle: float = clampf(source_port["pos"].distance_to(target_port["pos"]) * 0.55, 1.5, 10.0)
+		var handle: float = _belt_handle(source_port["pos"].distance_to(target_port["pos"]))
 		var curve := PackedVector3Array([source_port["pos"], source_port["pos"] + source_port["normal"] * handle,
 			target_port["pos"] + target_port["normal"] * handle, target_port["pos"]])
 		var reason: String = ""
@@ -868,12 +873,27 @@ func _capture_all() -> void:
 func _capture_machine_set() -> void:
 	hud.show_toast("", 0.0)
 	hud.hide()
-	if sim.entities.size() <= 1:
-		_build_demo_factory()
-	visuals.refresh()
+	visuals.visible = false
 	for kind: String in ["miner_mk1", "smelter", "constructor", "assembler", "geo_tap",
 			"power_pole", "storage", "splitter", "merger", "belt", "spire", "hub", "drop_pod"]:
-		await _capture_screenshot("machine-" + kind)
+		var model_kind: String = "belt_mk1" if kind == "belt" else kind
+		var model_size: Vector3 = BuildingDefs.size_of(model_kind)
+		if kind == "hub":
+			model_size = Vector3(4.0, 3.5, 3.0)
+		elif kind == "drop_pod":
+			model_size = Vector3(3.0, 4.0, 3.0)
+		var capture_root: Node3D = Node3D.new()
+		capture_root.position = Vector3(0.0, terrain.height_at(0.0, 0.0), 0.0)
+		add_child(capture_root)
+		machine_models.build(model_kind, capture_root,
+			Vector2i(maxi(1, roundi(model_size.x * 0.5)), maxi(1, roundi(model_size.z * 0.5))), Vector3.ZERO)
+		var target: Vector3 = capture_root.position + Vector3(0.0, model_size.y * 0.52, 0.0)
+		var camera_distance: float = maxf(4.5, maxf(model_size.x, maxf(model_size.z, model_size.y)) * 1.25)
+		_set_capture_view(target, target + Vector3(camera_distance * 0.35, camera_distance * 0.32, camera_distance))
+		await get_tree().create_timer(0.7).timeout
+		_write_capture("machine-" + kind)
+		capture_root.queue_free()
+		await get_tree().process_frame
 	get_tree().quit()
 
 func _build_demo_factory() -> void:
@@ -904,6 +924,7 @@ func _build_demo_factory() -> void:
 
 func _capture_screenshot(mode: String) -> void:
 	if mode.begins_with("v5-"):
+		capture_preview_override = true
 		await _capture_phase2_scenario(mode)
 		await get_tree().process_frame
 		_write_capture(mode)
@@ -919,7 +940,7 @@ func _capture_screenshot(mode: String) -> void:
 	if mode.begins_with("machine-"):
 		var kind: String = mode.trim_prefix("machine-")
 		var target: Vector3 = Vector3.ZERO
-		var camera_position: Vector3
+		var camera_distance: float = 8.0
 		if kind == "hub":
 			target = terrain.landing_position + Vector3(4.0, 1.7, 0.0)
 		elif kind == "drop_pod":
@@ -937,12 +958,13 @@ func _capture_screenshot(mode: String) -> void:
 				var visual: Node3D = visuals.entity_nodes.get(entity.id) as Node3D
 				var base_position: Vector3 = visual.global_position if visual != null else entity.position
 				target = base_position + Vector3(0.0, height * 0.5, 0.0)
+				camera_distance = maxf(7.0, maxf(size.x, maxf(size.z, height)) * 1.35)
 				break
-		camera_position = target + Vector3(0.0, 1.7, 6.0)
+		var camera_position: Vector3 = target + Vector3(camera_distance * 0.3, camera_distance * 0.32, camera_distance)
 		if kind == "belt":
-			camera_position = target + Vector3(6.0, 1.7, 0.0)
+			camera_position = target + Vector3(camera_distance, camera_distance * 0.28, 0.0)
 		elif kind in ["splitter", "merger"]:
-			camera_position = target + Vector3(6.0, 1.7, 4.0)
+			camera_position = target + Vector3(camera_distance * 0.8, camera_distance * 0.28, camera_distance * 0.65)
 		_set_capture_view(target, camera_position)
 		await get_tree().create_timer(0.8).timeout
 	elif mode == "overview" or mode == "factory":
@@ -1053,6 +1075,7 @@ func _capture_phase2_scenario(mode: String) -> void:
 		sim.add_entity("constructor", position)
 		visuals.refresh()
 		_set_placement_preview("smelter", position)
+		build_preview.position += Vector3(0.22, 0.0, 0.22)
 		_set_capture_view(position + Vector3(0.0, 2.5, 0.0), position + Vector3(8.0, 5.0, 9.0))
 	elif mode == "v5-red-miner":
 		var node_id: int = 0
@@ -1060,8 +1083,9 @@ func _capture_phase2_scenario(mode: String) -> void:
 		sim.add_entity("miner_mk1", node_position, 0.0, {"node_id": node_id})
 		visuals.refresh()
 		_set_placement_preview("miner_mk1", node_position)
+		build_preview.position += Vector3(0.22, 0.0, 0.22)
 		_set_capture_view(node_position + Vector3(0.0, 2.5, 0.0), node_position + Vector3(7.0, 4.5, 8.0))
-	elif mode == "v5-belt-to-smelter":
+	elif mode in ["v5-belt-to-smelter", "v5-belt-port-closeup"]:
 		var node_id: int = 0
 		var node_position: Vector3 = sim.nodes[node_id]["position"]
 		var miner: int = sim.add_entity("miner_mk1", node_position, 0.0, {"node_id": node_id})
@@ -1078,7 +1102,8 @@ func _capture_phase2_scenario(mode: String) -> void:
 		visuals.refresh()
 		var smelter_port: Dictionary = sim.port_world(smelter, "in0")
 		var target: Vector3 = smelter_port["pos"]
-		_set_capture_view(target + Vector3(0.0, 0.6, 0.0), target + Vector3(7.0, 3.0, 8.0))
+		var camera_offset: Vector3 = Vector3(2.5, 1.5, 0.7) if mode == "v5-belt-port-closeup" else Vector3(4.0, 2.2, 1.0)
+		_set_capture_view(target + Vector3(0.0, 0.5, 0.0), target + camera_offset)
 	elif mode == "v5-pole-turn":
 		var source_position := Vector3(70.0, terrain.height_at(70.0, 70.0), 70.0)
 		var pole_position := Vector3(70.0, terrain.height_at(70.0, 76.0), 76.0)
@@ -1106,16 +1131,21 @@ func _capture_phase2_scenario(mode: String) -> void:
 		belt_start = {"id": source, "port": "out0"}
 		var curve: PackedVector3Array = _belt_curve(belt_start, {"id": target, "port": "in0"})
 		var reason: String = _belt_curve_reason(curve, source, target)
+		var route_height: float = maxf(curve[0].y, curve[3].y)
+		for index: int in range(33):
+			var route_point: Vector3 = curve[0].lerp(curve[3], float(index) / 32.0)
+			route_height = maxf(route_height, terrain.height_at(route_point.x, route_point.z))
+		var control_height: float = route_height + 50.0
+		curve[1] = Vector3(lerpf(curve[0].x, curve[3].x, 0.33), control_height,
+			lerpf(curve[0].z, curve[3].z, 0.33))
+		curve[2] = Vector3(lerpf(curve[0].x, curve[3].x, 0.66), control_height,
+			lerpf(curve[0].z, curve[3].z, 0.66))
 		if reason.is_empty():
-			var start: Vector3 = curve[0]
-			var finish: Vector3 = curve[3]
-			var control_height: float = minf(start.y, finish.y) - 5.0
-			curve[1] = Vector3(lerpf(start.x, finish.x, 0.33), control_height, lerpf(start.z, finish.z, 0.33))
-			curve[2] = Vector3(lerpf(start.x, finish.x, 0.66), control_height, lerpf(start.z, finish.z, 0.66))
-			reason = _belt_curve_reason(curve, source, target)
+			reason = "Belt crosses terrain"
 		_show_belt_preview(curve, false, reason if not reason.is_empty() else "Belt crosses terrain")
-		_set_capture_view(Vector3(182.0, terrain.height_at(182.0, 20.0) + 8.0, 20.0),
-			Vector3(174.0, terrain.height_at(174.0, 20.0) + 15.0, 38.0))
+		var focus: Vector3 = _bezier_point(curve, 0.5)
+		focus.y = route_height + 15.0
+		_set_capture_view(focus, focus + Vector3.UP * 70.0)
 	else:
 		_build_demo_factory()
 		for _step: int in range(1200):
