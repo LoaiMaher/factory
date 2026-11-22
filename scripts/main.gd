@@ -563,6 +563,11 @@ func _dismantle_aimed() -> void:
 	for item: Dictionary in entity.belt_items:
 		var item_id: String = str(item["item"])
 		player.inventory[item_id] = int(player.inventory.get(item_id, 0)) + 1
+	var merge_queues: Dictionary = entity.extra.get("merge_queues", {})
+	for source_key: String in merge_queues:
+		var queued_items: Array = merge_queues[source_key]
+		for item_id: String in queued_items:
+			player.inventory[item_id] = int(player.inventory.get(item_id, 0)) + 1
 	hud.show_toast("Dismantled · materials and buffers refunded.")
 
 func _save_game() -> void:
