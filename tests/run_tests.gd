@@ -393,6 +393,23 @@ func _test_save_migration_and_refunds() -> void:
 		and int(snapped_miner.extra.get("node_id", -1)) == 12,
 		str(snapped_miner.position if snapped_miner != null else Vector3.INF))
 
+	var priority_sim: FactorySim = FactorySim.new()
+	priority_sim.register_node(13, "iron_ore", "normal", Vector3(5.0, 0.0, 2.0))
+	var priority_refund: Dictionary = priority_sim.from_dict({"entities": [
+		{"id": 23, "kind": "miner_mk1", "cell": [0, 0], "rotation": 0,
+			"extra": {"item": "iron_ore"}, "input": {"copper_ore": 1}, "output": {"iron_ingot": 2}},
+		{"id": 24, "kind": "smelter", "cell": [1, 0], "rotation": 0,
+			"recipe": "iron_ingot", "extra": {}, "input": {}, "output": {}}
+	]})
+	_check("snapped miner overlap is refunded without displacing its restored neighbor",
+		priority_sim.entities.has(24) and not priority_sim.entities.has(23)
+		and priority_sim.restore_failure_count == 1
+		and int(priority_refund.get("iron_plate", 0)) == int(BuildingDefs.all()["miner_mk1"]["cost"]["iron_plate"])
+		and int(priority_refund.get("concrete", 0)) == int(BuildingDefs.all()["miner_mk1"]["cost"]["concrete"])
+		and int(priority_refund.get("copper_ore", 0)) == 1
+		and int(priority_refund.get("iron_ingot", 0)) == 2,
+		str([priority_sim.entities.keys(), priority_sim.restore_failure_count, priority_refund]))
+
 	var overlap_sim: FactorySim = FactorySim.new()
 	var overlap_refund: Dictionary = overlap_sim.from_dict({"entities": [
 		{"id": 20, "kind": "storage", "cell": [5, 5], "rotation": 0, "extra": {}, "input": {}, "output": {}},

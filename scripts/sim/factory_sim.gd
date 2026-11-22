@@ -317,7 +317,15 @@ func from_dict(data: Dictionary) -> Dictionary:
 	time = float(data.get("time", 0.0))
 	next_id = int(data.get("next_id", 1))
 	var refund: Dictionary = {}
-	for saved: Dictionary in data.get("entities", []):
+	var saved_entities: Array = data.get("entities", [])
+	var restore_order: Array[Dictionary] = []
+	for saved: Dictionary in saved_entities:
+		if str(saved.get("kind", "")) != "miner_mk1":
+			restore_order.append(saved)
+	for saved: Dictionary in saved_entities:
+		if str(saved.get("kind", "")) == "miner_mk1":
+			restore_order.append(saved)
+	for saved: Dictionary in restore_order:
 		var kind: String = str(saved["kind"])
 		if _is_belt_segment(kind) and saved.has("position"):
 			var saved_position: Array = saved["position"]
