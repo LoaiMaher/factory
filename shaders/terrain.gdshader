@@ -1,5 +1,5 @@
 shader_type spatial;
-render_mode diffuse_burley, specular_schlick_ggx;
+render_mode cull_disabled, diffuse_burley, specular_schlick_ggx;
 
 uniform sampler2D grass_albedo : source_color, repeat_enable, filter_linear_mipmap;
 uniform sampler2D grass_normal : hint_normal, repeat_enable, filter_linear_mipmap;
@@ -64,6 +64,7 @@ void fragment() {
 
 	vec3 grass_color = mix(texture(grass_albedo, ground_uv).rgb,
 		texture(grass_albedo, ground_uv * 1.71 + vec2(11.3, 3.9)).rgb, variation * 0.22);
+	grass_color *= vec3(0.82, 1.18, 0.78);
 	vec3 forest_color = mix(texture(forest_albedo, forest_uv).rgb,
 		texture(forest_albedo, forest_uv * 1.53 - vec2(5.1, 17.3)).rgb, variation * 0.18);
 	vec3 sand_color = texture(sand_albedo, sand_uv).rgb;

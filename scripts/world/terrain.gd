@@ -261,7 +261,10 @@ func _terrain_masks(x: float, z: float, height: float, normal: Vector3) -> Color
 
 func _create_terrain_material() -> ShaderMaterial:
 	var material: ShaderMaterial = ShaderMaterial.new()
-	var shader: Shader = load("res://shaders/terrain.gdshader") as Shader
+	var shader_path: String = "res://shaders/terrain.gdshader"
+	if not _uses_forward_plus():
+		shader_path = "res://shaders/terrain_compat.gdshader"
+	var shader: Shader = load(shader_path) as Shader
 	if shader != null:
 		material.shader = shader
 		material.set_shader_parameter("grass_albedo", load("res://assets/textures/grass_ground_diff_1k.jpg"))
@@ -277,6 +280,9 @@ func _create_terrain_material() -> ShaderMaterial:
 		material.set_shader_parameter("sand_normal", load("res://assets/textures/sand_01_nor_gl_1k.jpg"))
 		material.set_shader_parameter("sand_roughness", load("res://assets/textures/sand_01_rough_1k.jpg"))
 	return material
+
+func _uses_forward_plus() -> bool:
+	return RenderingServer.get_rendering_device() != null
 
 func _build_boundaries() -> void:
 	var body: StaticBody3D = StaticBody3D.new()
@@ -363,13 +369,16 @@ func _build_lake() -> void:
 	plane.subdivide_width = 1
 	plane.subdivide_depth = 1
 	lake.mesh = plane
-	lake.position = Vector3(LAKE_CENTER.x, height_at(LAKE_CENTER.x, LAKE_CENTER.y) + 14.0, LAKE_CENTER.y)
+	lake.position = Vector3(LAKE_CENTER.x, height_at(LAKE_CENTER.x, LAKE_CENTER.y) + 7.0, LAKE_CENTER.y)
 	var water_material: ShaderMaterial = ShaderMaterial.new()
-	var water_shader: Shader = load("res://shaders/water.gdshader") as Shader
+	var water_shader_path: String = "res://shaders/water.gdshader"
+	if _uses_forward_plus():
+		water_shader_path = "res://shaders/water_forward_plus.gdshader"
+	var water_shader: Shader = load(water_shader_path) as Shader
 	if water_shader != null:
 		water_material.shader = water_shader
-		water_material.set_shader_parameter("water_color", Color("527f82"))
-		water_material.set_shader_parameter("deep_color", Color("1e424e"))
+		water_material.set_shader_parameter("water_color", Color("3f626a"))
+		water_material.set_shader_parameter("deep_color", Color("183740"))
 		water_material.set_shader_parameter("wave_normal", load("res://assets/textures/sand_01_nor_gl_1k.jpg"))
 	lake.material_override = water_material
 	lake.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
@@ -378,6 +387,7 @@ func _build_lake() -> void:
 func _create_environment() -> void:
 	var world_environment: WorldEnvironment = WorldEnvironment.new()
 	var environment: Environment = Environment.new()
+	var use_forward_plus: bool = _uses_forward_plus()
 	environment.background_mode = Environment.BG_SKY
 	var sky_material: PanoramaSkyMaterial = PanoramaSkyMaterial.new()
 	sky_material.panorama = load("res://assets/hdris/kloppenheim_06_puresky_2k.hdr")
@@ -385,24 +395,25 @@ func _create_environment() -> void:
 	sky_resource.sky_material = sky_material
 	environment.sky = sky_resource
 	environment.background_energy_multiplier = 0.62
-	environment.ambient_light_source = Environment.AMBIENT_SOURCE_SKY
-	environment.ambient_light_energy = 0.42
+	environment.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
+	environment.ambient_light_color = Color("89979a")
+	environment.ambient_light_energy = 1.1
 	environment.tonemap_mode = Environment.TONE_MAPPER_ACES
 	environment.fog_enabled = true
 	environment.fog_light_color = Color("9caeb7")
 	environment.fog_sky_affect = 0.5
 	environment.fog_density = 0.00016
-	environment.ssao_enabled = true
+	environment.ssao_enabled = use_forward_plus
 	environment.ssao_radius = 1.6
 	environment.ssao_intensity = 1.15
-	environment.ssil_enabled = true
+	environment.ssil_enabled = use_forward_plus
 	environment.ssil_radius = 3.8
 	environment.ssil_intensity = 0.55
 	environment.sdfgi_enabled = false
-	environment.glow_enabled = true
+	environment.glow_enabled = use_forward_plus
 	environment.glow_intensity = 0.32
 	environment.glow_bloom = 0.05
-	environment.volumetric_fog_enabled = true
+	environment.volumetric_fog_enabled = use_forward_plus
 	environment.volumetric_fog_density = 0.00065
 	environment.volumetric_fog_albedo = Color("a7bbc3")
 	world_environment.environment = environment
@@ -411,8 +422,8 @@ func _create_environment() -> void:
 	sun.name = "LateMorningSun"
 	sun.rotation_degrees = Vector3(-38.0, -34.0, 0.0)
 	sun.light_color = Color("ffe2c4")
-	sun.light_energy = 1.05
-	sun.shadow_enabled = true
+	sun.light_energy = 0.85
+	sun.shadow_enabled = use_forward_plus
 	sun.shadow_blur = 1.2
 	sun.directional_shadow_mode = DirectionalLight3D.SHADOW_PARALLEL_4_SPLITS
 	sun.directional_shadow_max_distance = 1100.0
@@ -590,26 +601,39 @@ func _make_boulder_visual(definition: Dictionary) -> void:
 	var root: Node3D = Node3D.new()
 	root.name = "OreBoulder_%s" % boulder_id
 	root.position = definition["position"]
+	root.rotation.y = deg_to_rad(float(boulder_id.hash() % 360))
 	root.set_meta("ore_boulder", boulder_id)
-	for part: Dictionary in [
-		{"position": Vector3(0.0, 0.96, 0.0), "scale": Vector3(0.82, 0.96, 0.72)},
-		{"position": Vector3(-0.56, 0.48, 0.18), "scale": Vector3(0.54, 0.55, 0.5)},
-		{"position": Vector3(0.48, 0.42, -0.28), "scale": Vector3(0.42, 0.47, 0.43)}
-	]:
-		var rock: MeshInstance3D = MeshInstance3D.new()
-		rock.mesh = _boulder_mesh("rock")
-		rock.position = part["position"]
-		rock.scale = part["scale"]
-		rock.material_override = _boulder_material(item_id, false)
-		root.add_child(rock)
-	for index: int in range(3):
-		var vein: MeshInstance3D = MeshInstance3D.new()
-		vein.mesh = _boulder_mesh("vein")
-		vein.position = Vector3(-0.2 + float(index) * 0.24, 0.88 + float(index % 2) * 0.23, 0.59)
-		vein.scale = Vector3(0.19, 0.11, 0.06)
-		vein.rotation.z = -0.35 + float(index) * 0.23
-		vein.material_override = _boulder_material(item_id, true)
-		root.add_child(vein)
+	var rock_parts: Array[Dictionary] = [
+		{"position": Vector3(0.0, 0.91, 0.0), "scale": Vector3(0.86, 0.9, 0.74), "mesh": "rock_a"},
+		{"position": Vector3(-0.55, 0.43, 0.16), "scale": Vector3(0.55, 0.5, 0.48), "mesh": "rock_b"},
+		{"position": Vector3(0.48, 0.39, -0.27), "scale": Vector3(0.44, 0.43, 0.42), "mesh": "rock_c"}
+	]
+	var rock_surface: SurfaceTool = SurfaceTool.new()
+	rock_surface.begin(Mesh.PRIMITIVE_TRIANGLES)
+	for part: Dictionary in rock_parts:
+		var rock_transform: Transform3D = Transform3D(Basis().scaled(part["scale"]), part["position"])
+		_append_boulder_mesh(rock_surface, _boulder_mesh(str(part["mesh"])), rock_transform)
+	rock_surface.generate_normals()
+	var rock: MeshInstance3D = MeshInstance3D.new()
+	rock.mesh = rock_surface.commit()
+	rock.material_override = _boulder_material(item_id, false)
+	root.add_child(rock)
+	var vein_surface: SurfaceTool = SurfaceTool.new()
+	vein_surface.begin(Mesh.PRIMITIVE_TRIANGLES)
+	for index: int in range(5):
+		var vein_position: Vector3 = Vector3(
+			-0.42 + float(index % 3) * 0.36,
+			0.55 + float(index / 3) * 0.48,
+			0.63
+		)
+		var vein_rotation: float = -0.55 + float(index % 3) * 0.5
+		var vein_basis: Basis = Basis(Vector3.FORWARD, vein_rotation).scaled(Vector3(0.46, 0.75, 0.9))
+		_append_boulder_mesh(vein_surface, _boulder_mesh("vein"), Transform3D(vein_basis, vein_position))
+	vein_surface.generate_normals()
+	var veins: MeshInstance3D = MeshInstance3D.new()
+	veins.mesh = vein_surface.commit()
+	veins.material_override = _boulder_material(item_id, true)
+	root.add_child(veins)
 	var collision_body: StaticBody3D = StaticBody3D.new()
 	var collision_shape: CollisionShape3D = CollisionShape3D.new()
 	var sphere: SphereShape3D = SphereShape3D.new()
@@ -621,23 +645,66 @@ func _make_boulder_visual(definition: Dictionary) -> void:
 	boulder_nodes[boulder_id] = root
 	add_child(root)
 
-func _boulder_mesh(kind: String) -> SphereMesh:
+func _append_boulder_mesh(surface: SurfaceTool, source: Mesh, transform: Transform3D) -> void:
+	var arrays: Array = source.surface_get_arrays(0)
+	var vertices: PackedVector3Array = arrays[Mesh.ARRAY_VERTEX]
+	var indices: Variant = arrays[Mesh.ARRAY_INDEX]
+	if indices is PackedInt32Array and not indices.is_empty():
+		for index: int in indices:
+			surface.add_vertex(transform * vertices[index])
+	else:
+		for vertex: Vector3 in vertices:
+			surface.add_vertex(transform * vertex)
+
+func _boulder_mesh(kind: String) -> Mesh:
 	if not boulder_meshes.has(kind):
-		var mesh: SphereMesh = SphereMesh.new()
-		mesh.radius = 1.0
-		mesh.height = 2.0
-		mesh.radial_segments = 12 if kind == "rock" else 8
-		mesh.rings = 6 if kind == "rock" else 4
-		boulder_meshes[kind] = mesh
-	return boulder_meshes[kind]
+		if kind == "vein":
+			var vein_mesh: BoxMesh = BoxMesh.new()
+			vein_mesh.size = Vector3(1.0, 0.2, 0.12)
+			boulder_meshes[kind] = vein_mesh
+		else:
+			var phi: float = (1.0 + sqrt(5.0)) * 0.5
+			var points: Array[Vector3] = [
+				Vector3(-1.0, phi, 0.0), Vector3(1.0, phi, 0.0),
+				Vector3(-1.0, -phi, 0.0), Vector3(1.0, -phi, 0.0),
+				Vector3(0.0, -1.0, phi), Vector3(0.0, 1.0, phi),
+				Vector3(0.0, -1.0, -phi), Vector3(0.0, 1.0, -phi),
+				Vector3(phi, 0.0, -1.0), Vector3(phi, 0.0, 1.0),
+				Vector3(-phi, 0.0, -1.0), Vector3(-phi, 0.0, 1.0)
+			]
+			var rng: RandomNumberGenerator = RandomNumberGenerator.new()
+			rng.seed = 18271 + abs(kind.hash() % 10000)
+			for index: int in range(points.size()):
+				points[index] = points[index].normalized() * rng.randf_range(0.82, 1.15)
+			var faces: Array[Vector3i] = [
+				Vector3i(0, 11, 5), Vector3i(0, 5, 1),
+				Vector3i(0, 1, 7), Vector3i(0, 7, 10),
+				Vector3i(0, 10, 11), Vector3i(1, 5, 9),
+				Vector3i(5, 11, 4), Vector3i(11, 10, 2),
+				Vector3i(10, 7, 6), Vector3i(7, 1, 8),
+				Vector3i(3, 9, 4), Vector3i(3, 4, 2),
+				Vector3i(3, 2, 6), Vector3i(3, 6, 8),
+				Vector3i(3, 8, 9), Vector3i(4, 9, 5),
+				Vector3i(2, 4, 11), Vector3i(6, 2, 10),
+				Vector3i(8, 6, 7), Vector3i(9, 8, 1)
+			]
+			var surface: SurfaceTool = SurfaceTool.new()
+			surface.begin(Mesh.PRIMITIVE_TRIANGLES)
+			for face: Vector3i in faces:
+				surface.add_vertex(points[face.x])
+				surface.add_vertex(points[face.y])
+				surface.add_vertex(points[face.z])
+			surface.generate_normals()
+			boulder_meshes[kind] = surface.commit()
+	return boulder_meshes[kind] as Mesh
 
 func _boulder_material(item_id: String, vein: bool) -> StandardMaterial3D:
 	var cache_key: String = "%s_%s" % [item_id, "vein" if vein else "rock"]
 	if not boulder_materials.has(cache_key):
 		var rock_colors: Dictionary = {
-			"iron_ore": Color("55443d"),
-			"copper_ore": Color("3f625f"),
-			"limestone": Color("827f72")
+			"iron_ore": Color("40332f"),
+			"copper_ore": Color("294744"),
+			"limestone": Color("706b5e")
 		}
 		var vein_colors: Dictionary = {
 			"iron_ore": Color("a5593a"),
