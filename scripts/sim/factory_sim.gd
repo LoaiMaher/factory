@@ -449,6 +449,9 @@ func _update_machines(dt: float) -> void:
 					break
 		elif entity.kind == "miner_mk1":
 			_update_miner(entity, dt)
+		elif entity.kind == "geo_tap":
+			var vent_id: String = str(entity.extra.get("vent_id", ""))
+			entity.status = "Running" if vents.has(vent_id) else "Stopped"
 		elif _is_machine(entity.kind):
 			_update_machine(entity, dt)
 		elif entity.kind == "splitter":
@@ -704,6 +707,13 @@ func visual_state(entity_id: int) -> Dictionary:
 	if not entities.has(entity_id):
 		return {"status": "Stopped", "productivity": 0.0, "powered": false}
 	var entity: FactoryEntity = entities[entity_id]
+	if entity.kind == "geo_tap":
+		var generating: bool = entity.status == "Running"
+		return {
+			"status": entity.status,
+			"productivity": 1.0 if generating else 0.0,
+			"powered": generating
+		}
 	var satisfaction: float = power.satisfaction(entity_id, entities)
 	var running: bool = entity.status == "Running" or entity.status.begins_with("Low power")
 	return {

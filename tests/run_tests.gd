@@ -527,6 +527,24 @@ func _test_visual_state() -> void:
 		missing.get("status", "") == "Stopped"
 		and float(missing.get("productivity", -1.0)) == 0.0
 		and not bool(missing.get("powered", true)), str(missing))
+	for bypass_enabled: bool in [true, false]:
+		var tap_sim: FactorySim = FactorySim.new()
+		tap_sim.register_vent("visual_vent", Vector3.ZERO)
+		var tap_id: int = tap_sim.add_entity("geo_tap", Vector3.ZERO)
+		tap_sim.power.bypass = bypass_enabled
+		tap_sim.tick(0.05)
+		var tap_state: Dictionary = tap_sim.visual_state(tap_id)
+		_check("Geo Tap generates visual productivity with bypass %s" % bypass_enabled,
+			tap_state.get("status", "") == "Running"
+			and is_equal_approx(float(tap_state.get("productivity", 0.0)), 1.0)
+			and bool(tap_state.get("powered", false)), str(tap_state))
+		var vent_id: String = str(tap_sim.entities[tap_id].extra.get("vent_id", ""))
+		tap_sim.vents.erase(vent_id)
+		tap_sim.tick(0.05)
+		var stopped_tap: Dictionary = tap_sim.visual_state(tap_id)
+		_check("Geo Tap stops when its registered vent is absent",
+			stopped_tap.get("status", "") == "Stopped"
+			and float(stopped_tap.get("productivity", -1.0)) == 0.0, str(stopped_tap))
 	_finish_group()
 
 func _test_power_bypass() -> void:
