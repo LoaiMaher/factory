@@ -18,6 +18,7 @@ func _run_all() -> void:
 	_test_diagnostics()
 	_test_ore_boulders()
 	_test_foliage_state()
+	_test_hotbar_model()
 	print("RESULT: %d/%d test groups passed" % [passed_groups, groups])
 	quit(1 if failures > 0 else 0)
 
@@ -304,7 +305,10 @@ func _test_save_migration_and_refunds() -> void:
 	player.inventory["cable"] = 17
 	var world_state: Dictionary = {"boulders": {"iron_a": {"item": "iron_ore", "remaining": 4}},
 		"foliage": ["tree_00001", "rock_00002"]}
-	var save_ok: bool = save_system.save_game(sim, player, 2, world_state)
+	var hotbar: HotbarModel = HotbarModel.new()
+	hotbar.assign(8, "item", "iron_ore")
+	hotbar.select_slot(8, 2)
+	var save_ok: bool = save_system.save_game(sim, player, 2, world_state, hotbar.to_dict())
 	var restored: FactorySim = FactorySim.new()
 	var restored_player: FactoryPlayer = FactoryPlayer.new()
 	get_root().add_child(restored_player)
@@ -325,6 +329,10 @@ func _test_save_migration_and_refunds() -> void:
 	_check("boulder and removed-foliage state survive world save/load",
 		int(saved_world.get("boulders", {}).get("iron_a", {}).get("remaining", -1)) == 4
 		and saved_world.get("foliage", []).has("tree_00001"), str(saved_world))
+	var restored_hotbar: HotbarModel = HotbarModel.from_dict(loaded.get("hotbar", {}))
+	_check("hotbar selection and assignments survive save/load",
+		restored_hotbar.selected_index == 8 and restored_hotbar.slot_at(8) == {"type": "item", "id": "iron_ore"},
+		str(restored_hotbar.to_dict()))
 
 	var legacy_system: FactorySaveSystem = FactorySaveSystem.new()
 	legacy_system.save_path = "user://phase2_v2_migration_test.json"
@@ -494,6 +502,69 @@ func _test_foliage_state() -> void:
 		restored.is_removed("tree_00002") and restored.is_removed("rock_00001")
 		and not restored.is_removed("tree_00003")
 		and restored.to_dict() == ["rock_00001", "tree_00002"], str(restored.to_dict()))
+	_finish_group()
+
+func _test_hotbar_model() -> void:
+	var model: HotbarModel = HotbarModel.new()
+	_check("hotbar defaults to the seven starter building slots",
+		model.slots.slice(0, 7) == [
+			{"type": "building", "id": "miner_mk1"},
+			{"type": "building", "id": "smelter"},
+			{"type": "building", "id": "constructor"},
+			{"type": "building", "id": "belt_mk1"},
+			{"type": "building", "id": "belt_pole"},
+			{"type": "building", "id": "power_pole"},
+			{"type": "building", "id": "geo_tap"}
+		] and model.slots.slice(7, 10) == [{}, {}, {}], str(model.slots))
+	var selected: Dictionary = model.select_slot(0, 0)
+	var build_system: FactoryBuildSystem = FactoryBuildSystem.new()
+	var building_action: Dictionary = model.apply_to_build_system(build_system)
+	_check("building selection drives build placement",
+		bool(selected.get("ok", false)) and build_system.selected == "miner_mk1"
+		and building_action.get("type", "") == "building", str([selected, build_system.selected]))
+	model.select_slot(0, 0)
+	model.apply_to_build_system(build_system)
+	_check("reselecting the selected number clears to empty hands",
+		model.selected_index == -1 and build_system.selected.is_empty(), str([model.selected_index, build_system.selected]))
+
+	model.select_slot(0, 0)
+	var wrapped: Dictionary = model.cycle(-1, 0)
+	_check("mouse wheel wraps across all ten slots",
+		bool(wrapped.get("ok", false)) and model.selected_index == 9, str(wrapped))
+
+	_check("hotbar item assignment succeeds", model.assign(8, "item", "iron_ore"), str(model.slot_at(8)))
+	var inventory: Dictionary = {"iron_ore": 4, "iron_rod": 22, "wire": 24, "iron_plate": 5}
+	_check("item quantity follows inventory changes", model.quantity(8, inventory) == 4, str(model.quantity(8, inventory)))
+	inventory["iron_ore"] = 9
+	_check("item quantity updates after inventory changes", model.quantity(8, inventory) == 9, str(model.quantity(8, inventory)))
+	_check("building quantity is the minimum affordable count",
+		model.assign(2, "building", "smelter") and model.quantity(2, inventory) == 3, str(model.quantity(2, inventory)))
+	_check("belt quantity is displayed as affordable metres",
+		model.assign(7, "building", "belt_mk1") and model.quantity(7, inventory) == 10, str(model.quantity(7, inventory)))
+
+	_check("hotbar slot can be cleared", model.clear_slot(8) and model.slot_at(8).is_empty(), str(model.slot_at(8)))
+	model.assign(9, "building", "assembler")
+	var locked: Dictionary = model.select_slot(9, 0)
+	_check("locked buildings cannot be selected", not bool(locked.get("ok", true))
+		and bool(locked.get("locked", false)) and locked.get("reason", "") == "Unlocks at Tier 2", str(locked))
+	var unlocked: Dictionary = model.select_slot(9, 2)
+	_check("unlocked building slots select normally", bool(unlocked.get("ok", false))
+		and model.selected_index == 9, str(unlocked))
+
+	model.assign(8, "item", "iron_plate")
+	var restored: HotbarModel = HotbarModel.from_dict(model.to_dict())
+	var old_save: HotbarModel = HotbarModel.from_dict({})
+	var item_selection: Dictionary = restored.select_slot(8, 2)
+	restored.apply_to_build_system(build_system)
+	_check("hotbar model save/load round-trip retains slot state",
+		restored.slot_at(8) == {"type": "item", "id": "iron_plate"}
+		and restored.slot_at(9) == {"type": "building", "id": "assembler"}, str(restored.to_dict()))
+	_check("selecting an item slot clears placement",
+		bool(item_selection.get("ok", false)) and build_system.selected.is_empty()
+		and restored.selected_action().get("type", "") == "item", str([item_selection, build_system.selected]))
+	_check("old saves without hotbar data receive the defaults",
+		old_save.slot_at(0) == {"type": "building", "id": "miner_mk1"}
+		and old_save.selected_index == -1, str(old_save.to_dict()))
 	_finish_group()
 
 func _connect(sim: FactorySim, kind: String, from_id: int, from_port: String, to_id: int, to_port: String) -> Dictionary:

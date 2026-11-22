@@ -7,7 +7,8 @@ const SAVE_VERSION: int = 3
 var save_path: String = SAVE_PATH
 var backup_path: String = "user://save.bak.json"
 
-func save_game(sim: FactorySim, player: FactoryPlayer, unlocked_tiers: int, world_state: Dictionary = {}) -> bool:
+func save_game(sim: FactorySim, player: FactoryPlayer, unlocked_tiers: int,
+		world_state: Dictionary = {}, hotbar_data: Dictionary = {}) -> bool:
 	var data: Dictionary = {
 		"version": SAVE_VERSION,
 		"sim": sim.to_dict(),
@@ -15,7 +16,8 @@ func save_game(sim: FactorySim, player: FactoryPlayer, unlocked_tiers: int, worl
 			"rotation_y": player.rotation.y, "pitch": player.pitch,
 			"inventory": player.inventory.duplicate(true)},
 		"unlocked_tiers": unlocked_tiers,
-		"world": world_state.duplicate(true)
+		"world": world_state.duplicate(true),
+		"hotbar": hotbar_data.duplicate(true)
 	}
 	var file: FileAccess = FileAccess.open(save_path, FileAccess.WRITE)
 	if file == null:
@@ -65,4 +67,5 @@ func load_game(sim: FactorySim, player: FactoryPlayer) -> Dictionary:
 	if not world_state is Dictionary:
 		world_state = {}
 	return {"unlocked_tiers": int(data.get("unlocked_tiers", 0)), "world": (world_state as Dictionary).duplicate(true),
+		"hotbar": data.get("hotbar", {}),
 		"migrated_from": source_version if source_version < SAVE_VERSION else 0, "belt_refund": belt_refund}
