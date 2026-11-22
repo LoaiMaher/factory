@@ -5,6 +5,7 @@ const WORLD_HALF_EXTENT: float = 512.0
 const CHUNK_SIZE: float = 128.0
 const TREES_PER_CHUNK: int = 132
 const GRASS_RADIUS: float = 60.0
+const TREE_COLLISION_RADIUS: float = 76.0
 
 var terrain: FactoryTerrain
 var player: FactoryPlayer
@@ -16,6 +17,7 @@ var chunk_bodies: Dictionary = {}
 var grass_instance: MultiMeshInstance3D
 var grass_mesh: ArrayMesh
 var last_grass_region: Vector2i = Vector2i(999999, 999999)
+var last_tree_collision_region: Vector2i = Vector2i(999999, 999999)
 
 func setup(factory_terrain: FactoryTerrain, factory_player: FactoryPlayer) -> void:
 	terrain = factory_terrain
@@ -29,10 +31,12 @@ func _ready() -> void:
 	_build_scatter_multimeshes()
 	_build_grass_mesh()
 	_update_grass(true)
+	_update_tree_collisions(true)
 
 func _process(_delta: float) -> void:
 	if DisplayServer.get_name() != "headless":
 		_update_grass(false)
+		_update_tree_collisions(false)
 
 func restore_state(data: Variant) -> void:
 	state.from_dict(data)
@@ -171,7 +175,8 @@ func _build_tree_multimeshes() -> void:
 		var trunk_multimesh: MultiMesh = _make_multimesh("TreeTrunks_%d" % variant, trunk_mesh, bark, group["trunks"], 720.0)
 		var canopy_mesh: Mesh
 		if variant < 3:
-			var cone: ConeMesh = ConeMesh.new()
+			var cone: CylinderMesh = CylinderMesh.new()
+			cone.top_radius = 0.0
 			cone.bottom_radius = 1.7 + float(variant) * 0.12
 			cone.height = 4.1 + float(variant) * 0.25
 			cone.radial_segments = 7
@@ -194,10 +199,6 @@ func _build_tree_multimeshes() -> void:
 			for canopy_index: int in range(int(indices["canopy_count"])):
 				references.append({"multimesh": canopy_multimesh, "index": int(indices["canopy"]) + canopy_index})
 			instance_lookup[foliage_id] = references
-	for definition: Dictionary in foliage_definitions:
-		if definition["type"] == "tree" and not state.is_removed(str(definition["id"])):
-			_add_trunk_collision(definition)
-
 func _build_scatter_multimeshes() -> void:
 	var groups: Dictionary = {}
 	for definition: Dictionary in foliage_definitions:
@@ -281,6 +282,44 @@ func _add_trunk_collision(definition: Dictionary) -> void:
 	body.add_child(collision)
 	tree_colliders[str(definition["id"])] = collision
 
+func _update_tree_collisions(force: bool) -> void:
+	if player == null:
+		return
+	var region: Vector2i = Vector2i(floori(player.global_position.x / 20.0),
+		floori(player.global_position.z / 20.0))
+	if not force and region == last_tree_collision_region:
+		return
+	last_tree_collision_region = region
+	var player_position: Vector2 = Vector2(player.global_position.x, player.global_position.z)
+	var desired: Dictionary = {}
+	for definition: Dictionary in foliage_definitions:
+		if definition["type"] != "tree" or state.is_removed(str(definition["id"])):
+			continue
+		var position: Vector3 = definition["position"]
+		if Vector2(position.x, position.z).distance_to(player_position) <= TREE_COLLISION_RADIUS:
+			desired[str(definition["id"])] = definition
+	for raw_id: Variant in tree_colliders.keys():
+		var foliage_id: String = str(raw_id)
+		if desired.has(foliage_id):
+			continue
+		var collision: CollisionShape3D = tree_colliders[foliage_id]
+		var body: StaticBody3D = collision.get_parent() as StaticBody3D
+		if body != null:
+			body.remove_child(collision)
+		collision.queue_free()
+		tree_colliders.erase(foliage_id)
+	for raw_id: Variant in desired:
+		var foliage_id: String = str(raw_id)
+		if not tree_colliders.has(foliage_id):
+			_add_trunk_collision(desired[foliage_id])
+	for raw_chunk: Variant in chunk_bodies.keys():
+		var body: StaticBody3D = chunk_bodies[raw_chunk]
+		if body.get_child_count() > 0:
+			continue
+		remove_child(body)
+		body.queue_free()
+		chunk_bodies.erase(raw_chunk)
+
 func _hide_instance(foliage_id: String) -> void:
 	if instance_lookup.has(foliage_id):
 		for reference: Dictionary in instance_lookup[foliage_id]:
@@ -292,8 +331,8 @@ func _hide_instance(foliage_id: String) -> void:
 
 func _build_grass_mesh() -> void:
 	var vertices: PackedVector3Array = PackedVector3Array([
-		Vector3(-0.18, 0.0, 0.0), Vector3(0.18, 0.0, 0.0), Vector3(0.08, 0.92, 0.0), Vector3(-0.08, 0.92, 0.0),
-		Vector3(0.0, 0.0, -0.18), Vector3(0.0, 0.0, 0.18), Vector3(0.0, 0.92, 0.08), Vector3(0.0, 0.92, -0.08)
+		Vector3(-0.14, 0.0, 0.0), Vector3(0.14, 0.0, 0.0), Vector3(0.06, 0.58, 0.0), Vector3(-0.06, 0.58, 0.0),
+		Vector3(0.0, 0.0, -0.14), Vector3(0.0, 0.0, 0.14), Vector3(0.0, 0.58, 0.06), Vector3(0.0, 0.58, -0.06)
 	])
 	var normals: PackedVector3Array = PackedVector3Array([
 		Vector3(0.0, 0.0, 1.0), Vector3(0.0, 0.0, 1.0), Vector3(0.0, 0.0, 1.0), Vector3(0.0, 0.0, 1.0),
@@ -317,7 +356,7 @@ func _build_grass_mesh() -> void:
 	grass_instance.multimesh = MultiMesh.new()
 	grass_instance.multimesh.transform_format = MultiMesh.TRANSFORM_3D
 	grass_instance.multimesh.mesh = grass_mesh
-	grass_instance.material_override = _wind_material(Color("758b43"), 0.22)
+	grass_instance.material_override = _wind_material(Color("435a2d"), 0.15)
 	grass_instance.visibility_range_end = GRASS_RADIUS + 8.0
 	grass_instance.visibility_range_end_margin = 8.0
 	grass_instance.visibility_range_fade_mode = GeometryInstance3D.VISIBILITY_RANGE_FADE_SELF
@@ -333,7 +372,7 @@ func _update_grass(force: bool) -> void:
 	var rng: RandomNumberGenerator = RandomNumberGenerator.new()
 	rng.seed = int(region.x * 73856093) ^ int(region.y * 19349663) ^ 1357
 	var transforms: Array[Transform3D] = []
-	for _index: int in range(4800):
+	for _index: int in range(2600):
 		var angle: float = rng.randf_range(0.0, TAU)
 		var radius: float = sqrt(rng.randf()) * GRASS_RADIUS
 		var x: float = player.global_position.x + cos(angle) * radius

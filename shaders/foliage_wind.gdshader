@@ -12,6 +12,10 @@ void vertex() {
 }
 
 void fragment() {
-	ALBEDO = foliage_tint.rgb;
+	float blade_edge = mix(0.47, 0.065, UV.y);
+	if (abs(UV.x - 0.5) > blade_edge) {
+		discard;
+	}
+	ALBEDO = foliage_tint.rgb * mix(0.76, 1.06, UV.y);
 	ROUGHNESS = 0.92;
 }
