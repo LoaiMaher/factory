@@ -49,7 +49,8 @@ func _process(delta: float) -> void:
 			beast.position = ground_position
 			beast.rotation.y = atan2(destination.x - beast.position.x, destination.z - beast.position.z)
 			beast.position.y += 0.06 * sin(Time.get_ticks_msec() * 0.009 + float(index))
-		if flee_timer <= 0.0 and members[0].position.distance_to(target) < 3.0:
+		var waypoint_distance_xz: float = Vector2(members[0].position.x, members[0].position.z).distance_to(Vector2(target.x, target.z))
+		if flee_timer <= 0.0 and waypoint_distance_xz < 3.0:
 			if waypoint_index == waypoints.size() - 1:
 				dig_timer = 20.0
 				waypoint_index = 0
