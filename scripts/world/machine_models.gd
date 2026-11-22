@@ -225,7 +225,7 @@ func _pbr_material(key: String) -> Material:
 		"Paint_Orange": Color("e8792b"), "Paint_Dark": Color("2b2e33"),
 		"Steel": Color("b2b8b8"), "Concrete": Color("77766b"),
 		"Glass": Color("75aeb2"), "Rubber": Color("252826"),
-		"Glove_Charcoal": Color("3f444a"),
+		"Glove_Charcoal": Color("2b2f34"),
 		"Pick_Wood": Color("8b5b32"),
 		"Foliage": Color("49643b"), "Bark": Color("594532"),
 		"Ore_Iron": Color("a75a3d"), "Ore_Copper": Color("5f9c76"),

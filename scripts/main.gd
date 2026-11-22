@@ -123,8 +123,6 @@ func _ready() -> void:
 		hud.show_toast("Press H for controls · E to interact · B to build.", 6.0)
 	sim.power.apply_launch_flags(OS.get_cmdline_user_args())
 	visuals.refresh()
-	if arguments.has("--capture-v9"):
-		hud.icon_cache.prepared = true
 	for argument: String in OS.get_cmdline_user_args():
 		if argument == "--capture-all":
 			call_deferred("_capture_all")
@@ -1204,6 +1202,8 @@ func _capture_v8_shots() -> void:
 	get_tree().quit()
 
 func _capture_v9_shots() -> void:
+	if not hud.icon_cache.prepared:
+		await hud.icon_cache.icons_ready
 	autosave_enabled = false
 	hud.show_toast("", 0.0)
 	if hud.help_panel.visible:
@@ -1254,6 +1254,14 @@ func _capture_v9_shots() -> void:
 	_write_capture("pick-swing")
 	capture_mining_override = false
 	viewmodel.set_mining_active(false)
+
+	hotbar_model.selected_index = -1
+	hotbar_model.select_slot(1, unlocked_tiers)
+	_apply_hotbar_selection(false)
+	await get_tree().create_timer(0.65).timeout
+	await get_tree().process_frame
+	await RenderingServer.frame_post_draw
+	_write_capture("build-tool")
 	get_tree().quit()
 
 func _capture_machine_set() -> void:
