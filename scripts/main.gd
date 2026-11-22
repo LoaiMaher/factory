@@ -42,6 +42,7 @@ var spire_entity_id: int = -1
 var first_sighting: bool = false
 var show_help: bool = true
 var mining_boulder_id: String = ""
+var mining_hit_position: Vector3 = Vector3.ZERO
 var aimed_entity_id: int = -1
 var aim_time: float = 0.0
 var last_spire_stage: int = 0
@@ -177,7 +178,7 @@ func _process(delta: float) -> void:
 				return
 			var item_id: String = str(result["item"])
 			player.inventory[item_id] = int(player.inventory.get(item_id, 0)) + 1
-			var impact_position: Vector3 = player.camera.global_position - player.camera.global_transform.basis.z * 1.8
+			var impact_position: Vector3 = mining_hit_position
 			audio_manager.call("play_one_shot", "pick_hit", impact_position)
 			visuals.spawn_mining_dust(impact_position)
 			hud.refresh_hotbar()
@@ -843,6 +844,7 @@ func _interact() -> void:
 				return
 			if object.has_meta("ore_boulder"):
 				mining_boulder_id = str(object.get_meta("ore_boulder"))
+				mining_hit_position = hit.get("position", Vector3.ZERO)
 				hand_mine_elapsed = 0.0
 				hud.show_toast("Hold E to mine this ore boulder.", 4.0)
 				return
