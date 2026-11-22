@@ -407,9 +407,18 @@ func _update_belts(dt: float) -> void:
 func _update_machines(dt: float) -> void:
 	for entity: FactoryEntity in entities.values():
 		if entity.kind == "belt_pole":
-			for item_id: String in entity.input_buffer:
+			for item_variant: Variant in entity.input_buffer.keys():
+				var item_id: String = str(item_variant)
+				var count: int = int(entity.input_buffer[item_id])
+				if count <= 0:
+					entity.input_buffer.erase(item_id)
+					continue
 				if try_push_from_port(entity.id, "out0", item_id):
-					entity.input_buffer[item_id] = int(entity.input_buffer[item_id]) - 1
+					count -= 1
+					if count == 0:
+						entity.input_buffer.erase(item_id)
+					else:
+						entity.input_buffer[item_id] = count
 					break
 		elif entity.kind == "miner_mk1":
 			_update_miner(entity, dt)

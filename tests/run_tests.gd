@@ -268,6 +268,23 @@ func _test_production_and_port_routing() -> void:
 	_check("belt delivers to the selected Spire input port",
 		int(spire_link["id"]) > 0 and spire_sim.entities[spire].last_delivery_time.has("hull_panel"),
 		str(spire_sim.entities[spire].last_delivery_time))
+
+	var pole_sim: FactorySim = FactorySim.new()
+	pole_sim.register_node(4, "iron_ore", "normal", Vector3.ZERO, 60.0)
+	var pole_miner: int = pole_sim.add_entity("miner_mk1", Vector3.ZERO, 0.0, {"node_id": 4})
+	var pole: int = pole_sim.add_entity("belt_pole", Vector3(0.0, 0.0, 8.0))
+	var pole_storage: int = pole_sim.add_entity("storage", Vector3(0.0, 0.0, 16.0))
+	var first_link: Dictionary = _connect(pole_sim, "belt_mk1", pole_miner, "out0", pole, "in0")
+	var second_link: Dictionary = _connect(pole_sim, "belt_mk1", pole, "out0", pole_storage, "in0")
+	for _item_index: int in range(5):
+		var pushed: bool = pole_sim.try_push_from_port(pole_miner, "out0", "iron_ore")
+		_run_for(pole_sim, 30.0)
+		_check("miner-to-pole input belt accepts each item", pushed, str(first_link))
+	_check("five items pass through miner, belt pole, and storage exactly once",
+		int(first_link.get("id", -1)) > 0 and int(second_link.get("id", -1)) > 0
+		and int(pole_sim.entities[pole_storage].input_buffer.get("iron_ore", 0)) == 5
+		and pole_sim.entities[pole].input_buffer.is_empty(),
+		str([pole_sim.entities[pole_storage].input_buffer, pole_sim.entities[pole].input_buffer]))
 	_finish_group()
 
 func _test_save_migration_and_refunds() -> void:
