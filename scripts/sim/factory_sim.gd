@@ -16,12 +16,14 @@ var spire_progress: Array[float] = [0.0, 0.0]
 var spire_stage: int = 0
 var discovered_nodes: Dictionary = {}
 
-func add_entity(kind: String, cell: Vector2i, rotation: int = 0, data: Dictionary = {}) -> int:
+func add_entity(kind: String, cell: Vector2i, rotation: int = 0, data: Dictionary = {}, forced_id: int = -1) -> int:
 	var size: Vector2i = _building_size(kind, rotation)
 	for x: int in range(size.x):
 		for y: int in range(size.y):
 			if grid.has(cell + Vector2i(x, y)):
 				return -1
+	if forced_id >= 0 and entities.has(forced_id):
+		return -1
 	var entity: FactoryEntity
 	if kind.begins_with("belt_"):
 		entity = BeltEntity.new()
@@ -31,8 +33,8 @@ func add_entity(kind: String, cell: Vector2i, rotation: int = 0, data: Dictionar
 	else:
 		entity = MachineEntity.new()
 		entity.kind = kind
-	entity.id = next_id
-	next_id += 1
+	entity.id = forced_id if forced_id >= 0 else next_id
+	next_id = maxi(next_id, entity.id + 1)
 	entity.cell = cell
 	entity.rotation = posmod(rotation, 4)
 	entity.cost = building_definitions.get(kind, {}).get("cost", {}).duplicate(true)
@@ -187,6 +189,8 @@ func try_insert(entity_id: int, item_id: String, from_cell: Vector2i) -> bool:
 	if entity.kind == "splitter":
 		if from_cell != _back_port(entity):
 			return false
+		if _inventory_total(entity.input_buffer) >= 1:
+			return false
 		entity.input_buffer[item_id] = int(entity.input_buffer.get(item_id, 0)) + 1
 		return true
 	if entity.kind == "merger":
@@ -196,6 +200,8 @@ func try_insert(entity_id: int, item_id: String, from_cell: Vector2i) -> bool:
 		var source_key: String = "%d,%d" % [from_cell.x, from_cell.y]
 		if not queues.has(source_key):
 			queues[source_key] = []
+		if queues[source_key].size() >= 1:
+			return false
 		queues[source_key].append(item_id)
 		entity.extra["merge_queues"] = queues
 		return true
@@ -260,11 +266,11 @@ func from_dict(data: Dictionary) -> void:
 	for saved: Dictionary in data.get("entities", []):
 		var cell_data: Array = saved.get("cell", [0, 0])
 		var cell: Vector2i = Vector2i(int(cell_data[0]), int(cell_data[1]))
-		var entity_id: int = add_entity(str(saved["kind"]), cell, int(saved.get("rotation", 0)), saved.get("extra", {}))
+		var saved_id: int = int(saved.get("id", next_id))
+		var entity_id: int = add_entity(str(saved["kind"]), cell, int(saved.get("rotation", 0)), saved.get("extra", {}), saved_id)
 		if entity_id < 0:
 			continue
 		var entity: FactoryEntity = entities[entity_id]
-		entity.id = int(saved.get("id", entity_id))
 		entity.recipe_id = str(saved.get("recipe", ""))
 		entity.input_buffer = _integer_dictionary(saved.get("input", {}))
 		entity.output_buffer = _integer_dictionary(saved.get("output", {}))
@@ -272,12 +278,6 @@ func from_dict(data: Dictionary) -> void:
 		entity.progress = float(saved.get("progress", 0.0))
 		entity.rate_history = saved.get("history", {}).duplicate(true)
 		entity.last_delivery_time = saved.get("last_delivery", {}).duplicate(true)
-		if entity.id != entity_id:
-			entities.erase(entity_id)
-			entities[entity.id] = entity
-			for occupied_cell: Variant in grid:
-				if int(grid[occupied_cell]) == entity_id:
-					grid[occupied_cell] = entity.id
 		next_id = maxi(next_id, entity.id + 1)
 	spire_progress.assign(data.get("spire_progress", [0.0, 0.0]))
 	spire_stage = int(data.get("spire_stage", 0))

@@ -78,12 +78,82 @@ func _test_splitter_and_merger() -> void:
 		counts.append(int(sim.entities[sink_id].extra.get("received", 0)))
 	var balanced: bool = maxi(counts[0], maxi(counts[1], counts[2])) - mini(counts[0], mini(counts[1], counts[2])) <= 1
 	_check("splitter distributes evenly", balanced, "counts %s" % str(counts))
+
+	var blocked: FactorySim = FactorySim.new()
+	var upstream_id: int = blocked.add_entity("belt_mk1", Vector2i(10, -1))
+	var blocked_splitter_id: int = blocked.add_entity("splitter", Vector2i(10, 0))
+	for blocked_cell: Vector2i in [Vector2i(9, 0), Vector2i(10, 1), Vector2i(11, 0)]:
+		var output_id: int = blocked.add_entity("belt_mk1", blocked_cell)
+		blocked.entities[output_id].belt_items.assign([
+			{"item": "iron_ore", "pos": 0.0},
+			{"item": "iron_ore", "pos": 0.5}
+		])
+	_check("splitter accepts one buffered item", blocked.try_insert(blocked_splitter_id, "iron_ore", Vector2i(10, -1)), "first insert rejected")
+	blocked.tick(0.05)
+	var upstream_belt: FactoryEntity = blocked.entities[upstream_id]
+	upstream_belt.belt_items = [{"item": "iron_ore", "pos": 0.99}]
+	blocked.tick(0.05)
+	_check("blocked splitter holds its item", int(blocked.entities[blocked_splitter_id].input_buffer.get("iron_ore", 0)) == 1, str(blocked.entities[blocked_splitter_id].input_buffer))
+	_check("full splitter refuses another item", not blocked.try_insert(blocked_splitter_id, "copper_ore", Vector2i(10, -1)), str(blocked.entities[blocked_splitter_id].input_buffer))
+	var second_upstream_accepted: bool = blocked.try_insert(upstream_id, "iron_ore", Vector2i(10, -2))
+	_check("upstream belt backs up at blocked splitter", is_equal_approx(float(upstream_belt.belt_items[0]["pos"]), 1.0)
+		and second_upstream_accepted and not blocked.try_insert(upstream_id, "iron_ore", Vector2i(10, -2)), str(upstream_belt.belt_items))
+
+	var blocked_merger: FactorySim = FactorySim.new()
+	var merger_input_a: int = blocked_merger.add_entity("belt_mk1", Vector2i(20, -1))
+	var merger_input_b: int = blocked_merger.add_entity("belt_mk1", Vector2i(19, 0), 1)
+	var blocked_merger_id: int = blocked_merger.add_entity("merger", Vector2i(20, 0))
+	var merger_output: int = blocked_merger.add_entity("belt_mk1", Vector2i(20, 1))
+	blocked_merger.entities[merger_output].belt_items.assign([
+		{"item": "iron_ore", "pos": 0.0},
+		{"item": "iron_ore", "pos": 0.5}
+	])
+	var merger_a_accepted: bool = blocked_merger.try_insert(blocked_merger_id, "iron_ore", Vector2i(20, -1))
+	var merger_b_accepted: bool = blocked_merger.try_insert(blocked_merger_id, "copper_ore", Vector2i(19, 0))
+	blocked_merger.tick(0.05)
+	blocked_merger.entities[merger_input_a].belt_items.assign([{"item": "iron_ore", "pos": 0.99}])
+	blocked_merger.entities[merger_input_b].belt_items.assign([{"item": "copper_ore", "pos": 0.99}])
+	blocked_merger.tick(0.05)
+	var blocked_queues: Dictionary = blocked_merger.entities[blocked_merger_id].extra["merge_queues"]
+	_check("blocked merger output fills each source queue", merger_a_accepted and merger_b_accepted
+		and blocked_queues["20,-1"].size() == 1 and blocked_queues["19,0"].size() == 1, str(blocked_queues))
+	_check("blocked merger backpressures both inputs",
+		is_equal_approx(float(blocked_merger.entities[merger_input_a].belt_items[0]["pos"]), 1.0)
+		and is_equal_approx(float(blocked_merger.entities[merger_input_b].belt_items[0]["pos"]), 1.0)
+		and not blocked_merger.try_insert(blocked_merger_id, "iron_ore", Vector2i(20, -1))
+		and not blocked_merger.try_insert(blocked_merger_id, "copper_ore", Vector2i(19, 0)),
+		str([blocked_merger.entities[merger_input_a].belt_items, blocked_merger.entities[merger_input_b].belt_items]))
+
+	var path_sim: FactorySim = FactorySim.new()
+	var input_machine_id: int = path_sim.add_entity("smelter", Vector2i(8, 4), 1, {"recipe": "iron_ingot"})
+	var input_cell: Vector2i = path_sim.back_port_for(input_machine_id)
+	var path_builder: FactoryBuildSystem = FactoryBuildSystem.new()
+	var input_path: Array[Dictionary] = path_builder.belt_path(Vector2i.ZERO, input_cell, path_sim.entities[input_machine_id].rotation)
+	_check("belt terminal faces into the machine input", input_path.back()["cell"] == input_cell
+		and int(input_path.back()["rotation"]) == 1, str(input_path.back()))
+	var side_merge_path: Array[Dictionary] = path_builder.belt_path_to_belt(Vector2i.ZERO, Vector2i(4, 0), 0)
+	_check("belt path side-merges one cell before an existing belt", side_merge_path.back()["cell"] == Vector2i(3, 0)
+		and int(side_merge_path.back()["rotation"]) == 1, str(side_merge_path.back()))
+
 	var merger_id: int = sim.add_entity("merger", Vector2i(10, 0))
 	var merger_sink: int = sim.add_entity("sink", Vector2i(10, 1))
-	for _index: int in range(6):
-		sim.try_insert(merger_id, "iron_ore", Vector2i(10, -1))
-		sim.try_insert(merger_id, "copper_ore", Vector2i(9, 0))
-	_run_for(sim, 0.6)
+	var iron_inserted: int = 0
+	var copper_inserted: int = 0
+	var initial_iron_accepted: bool = sim.try_insert(merger_id, "iron_ore", Vector2i(10, -1))
+	var second_iron_accepted: bool = sim.try_insert(merger_id, "iron_ore", Vector2i(10, -1))
+	var initial_copper_accepted: bool = sim.try_insert(merger_id, "copper_ore", Vector2i(9, 0))
+	var second_copper_accepted: bool = sim.try_insert(merger_id, "copper_ore", Vector2i(9, 0))
+	iron_inserted += 1 if initial_iron_accepted else 0
+	copper_inserted += 1 if initial_copper_accepted else 0
+	_check("merger limits each source queue to one item",
+		initial_iron_accepted and initial_copper_accepted and not second_iron_accepted and not second_copper_accepted,
+		str(sim.entities[merger_id].extra.get("merge_queues", {})))
+	for _index: int in range(120):
+		if iron_inserted < 6 and sim.try_insert(merger_id, "iron_ore", Vector2i(10, -1)):
+			iron_inserted += 1
+		if copper_inserted < 6 and sim.try_insert(merger_id, "copper_ore", Vector2i(9, 0)):
+			copper_inserted += 1
+		sim.tick(0.05)
 	var received: Dictionary = sim.entities[merger_sink].extra.get("received_by_item", {})
 	_check("merger alternates queued input sources", int(received.get("iron_ore", 0)) == 6 and int(received.get("copper_ore", 0)) == 6,
 		"received %s" % str(received))
@@ -170,7 +240,7 @@ func _test_save_round_trip() -> void:
 	var machine_id: int = sim.add_entity("smelter", Vector2i(2, 0), 0, {"recipe": "iron_ingot"})
 	sim.entities[machine_id].input_buffer["iron_ore"] = 3
 	sim.entities[machine_id].output_buffer["iron_ingot"] = 2
-	var spire_id: int = sim.add_entity("spire", Vector2i(8, 0))
+	var spire_id: int = sim.add_entity("spire", Vector2i(8, 0), 0, {}, 42)
 	sim.spire_progress[0] = 47.5
 	sim.discovered_nodes["hidden_iron"] = true
 	var save_system: FactorySaveSystem = FactorySaveSystem.new()
@@ -207,6 +277,8 @@ func _test_save_round_trip() -> void:
 	_check("save/load preserves belt items", restored_belt.belt_items.size() == 1 and str(restored_belt.belt_items[0]["item"]) == "iron_ore", str(restored_belt.belt_items))
 	_check("save/load preserves machine buffers", restored_machine.input_buffer == {"iron_ore": 3} and restored_machine.output_buffer == {"iron_ingot": 2}, "%s / %s" % [str(restored_machine.input_buffer), str(restored_machine.output_buffer)])
 	_check("save/load preserves milestone and discovery", is_equal_approx(restored.spire_progress[0], 47.5) and restored.discovered_nodes.get("hidden_iron", false) and restored.entities.has(spire_id), "progress %.1f" % restored.spire_progress[0])
+	_check("save/load preserves sparse IDs without rescanning the grid", restored.entities.has(42) and restored.next_id == 43,
+		"IDs %s, next %d" % [str(restored.entities.keys()), restored.next_id])
 	_check("save/load preserves player inventory, transform and tier", restored_player.inventory == player.inventory and restored_player.position.is_equal_approx(player.position) and int(loaded.get("unlocked_tiers", -1)) == 2,
 		"inventory %s, position %s, tier %s" % [str(restored_player.inventory), str(restored_player.position), str(loaded.get("unlocked_tiers", -1))])
 	DirAccess.remove_absolute(ProjectSettings.globalize_path(save_system.save_path))
