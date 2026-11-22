@@ -55,6 +55,17 @@ func remove_in_footprint(cell: Vector2i, size: Vector2i) -> void:
 		state.remove(foliage_id)
 		_hide_instance(foliage_id)
 
+func remove_in_world_footprint(position: Vector3, yaw: float, size: Vector3) -> void:
+	var inverse: Basis = Basis(Vector3.UP, -yaw)
+	for definition: Dictionary in foliage_definitions:
+		var foliage_id: String = str(definition["id"])
+		if state.is_removed(foliage_id):
+			continue
+		var local: Vector3 = inverse * (definition["position"] - position)
+		if absf(local.x) <= size.x * 0.5 and absf(local.z) <= size.z * 0.5:
+			state.remove(foliage_id)
+			_hide_instance(foliage_id)
+
 func _generate_definitions() -> void:
 	var rng: RandomNumberGenerator = RandomNumberGenerator.new()
 	rng.seed = 88341

@@ -109,6 +109,17 @@ func footprint_height(cell: Vector2i, building_id: String, rotation: int = 0) ->
 			highest = maxf(highest, point_for_cell(cell + Vector2i(x, z)).y)
 	return highest
 
+func is_in_lake(position: Vector3) -> bool:
+	return Vector2(position.x, position.z).distance_to(LAKE_CENTER) < 92.0
+
+func is_boulder_in_footprint(position: Vector3, yaw: float, size: Vector3) -> bool:
+	var inverse: Basis = Basis(Vector3.UP, -yaw)
+	for definition: Dictionary in boulder_definitions:
+		var delta: Vector3 = inverse * (definition["position"] - position)
+		if absf(delta.x) < size.x * 0.5 + 0.7 and absf(delta.z) < size.z * 0.5 + 0.7:
+			return true
+	return false
+
 func is_buildable(cell: Vector2i, building_id: String, rotation: int = 0) -> bool:
 	var size: Vector2i = _building_size(building_id, rotation)
 	if float(cell.x * 2) < -WORLD_HALF_EXTENT or float((cell.x + size.x) * 2) > WORLD_HALF_EXTENT:
@@ -467,6 +478,7 @@ func _build_nodes() -> void:
 		resource_sites.append(Vector2(point.x, point.z))
 		if bool(definition.get("hidden", false)):
 			hidden_iron = point
+		definition["id"] = nodes.size()
 		nodes.append(definition)
 		if not bool(definition.get("hidden", false)):
 			_make_node_visual(definition)
