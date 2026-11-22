@@ -480,6 +480,24 @@ func _test_recipe_defaults_and_input_autoselect() -> void:
 		and bool(restored.entities[saved_smelter].extra.get("recipe_locked", false)),
 		str(restored.entities.get(saved_smelter).recipe_id if restored.entities.has(saved_smelter) else "missing"))
 
+	var legacy_locked_data: Dictionary = saved_data.duplicate(true)
+	var legacy_locked_entities: Array = legacy_locked_data["entities"]
+	var legacy_locked_smelter: Dictionary = legacy_locked_entities[0].duplicate(true)
+	legacy_locked_smelter["extra"].erase("recipe")
+	legacy_locked_smelter["extra"].erase("recipe_locked")
+	legacy_locked_entities[0] = legacy_locked_smelter
+	legacy_locked_data["entities"] = legacy_locked_entities
+	var legacy_locked_restored: FactorySim = FactorySim.new()
+	legacy_locked_restored.from_dict(legacy_locked_data)
+	var legacy_locked_entity: FactoryEntity = legacy_locked_restored.entities.get(saved_smelter) as FactoryEntity
+	var legacy_rejects_wrong_input: bool = (
+		legacy_locked_entity != null
+		and not legacy_locked_restored.try_insert(saved_smelter, "iron_ore", "in0"))
+	_check("legacy save with a recipe but no lock flag restores the recipe as locked",
+		legacy_rejects_wrong_input and legacy_locked_entity.recipe_id == "copper_ingot"
+		and bool(legacy_locked_entity.extra.get("recipe_locked", false)),
+		str(legacy_locked_restored.entities.get(saved_smelter)))
+
 	var legacy_data: Dictionary = saved_data.duplicate(true)
 	var legacy_entities: Array = legacy_data["entities"]
 	var legacy_smelter: Dictionary = legacy_entities[0].duplicate(true)

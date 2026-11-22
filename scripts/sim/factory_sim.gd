@@ -434,8 +434,7 @@ func from_dict(data: Dictionary) -> Dictionary:
 		var saved_recipe: String = str(saved.get("recipe", ""))
 		if not saved_recipe.is_empty():
 			entity.recipe_id = saved_recipe
-			if not entity.extra.has("recipe_locked"):
-				entity.extra["recipe_locked"] = true
+			entity.extra["recipe_locked"] = bool(extra.get("recipe_locked", true))
 		entity.input_buffer = _int_dict(saved.get("input", saved.get("input_buffer", {})))
 		entity.output_buffer = _int_dict(saved.get("output", saved.get("output_buffer", {})))
 		entity.belt_items.assign(saved.get("items", saved.get("belt_items", [])))
