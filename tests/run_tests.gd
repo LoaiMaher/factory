@@ -17,6 +17,7 @@ func _run_all() -> void:
 	_test_save_migration_and_refunds()
 	_test_diagnostics()
 	_test_visual_state()
+	_test_belt_audio_localization()
 	_test_power_bypass()
 	_test_ore_boulders()
 	_test_foliage_state()
@@ -639,6 +640,21 @@ func _test_power_bypass() -> void:
 	DirAccess.remove_absolute(ProjectSettings.globalize_path(save_system.save_path))
 	saved_player.queue_free()
 	restored_player.queue_free()
+	_finish_group()
+
+func _test_belt_audio_localization() -> void:
+	var audio_manager: FactoryAudioManager = FactoryAudioManager.new()
+	var curve: PackedVector3Array = PackedVector3Array([
+		Vector3.ZERO, Vector3(0.0, 0.0, 12.0),
+		Vector3(20.0, 0.0, 12.0), Vector3(20.0, 0.0, 0.0)
+	])
+	var listener_position: Vector3 = Vector3(19.0, 0.0, 0.0)
+	var nearest: Vector3 = audio_manager._nearest_belt_point(curve, listener_position)
+	_check("belt-rattle source follows the closest sampled point on a long curve",
+		nearest.distance_to(listener_position) < 3.0
+		and nearest.distance_to(curve[0]) > 10.0,
+		str(nearest))
+	audio_manager.free()
 	_finish_group()
 
 func _make_overloaded_power_sim(bypass_mode: bool) -> FactorySim:

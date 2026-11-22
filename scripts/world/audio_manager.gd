@@ -88,22 +88,26 @@ func _sync_machine_loops() -> void:
 	for entity: FactoryEntity in sim.entities.values():
 		var sound_name: String = ""
 		var productivity: float = 0.0
+		var audio_position: Vector3 = entity.position
 		if entity.kind.begins_with("belt_") and not entity.belt_items.is_empty():
 			sound_name = "belt_rattle"
 			productivity = 0.65
+			if listener != null:
+				audio_position = _nearest_belt_point(entity.extra.get("curve", PackedVector3Array()),
+					listener.global_position)
 		elif MACHINE_SOUNDS.has(entity.kind):
 			var state: Dictionary = sim.visual_state(entity.id)
 			sound_name = str(MACHINE_SOUNDS[entity.kind])
 			productivity = float(state.get("productivity", 0.0))
 		if sound_name.is_empty() or productivity <= 0.02 or not loop_streams.has(sound_name):
 			continue
-		var distance: float = listener.global_position.distance_to(entity.position) if listener != null else 0.0
+		var distance: float = listener.global_position.distance_to(audio_position) if listener != null else 0.0
 		if distance > 40.0:
 			continue
 		candidates.append({
 			"id": entity.id,
 			"kind": sound_name,
-			"position": entity.position,
+			"position": audio_position,
 			"productivity": productivity,
 			"distance": distance
 		})
@@ -141,6 +145,24 @@ func _sync_machine_loops() -> void:
 		distances[index] = float(candidate["distance"])
 		if not players[index].playing:
 			players[index].play()
+
+func _nearest_belt_point(curve: PackedVector3Array, listener_position: Vector3) -> Vector3:
+	if curve.size() != 4:
+		return curve[0] if not curve.is_empty() else listener_position
+	var nearest: Vector3 = curve[0]
+	var nearest_distance: float = nearest.distance_squared_to(listener_position)
+	for sample: int in range(1, 17):
+		var t: float = float(sample) / 16.0
+		var u: float = 1.0 - t
+		var point: Vector3 = (curve[0] * u * u * u
+			+ curve[1] * 3.0 * u * u * t
+			+ curve[2] * 3.0 * u * t * t
+			+ curve[3] * t * t * t)
+		var distance: float = point.distance_squared_to(listener_position)
+		if distance < nearest_distance:
+			nearest = point
+			nearest_distance = distance
+	return nearest
 
 func _configure_buses() -> void:
 	var master_index: int = AudioServer.get_bus_index("Master")
