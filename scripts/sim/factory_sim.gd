@@ -86,6 +86,8 @@ func add_entity(kind: String, position: Vector3, yaw: float = 0.0, data: Diction
 	entity.yaw = yaw
 	entity.extra = data.duplicate(true)
 	entity.recipe_id = str(data.get("recipe", ""))
+	if not entity.recipe_id.is_empty():
+		entity.extra["recipe_locked"] = true
 	if entity.recipe_id.is_empty():
 		entity.recipe_id = Recipes.default_for(kind)
 	entity.cost = building_definitions[kind].get("cost", {}).duplicate(true)
@@ -102,6 +104,19 @@ func add_entity(kind: String, position: Vector3, yaw: float = 0.0, data: Diction
 	_rebuild_indexes()
 	power.rebuild(entities)
 	return entity.id
+
+func set_recipe(entity_id: int, recipe_id: String, locked: bool = true) -> bool:
+	if not entities.has(entity_id):
+		return false
+	var entity: FactoryEntity = entities[entity_id]
+	var recipe: Dictionary = recipe_definitions.get(recipe_id, {})
+	if not _is_machine(entity.kind) or recipe.is_empty() or str(recipe.get("machine", "")) != entity.kind:
+		return false
+	entity.recipe_id = recipe_id
+	entity.extra["recipe_locked"] = locked
+	entity.extra.erase("input_mismatch")
+	entity.progress = 0.0
+	return true
 
 func add_belt(kind: String, from_id: int, from_port: String, to_id: int, to_port: String, curve: PackedVector3Array) -> Dictionary:
 	if kind not in ["belt_mk1", "belt_mk2"]:
@@ -209,6 +224,10 @@ func try_insert(entity_id: int, item_id: String, port_id: String) -> bool:
 	if not _is_machine(entity.kind):
 		return false
 	if not _valid_input(entity, item_id):
+		if bool(entity.extra.get("recipe_locked", false)):
+			entity.extra["input_mismatch"] = item_id
+			entity.status = _input_recipe_mismatch(entity, item_id)
+			return false
 		if _inventory_total(entity.input_buffer) > 0 or _inventory_total(entity.output_buffer) > 0:
 			return false
 		var compatible_recipe: String = ""
@@ -221,6 +240,7 @@ func try_insert(entity_id: int, item_id: String, port_id: String) -> bool:
 			return false
 		entity.recipe_id = compatible_recipe
 		entity.progress = 0.0
+	entity.extra.erase("input_mismatch")
 	var recipe: Dictionary = recipe_definitions[entity.recipe_id]
 	var maximum: int = maxi(10, int(recipe["inputs"].get(item_id, 0)) * 2)
 	if int(entity.input_buffer.get(item_id, 0)) >= maximum:
@@ -258,6 +278,9 @@ func diagnostics(entity_id: int) -> Array[String]:
 		return result
 	var entity: FactoryEntity = entities[entity_id]
 	result.append(_power_diagnostic(entity))
+	var mismatch_item: String = str(entity.extra.get("input_mismatch", ""))
+	if not mismatch_item.is_empty():
+		result.append(_input_recipe_mismatch(entity, mismatch_item))
 	if not recipe_definitions.has(entity.recipe_id):
 		return result
 	var recipe: Dictionary = recipe_definitions[entity.recipe_id]
@@ -407,6 +430,8 @@ func from_dict(data: Dictionary) -> Dictionary:
 		var saved_recipe: String = str(saved.get("recipe", ""))
 		if not saved_recipe.is_empty():
 			entity.recipe_id = saved_recipe
+			if not entity.extra.has("recipe_locked"):
+				entity.extra["recipe_locked"] = true
 		entity.input_buffer = _int_dict(saved.get("input", saved.get("input_buffer", {})))
 		entity.output_buffer = _int_dict(saved.get("output", saved.get("output_buffer", {})))
 		entity.belt_items.assign(saved.get("items", saved.get("belt_items", [])))
@@ -499,6 +524,10 @@ func _update_miner(entity: FactoryEntity, dt: float) -> void:
 
 func _update_machine(entity: FactoryEntity, dt: float) -> void:
 	_push_outputs(entity)
+	var mismatch_item: String = str(entity.extra.get("input_mismatch", ""))
+	if not mismatch_item.is_empty():
+		entity.status = _input_recipe_mismatch(entity, mismatch_item)
+		return
 	if not recipe_definitions.has(entity.recipe_id):
 		entity.status = "No recipe"
 		return
@@ -700,6 +729,10 @@ func _is_machine(kind: String) -> bool:
 
 func _valid_input(entity: FactoryEntity, item_id: String) -> bool:
 	return recipe_definitions.has(entity.recipe_id) and recipe_definitions[entity.recipe_id]["inputs"].has(item_id)
+
+func _input_recipe_mismatch(entity: FactoryEntity, item_id: String) -> String:
+	var recipe_name: String = entity.recipe_id.replace("_", " ").capitalize()
+	return "Input %s doesn't match recipe %s" % [Items.item_name(item_id), recipe_name]
 
 func _inventory_total(items: Dictionary) -> int:
 	var total: int = 0

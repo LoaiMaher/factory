@@ -352,6 +352,25 @@ func _test_recipe_defaults_and_input_autoselect() -> void:
 		and output_buffer_sim.entities[output_buffer_smelter].recipe_id == "iron_ingot",
 		str(output_buffer_sim.entities[output_buffer_smelter].output_buffer))
 
+	var locked_sim: FactorySim = FactorySim.new()
+	var locked_smelter: int = locked_sim.add_entity("smelter", Vector3.ZERO, 0.0, {"recipe": "copper_ingot"})
+	var locked_accept: bool = locked_sim.try_insert(locked_smelter, "iron_ore", "in0")
+	var mismatch_diagnostic: String = "Input Iron Ore doesn't match recipe Copper Ingot"
+	_check("explicit recipe remains locked when a different input arrives",
+		not locked_accept and locked_sim.entities[locked_smelter].recipe_id == "copper_ingot"
+		and bool(locked_sim.entities[locked_smelter].extra.get("recipe_locked", false))
+		and locked_sim.diagnostics(locked_smelter).has(mismatch_diagnostic),
+		str([locked_sim.entities[locked_smelter].recipe_id,
+			locked_sim.entities[locked_smelter].extra, locked_sim.diagnostics(locked_smelter)]))
+
+	var menu_sim: FactorySim = FactorySim.new()
+	var menu_smelter: int = menu_sim.add_entity("smelter", Vector3.ZERO)
+	_check("machine-panel recipe selection locks the selected recipe",
+		menu_sim.set_recipe(menu_smelter, "copper_ingot")
+		and menu_sim.entities[menu_smelter].recipe_id == "copper_ingot"
+		and bool(menu_sim.entities[menu_smelter].extra.get("recipe_locked", false)),
+		str(menu_sim.entities[menu_smelter].extra))
+
 	var saved_sim: FactorySim = FactorySim.new()
 	var saved_smelter: int = saved_sim.add_entity("smelter", Vector3.ZERO, 0.0, {"recipe": "copper_ingot"})
 	var saved_data: Dictionary = saved_sim.to_dict()
@@ -359,7 +378,8 @@ func _test_recipe_defaults_and_input_autoselect() -> void:
 	restored.from_dict(saved_data)
 	_check("save/load retains an explicitly selected machine recipe",
 		restored.entities.has(saved_smelter)
-		and restored.entities[saved_smelter].recipe_id == "copper_ingot",
+		and restored.entities[saved_smelter].recipe_id == "copper_ingot"
+		and bool(restored.entities[saved_smelter].extra.get("recipe_locked", false)),
 		str(restored.entities.get(saved_smelter).recipe_id if restored.entities.has(saved_smelter) else "missing"))
 
 	var legacy_data: Dictionary = saved_data.duplicate(true)

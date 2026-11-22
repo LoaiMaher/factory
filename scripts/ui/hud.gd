@@ -500,7 +500,7 @@ func _format_counts(item_types: Dictionary, buffer: Dictionary) -> String:
 
 func _on_recipe_selected(index: int, recipe_names: Array[String]) -> void:
 	if index > 0 and selected_entity_id >= 0 and index - 1 < recipe_names.size():
-		sim.entities[selected_entity_id].recipe_id = recipe_names[index - 1]
+		sim.set_recipe(selected_entity_id, recipe_names[index - 1])
 		refresh_entity_panel()
 
 func _take_output() -> void:
