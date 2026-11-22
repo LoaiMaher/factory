@@ -455,6 +455,24 @@ func _test_recipe_defaults_and_input_autoselect() -> void:
 		and bool(menu_sim.entities[menu_smelter].extra.get("recipe_locked", false)),
 		str(menu_sim.entities[menu_smelter].extra))
 
+	var progress_sim: FactorySim = FactorySim.new()
+	var progress_smelter: int = progress_sim.add_entity("smelter", Vector3.ZERO, 0.0, {"recipe": "iron_ingot"})
+	var progress_entity: FactoryEntity = progress_sim.entities[progress_smelter]
+	progress_entity.progress = 1.2
+	progress_entity.extra["input_mismatch"] = "copper_ore"
+	var relock_result: bool = progress_sim.set_recipe(progress_smelter, "iron_ingot")
+	_check("reselecting the current recipe preserves progress and mismatch",
+		relock_result and progress_entity.progress == 1.2
+		and bool(progress_entity.extra.get("recipe_locked", false))
+		and progress_entity.extra.get("input_mismatch") == "copper_ore",
+		str([progress_entity.recipe_id, progress_entity.progress, progress_entity.extra]))
+	var change_result: bool = progress_sim.set_recipe(progress_smelter, "copper_ingot")
+	_check("changing recipes clears progress and mismatch",
+		change_result and progress_entity.recipe_id == "copper_ingot"
+		and progress_entity.progress == 0.0
+		and not progress_entity.extra.has("input_mismatch"),
+		str([progress_entity.recipe_id, progress_entity.progress, progress_entity.extra]))
+
 	var default_saved_sim: FactorySim = FactorySim.new()
 	var default_saved_smelter: int = default_saved_sim.add_entity("smelter", Vector3.ZERO)
 	var default_saved_data: Dictionary = default_saved_sim.to_dict()

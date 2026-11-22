@@ -114,10 +114,11 @@ func set_recipe(entity_id: int, recipe_id: String, locked: bool = true) -> bool:
 	var recipe: Dictionary = recipe_definitions.get(recipe_id, {})
 	if not _is_machine(entity.kind) or recipe.is_empty() or str(recipe.get("machine", "")) != entity.kind:
 		return false
-	entity.recipe_id = recipe_id
 	entity.extra["recipe_locked"] = locked
-	entity.extra.erase("input_mismatch")
-	entity.progress = 0.0
+	if entity.recipe_id != recipe_id:
+		entity.recipe_id = recipe_id
+		entity.extra.erase("input_mismatch")
+		entity.progress = 0.0
 	return true
 
 func add_belt(kind: String, from_id: int, from_port: String, to_id: int, to_port: String, curve: PackedVector3Array) -> Dictionary:
