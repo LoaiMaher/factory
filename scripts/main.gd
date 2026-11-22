@@ -773,6 +773,13 @@ func _load_saved_game(show_toast: bool) -> bool:
 		if show_toast:
 			hud.show_toast("No compatible save found.")
 		return false
+	var restore_position: Vector3 = player.position
+	restore_position.x = clampf(restore_position.x, -FactoryTerrain.WORLD_HALF_EXTENT + 1.0,
+		FactoryTerrain.WORLD_HALF_EXTENT - 1.0)
+	restore_position.z = clampf(restore_position.z, -FactoryTerrain.WORLD_HALF_EXTENT + 1.0,
+		FactoryTerrain.WORLD_HALF_EXTENT - 1.0)
+	player.position = SafePlayerPosition.adjust(restore_position,
+		terrain.height_at(restore_position.x, restore_position.z), FactoryTerrain.WORLD_HALF_EXTENT)
 	unlocked_tiers = int(loaded["unlocked_tiers"])
 	for item_id: String in loaded.get("belt_refund", {}):
 		player.inventory[item_id] = int(player.inventory.get(item_id, 0)) + int(loaded["belt_refund"][item_id])

@@ -350,6 +350,11 @@ func _test_save_migration_and_refunds() -> void:
 	var migration_result: Dictionary = legacy_system.load_game(migrated, migrated_player)
 	var migrated_miner: FactoryEntity = migrated.entities.get(5)
 	var migrated_smelter: FactoryEntity = migrated.entities.get(8)
+	var safe_position: Vector3 = SafePlayerPosition.adjust(
+		Vector3(800.0, -4.0, -900.0), 12.0, FactoryTerrain.WORLD_HALF_EXTENT)
+	_check("loaded player position is clamped and raised above terrain",
+		is_equal_approx(safe_position.x, 511.0) and is_equal_approx(safe_position.z, -511.0)
+		and is_equal_approx(safe_position.y, 13.0), str(safe_position))
 	_check("v2 grid entities migrate to world centers and quarter-turn yaw",
 		int(migration_result.get("migrated_from", 0)) == 2 and migrated_miner != null and migrated_smelter != null
 		and migrated_miner.position.is_equal_approx(Vector3(2.0, 0.0, 2.0))
