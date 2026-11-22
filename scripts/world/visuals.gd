@@ -10,7 +10,10 @@ var item_multimeshes: Dictionary = {}
 var material_cache: Dictionary = {}
 var mesh_cache: Dictionary = {}
 var item_positions_by_type: Dictionary = {}
+var item_mesh_cache: Dictionary = {}
+var item_material_cache: Dictionary = {}
 var building_definitions: Dictionary = BuildingDefs.all()
+var machine_models: MachineModels = MachineModels.new()
 var interpolation_alpha: float = 0.0
 var cable_visual: MeshInstance3D
 var cable_mesh: ImmediateMesh
@@ -53,13 +56,13 @@ func refresh() -> void:
 			visual.rotation.y = rotation_angle
 		if entity.kind == "spire":
 			_update_spire(visual, sim.spire_stage)
-		var drill: Node3D = visual.get_node_or_null("DrillHead") as Node3D
-		if drill != null:
-			drill.rotation.y = Time.get_ticks_msec() * 0.002 if entity.status == "Running" else 0.0
-		var furnace_mouth: MeshInstance3D = visual.get_node_or_null("FurnaceMouth") as MeshInstance3D
-		if furnace_mouth != null:
-			furnace_mouth.material_override = _material("furnace_mouth_on" if entity.status == "Running" else "furnace_mouth_off",
-				Color("d46b31") if entity.status == "Running" else Color("393a35"), 0.15, 0.84, entity.status == "Running")
+		if entity.kind.begins_with("belt_"):
+			var belt_surface: MeshInstance3D = visual.get_node_or_null("BeltSurface") as MeshInstance3D
+			if belt_surface != null and belt_surface.material_override is ShaderMaterial:
+				var belt_shader: ShaderMaterial = belt_surface.material_override
+				belt_shader.set_shader_parameter("belt_speed", 0.9 if not entity.belt_items.is_empty() else 0.0)
+		else:
+			machine_models.animate(visual, entity)
 		var indicator: Label3D = visual.get_node_or_null("Status") as Label3D
 		if indicator != null:
 			indicator.text = "●" if entity.status == "Running" else "●"
@@ -81,7 +84,11 @@ func _make_entity_visual(entity: FactoryEntity) -> Node3D:
 		var belt_dimensions: Vector3 = Vector3(1.7, 0.18, 1.5)
 		body.mesh = _box_mesh("belt_body", belt_dimensions)
 		body.position.y = 0.18
-		body.material_override = _material("belt", Color("303a3b"))
+		body.name = "BeltSurface"
+		var belt_material: ShaderMaterial = ShaderMaterial.new()
+		belt_material.shader = load("res://shaders/belt_surface.gdshader") as Shader
+		belt_material.set_shader_parameter("belt_speed", 0.0)
+		body.material_override = belt_material
 		root.add_child(body)
 		_add_collider(root, belt_dimensions, body.position)
 		for side: float in [-0.57, 0.57]:
@@ -95,6 +102,20 @@ func _make_entity_visual(entity: FactoryEntity) -> Node3D:
 			cue.scale = Vector3(0.64, 0.42, 0.64)
 			cue.position = Vector3(0.0, 0.31, -0.35 + float(index) * 0.66)
 			root.add_child(cue)
+		for end: float in [-0.62, 0.62]:
+			var roller: MeshInstance3D = MeshInstance3D.new()
+			roller.mesh = _cylinder_mesh("belt_roller", 0.13, 1.35)
+			roller.position = Vector3(0.0, 0.26, end)
+			roller.rotation.z = PI / 2.0
+			roller.material_override = _material("belt_roller", Color("5d6863"), 0.54, 0.72)
+			root.add_child(roller)
+		for z: float in [-0.48, 0.48]:
+			for x: float in [-0.55, 0.55]:
+				var support: MeshInstance3D = MeshInstance3D.new()
+				support.mesh = _box_mesh("belt_support", Vector3(0.12, 0.48, 0.12))
+				support.position = Vector3(x, -0.08, z)
+				support.material_override = _material("belt_support", Color("59625f"), 0.48, 0.78)
+				root.add_child(support)
 	else:
 		var body: MeshInstance3D = MeshInstance3D.new()
 		var box: BoxMesh = BoxMesh.new()
@@ -117,7 +138,7 @@ func _make_entity_visual(entity: FactoryEntity) -> Node3D:
 		roof.position = body.position + Vector3(0.0, 1.36, 0.0)
 		roof.material_override = _material("trim", Color("53656a"))
 		root.add_child(roof)
-		_add_machine_silhouette(root, entity, size, body.position)
+		machine_models.build(entity.kind, root, size, body.position)
 		_add_port_markers(root, entity)
 		var status: Label3D = Label3D.new()
 		status.name = "Status"
@@ -128,30 +149,6 @@ func _make_entity_visual(entity: FactoryEntity) -> Node3D:
 		status.billboard = BaseMaterial3D.BILLBOARD_ENABLED
 		root.add_child(status)
 		if entity.kind == "spire":
-			var spire: MeshInstance3D = MeshInstance3D.new()
-			var spire_mesh: BoxMesh = BoxMesh.new()
-			spire_mesh.size = Vector3(0.8, 12.0, 0.8)
-			spire.mesh = spire_mesh
-			spire.position = body.position + Vector3(5.0, 6.0, 5.0)
-			spire.material_override = _material("spire_steel", Color("38403d"), 0.72, 0.74)
-			spire.name = "Stage0"
-			root.add_child(spire)
-			var gantry: MeshInstance3D = MeshInstance3D.new()
-			var gantry_mesh: BoxMesh = BoxMesh.new()
-			gantry_mesh.size = Vector3(12.0, 0.55, 0.55)
-			gantry.mesh = gantry_mesh
-			gantry.position = body.position + Vector3(5.0, 8.0, 5.0)
-			gantry.material_override = _material("gantry", Color("b48d43"), 0.42, 0.76)
-			gantry.name = "Gantry"
-			root.add_child(gantry)
-			for side: float in [-4.8, 4.8]:
-				var crane_leg: MeshInstance3D = MeshInstance3D.new()
-				var leg_mesh: BoxMesh = BoxMesh.new()
-				leg_mesh.size = Vector3(0.48, 8.0, 0.48)
-				crane_leg.mesh = leg_mesh
-				crane_leg.position = body.position + Vector3(5.0 + side, 4.0, 5.0)
-				crane_leg.material_override = _material("gantry", Color("b48d43"), 0.42, 0.76)
-				root.add_child(crane_leg)
 			var assembly: SpireVisual = SpireVisual.new()
 			assembly.name = "ShipSections"
 			assembly.position = body.position
@@ -308,9 +305,9 @@ func _update_item_instances() -> void:
 			var multimesh_instance: MultiMeshInstance3D = MultiMeshInstance3D.new()
 			var multimesh: MultiMesh = MultiMesh.new()
 			multimesh.transform_format = MultiMesh.TRANSFORM_3D
-			multimesh.mesh = _box_mesh("belt_item_cube", Vector3(0.46, 0.48, 0.46))
+			multimesh.mesh = _item_mesh(item_id)
 			multimesh_instance.multimesh = multimesh
-			multimesh_instance.material_override = _material("item_%s" % item_id, Items.all()[item_id]["color"], 0.08, 0.82)
+			multimesh_instance.material_override = _item_material(item_id)
 			item_multimeshes[item_id] = multimesh_instance
 			add_child(multimesh_instance)
 		var mm: MultiMesh = item_multimeshes[item_id].multimesh
@@ -331,6 +328,49 @@ func _update_spire(root: Node3D, stage: int) -> void:
 	var assembly: SpireVisual = root.get_node_or_null("ShipSections") as SpireVisual
 	if assembly != null:
 		assembly.set_stage(stage)
+
+func _item_mesh(item_id: String) -> Mesh:
+	if item_mesh_cache.has(item_id):
+		return item_mesh_cache[item_id]
+	var mesh: Mesh
+	match item_id:
+		"iron_ore", "copper_ore", "limestone":
+			var ore: SphereMesh = SphereMesh.new()
+			ore.radius = 0.28
+			ore.height = 0.42
+			ore.radial_segments = 8
+			ore.rings = 5
+			mesh = ore
+		"iron_ingot":
+			var ingot: BoxMesh = BoxMesh.new()
+			ingot.size = Vector3(0.58, 0.2, 0.28)
+			mesh = ingot
+		"iron_plate":
+			var plate: BoxMesh = BoxMesh.new()
+			plate.size = Vector3(0.62, 0.1, 0.44)
+			mesh = plate
+		"iron_rod", "screw":
+			var rod: CylinderMesh = CylinderMesh.new()
+			rod.top_radius = 0.1
+			rod.bottom_radius = 0.1
+			rod.height = 0.55
+			rod.radial_segments = 8
+			mesh = rod
+		_:
+			mesh = _box_mesh("belt_item_%s" % item_id, Vector3(0.42, 0.32, 0.38))
+	item_mesh_cache[item_id] = mesh
+	return mesh
+
+func _item_material(item_id: String) -> StandardMaterial3D:
+	if item_material_cache.has(item_id):
+		return item_material_cache[item_id]
+	var item_data: Dictionary = Items.all().get(item_id, {})
+	var material: StandardMaterial3D = StandardMaterial3D.new()
+	material.albedo_color = item_data.get("color", Color("9b8d73"))
+	material.metallic = 0.22 if item_id in ["iron_ingot", "iron_plate", "iron_rod"] else 0.04
+	material.roughness = 0.72
+	item_material_cache[item_id] = material
+	return material
 
 func _refresh_power_cables() -> void:
 	if sim == null or terrain == null or DisplayServer.get_name() == "headless":
@@ -383,8 +423,17 @@ func _refresh_power_cables() -> void:
 	cable_mesh.clear_surfaces()
 	cable_mesh.surface_begin(Mesh.PRIMITIVE_LINES)
 	for segment: Array in segments:
-		cable_mesh.surface_add_vertex(segment[0])
-		cable_mesh.surface_add_vertex(segment[1])
+		var start: Vector3 = segment[0]
+		var finish: Vector3 = segment[1]
+		for index: int in range(12):
+			var first_t: float = float(index) / 12.0
+			var second_t: float = float(index + 1) / 12.0
+			var first_point: Vector3 = start.lerp(finish, first_t)
+			var second_point: Vector3 = start.lerp(finish, second_t)
+			first_point.y -= 1.6 * 4.0 * first_t * (1.0 - first_t)
+			second_point.y -= 1.6 * 4.0 * second_t * (1.0 - second_t)
+			cable_mesh.surface_add_vertex(first_point)
+			cable_mesh.surface_add_vertex(second_point)
 	cable_mesh.surface_end()
 	cable_visual.visible = true
 
