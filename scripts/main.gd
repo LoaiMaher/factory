@@ -793,7 +793,10 @@ func _load_saved_game(show_toast: bool) -> bool:
 	visuals.refresh()
 	_reveal_discovered_nodes()
 	if show_toast:
-		hud.show_toast("Old belts were refunded — reconnect machines with new belts" if int(loaded.get("migrated_from", 0)) > 0 else "Factory loaded.")
+		var load_message: String = "Old belts were refunded — reconnect machines with new belts" if int(loaded.get("migrated_from", 0)) > 0 else "Factory loaded."
+		if sim.restore_failure_count > 0:
+			load_message += " %d machines couldn't be restored and were refunded." % sim.restore_failure_count
+		hud.show_toast(load_message)
 	return true
 
 func _buy_tier(index: int) -> void:

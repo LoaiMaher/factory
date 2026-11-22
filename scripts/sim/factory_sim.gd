@@ -9,6 +9,7 @@ const EPSILON: float = 0.001
 var entities: Dictionary = {}
 var time: float = 0.0
 var next_id: int = 1
+var restore_failure_count: int = 0
 var power: FactoryPower = FactoryPower.new()
 var building_definitions: Dictionary = BuildingDefs.all()
 var recipe_definitions: Dictionary = Recipes.all()
@@ -312,6 +313,7 @@ func from_dict(data: Dictionary) -> Dictionary:
 	node_reservations.clear()
 	vent_reservations.clear()
 	port_links.clear()
+	restore_failure_count = 0
 	time = float(data.get("time", 0.0))
 	next_id = int(data.get("next_id", 1))
 	var refund: Dictionary = {}
@@ -355,11 +357,14 @@ func from_dict(data: Dictionary) -> Dictionary:
 			position = Vector3(float(cell.x) * 2.0 + world_size.x * 0.5, 0.0, float(cell.y) * 2.0 + world_size.y * 0.5)
 			yaw = float(old_rotation) * PI / 2.0
 			if kind == "miner_mk1":
-				var nearest: int = _nearest_node(position)
+				var nearest: int = _nearest_migration_node(position, extra)
 				if nearest >= 0:
 					extra["node_id"] = nearest
+					position = nodes[nearest]["position"]
 		var entity_id: int = add_entity(kind, position, yaw, extra, int(saved.get("id", -1)))
 		if entity_id < 0:
+			_refund_unrestored_entity(kind, saved, refund)
+			restore_failure_count += 1
 			continue
 		var entity: FactoryEntity = entities[entity_id]
 		entity.recipe_id = str(saved.get("recipe", entity.recipe_id))
@@ -607,6 +612,49 @@ func _nearest_node(position: Vector3) -> int:
 			closest = int(node_id)
 			distance = candidate
 	return closest
+
+func _nearest_migration_node(position: Vector3, saved_extra: Dictionary) -> int:
+	var requested_item: String = str(saved_extra.get("item", saved_extra.get("node_item", "")))
+	var node_value: Variant = saved_extra.get("node", null)
+	if node_value is String:
+		requested_item = str(node_value)
+	elif node_value is Dictionary:
+		requested_item = str(node_value.get("item", requested_item))
+	var saved_node_id: int = int(saved_extra.get("node_id", -1))
+	if nodes.has(saved_node_id):
+		requested_item = str(nodes[saved_node_id].get("item", requested_item))
+	var closest: int = -1
+	var distance: float = 6.0
+	for node_id: Variant in nodes:
+		var node: Dictionary = nodes[node_id]
+		if not requested_item.is_empty() and str(node.get("item", "")) != requested_item:
+			continue
+		var node_position: Vector3 = node["position"]
+		var candidate: float = Vector2(position.x - node_position.x, position.z - node_position.z).length()
+		if candidate <= distance:
+			closest = int(node_id)
+			distance = candidate
+	return closest
+
+func _refund_unrestored_entity(kind: String, saved: Dictionary, refund: Dictionary) -> void:
+	var definition: Dictionary = building_definitions.get(kind, {})
+	_add_items(refund, definition.get("cost", {}))
+	var input: Variant = saved.get("input", saved.get("input_buffer", {}))
+	if input is Dictionary:
+		_add_items(refund, _int_dict(input))
+	var output: Variant = saved.get("output", saved.get("output_buffer", {}))
+	if output is Dictionary:
+		_add_items(refund, _int_dict(output))
+	var extra: Dictionary = saved.get("extra", {})
+	var merge_queues: Variant = extra.get("merge_queues", {})
+	if merge_queues is Dictionary:
+		for queue_variant: Variant in merge_queues.values():
+			if not queue_variant is Array:
+				continue
+			for queued_item: Variant in queue_variant:
+				var item_id: String = str(queued_item.get("item", "")) if queued_item is Dictionary else str(queued_item)
+				if not item_id.is_empty():
+					_add_items(refund, {item_id: 1})
 
 func _is_belt_segment(kind: String) -> bool:
 	return kind in ["belt_mk1", "belt_mk2"]

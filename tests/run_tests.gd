@@ -366,6 +366,32 @@ func _test_save_migration_and_refunds() -> void:
 		migration_result.get("world", {}).get("foliage", []).has("tree_00001")
 		and int(migration_result.get("world", {}).get("boulders", {}).get("iron_a", {}).get("remaining", -1)) == 4,
 		str(migration_result.get("world", {})))
+
+	var snapped_sim: FactorySim = FactorySim.new()
+	snapped_sim.register_node(12, "iron_ore", "normal", Vector3(5.0, 0.0, 2.0))
+	snapped_sim.from_dict({"entities": [
+		{"id": 12, "kind": "miner_mk1", "cell": [0, 0], "rotation": 0,
+			"extra": {"item": "iron_ore"}, "input": {}, "output": {}}
+	]})
+	var snapped_miner: FactoryEntity = snapped_sim.entities.get(12)
+	_check("legacy miner three metres off a matching node snaps to its centre",
+		snapped_miner != null and snapped_miner.position.is_equal_approx(Vector3(5.0, 0.0, 2.0))
+		and int(snapped_miner.extra.get("node_id", -1)) == 12,
+		str(snapped_miner.position if snapped_miner != null else Vector3.INF))
+
+	var overlap_sim: FactorySim = FactorySim.new()
+	var overlap_refund: Dictionary = overlap_sim.from_dict({"entities": [
+		{"id": 20, "kind": "storage", "cell": [5, 5], "rotation": 0, "extra": {}, "input": {}, "output": {}},
+		{"id": 21, "kind": "merger", "cell": [5, 5], "rotation": 0,
+			"extra": {"merge_queues": {"in0": ["wire"]}},
+			"input": {"iron_ore": 2}, "output": {"iron_ingot": 1}}
+	]})
+	_check("overlapping legacy machine failure is counted and fully refunded",
+		overlap_sim.restore_failure_count == 1 and overlap_sim.entities.has(20) and not overlap_sim.entities.has(21)
+		and int(overlap_refund.get("iron_plate", 0)) == int(BuildingDefs.all()["merger"]["cost"]["iron_plate"])
+		and int(overlap_refund.get("iron_ore", 0)) == 2 and int(overlap_refund.get("iron_ingot", 0)) == 1
+		and int(overlap_refund.get("wire", 0)) == 1,
+		str([overlap_sim.restore_failure_count, overlap_refund]))
 	legacy_root["version"] = 1
 	legacy_file = FileAccess.open(legacy_system.save_path, FileAccess.WRITE)
 	legacy_file.store_string(JSON.stringify(legacy_root))
