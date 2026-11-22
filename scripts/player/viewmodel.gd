@@ -187,8 +187,8 @@ func _create_overlay() -> void:
 		build_tool = tool_scene.instantiate() as Node3D
 		build_tool.name = "BuildTool"
 		hand_right.add_child(build_tool)
-		build_tool.position = Vector3(-0.03, 0.4, 0.1)
-		build_tool.scale = Vector3.ONE * 0.95
+		build_tool.position = Vector3(-0.05, 0.27, 0.08)
+		build_tool.scale = Vector3.ONE * 0.67
 		build_tool.rotation = Vector3(-0.08, 0.0, 0.0)
 		machine_models.apply_pbr_materials(build_tool)
 		_set_viewmodel_layers(build_tool)

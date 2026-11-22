@@ -52,6 +52,7 @@ var demo_smelter_id: int = -1
 var capture_preview_override: bool = false
 var capture_aim_override: bool = false
 var capture_mining_override: bool = false
+var v11_capture_line_target: Vector3 = Vector3.ZERO
 
 func _ready() -> void:
 	FactoryPlayer.configure_input()
@@ -129,6 +130,8 @@ func _ready() -> void:
 			break
 		if argument == "--capture-machine-set":
 			call_deferred("_capture_machine_set")
+		if argument == "--capture-v11":
+			call_deferred("_capture_v11_shots")
 			break
 		if argument == "--capture-v7":
 			call_deferred("_capture_v7_shots")
@@ -1269,7 +1272,8 @@ func _capture_machine_set() -> void:
 	hud.hide()
 	visuals.visible = false
 	for kind: String in ["miner_mk1", "smelter", "constructor", "assembler", "geo_tap",
-			"power_pole", "storage", "splitter", "merger", "belt", "spire", "hub", "drop_pod"]:
+			"power_pole", "storage", "splitter", "merger", "belt", "belt_pole",
+			"spire", "hub", "drop_pod"]:
 		var model_kind: String = "belt_mk1" if kind == "belt" else kind
 		var model_size: Vector3 = BuildingDefs.size_of(model_kind)
 		if kind == "hub":
@@ -1289,6 +1293,141 @@ func _capture_machine_set() -> void:
 		capture_root.queue_free()
 		await get_tree().process_frame
 	get_tree().quit()
+
+func _capture_v11_shots() -> void:
+	autosave_enabled = false
+	capture_aim_override = true
+	aimed_entity_id = -1
+	visuals.aimed_entity_id = -1
+	if sim.entities.size() <= 1 and not _build_capture_v11_line():
+		get_tree().quit()
+		return
+	if sim.entities.size() > 1:
+		visuals.refresh()
+	hud.show_toast("", 0.0)
+	if hud.help_panel.visible:
+		hud.toggle_help()
+	sim.power.bypass = true
+	for _step: int in range(1200):
+		sim.tick(0.05)
+	visuals.refresh()
+	for _frame: int in range(90):
+		await get_tree().process_frame
+	var factory_target: Vector3 = v11_capture_line_target + Vector3.UP * 1.4
+	_set_capture_view(factory_target, factory_target + Vector3(16.0, 9.0, 6.0))
+	await get_tree().create_timer(1.0).timeout
+	_write_capture("demo-factory-overview")
+	_set_capture_view(factory_target, factory_target + Vector3(16.0, 8.0, 5.0))
+	await get_tree().create_timer(1.0).timeout
+	_write_capture("machine-line-closeup")
+	for item: String in ["iron_ore", "copper_ore", "limestone"]:
+		for node: Dictionary in terrain.nodes:
+			if str(node["item"]) != item or bool(node.get("hidden", false)):
+				continue
+			var node_position: Vector3 = node["position"]
+			var occupied_by_miner: bool = false
+			for entity_id: Variant in sim.entities:
+				var entity: FactoryEntity = sim.entities[entity_id]
+				if entity.kind == "miner_mk1" and entity.position.distance_to(node_position) < 2.5:
+					occupied_by_miner = true
+					break
+			if occupied_by_miner:
+				continue
+			var target: Vector3 = node_position + Vector3.UP * 0.3
+			_set_capture_view(target, target + Vector3(0.0, 8.0, 2.0))
+			await get_tree().create_timer(0.8).timeout
+			_write_capture("ore-node-" + item.trim_suffix("_ore"))
+			break
+	for entity_id: Variant in sim.entities:
+		var entity: FactoryEntity = sim.entities[entity_id]
+		if entity.kind != "miner_mk1":
+			continue
+		var node_position: Vector3 = entity.position
+		var nearest_distance: float = INF
+		for node: Dictionary in terrain.nodes:
+			if str(node["item"]) != "iron_ore" or bool(node.get("hidden", false)):
+				continue
+			var candidate: Vector3 = node["position"]
+			var distance: float = entity.position.distance_to(candidate)
+			if distance < nearest_distance:
+				nearest_distance = distance
+				node_position = candidate
+		if nearest_distance > 1.5:
+			push_error("V11 miner is not snapped to an iron node")
+			continue
+		var miner_target: Vector3 = node_position + Vector3.UP * 0.8
+		_set_capture_view(miner_target, miner_target + Vector3(8.0, 9.0, -8.0))
+		print("V11 miner/node offset: %.2f m" % nearest_distance)
+		await get_tree().create_timer(0.8).timeout
+		_write_capture("miner-on-ore-node")
+		break
+	get_tree().quit()
+
+func _build_capture_v11_line() -> bool:
+	var iron_node: Dictionary = {}
+	var nearest_distance: float = INF
+	for node: Dictionary in terrain.nodes:
+		if str(node["item"]) != "iron_ore" or bool(node.get("hidden", false)):
+			continue
+		var node_position: Vector3 = node["position"]
+		var distance: float = Vector2(node_position.x + 17.0, node_position.z + 2.0).length()
+		if distance < nearest_distance:
+			nearest_distance = distance
+			iron_node = node
+	if iron_node.is_empty():
+		push_error("V11 capture has no visible iron deposit")
+		return false
+
+	player.inventory["iron_plate"] = 500
+	player.inventory["iron_rod"] = 500
+	player.inventory["wire"] = 500
+	player.inventory["concrete"] = 500
+	var node_position: Vector3 = iron_node["position"]
+	v11_capture_line_target = Vector3(node_position.x,
+		terrain.height_at(node_position.x, node_position.z + 16.0), node_position.z + 16.0)
+	var kinds: Array[String] = ["miner_mk1", "smelter", "constructor", "storage"]
+	var line_offsets: Array[float] = [0.0, 7.0, 22.0, 34.0]
+	var lateral_offsets: Array[float] = [0.0, 6.0, -6.0, 12.0, -12.0]
+	var ids: Array[int] = []
+	for index: int in range(kinds.size()):
+		var kind: String = kinds[index]
+		build_system.choose(kind)
+		placement.yaw = 0.0
+		var placed: bool = false
+		for lateral_offset: float in lateral_offsets:
+			var candidate_x: float = node_position.x + lateral_offset
+			var candidate_z: float = node_position.z + line_offsets[index]
+			var candidate := Vector3(candidate_x, terrain.height_at(candidate_x, candidate_z), candidate_z)
+			var node_id: int = _nearest_node_id(candidate, 3.0) if kind == "miner_mk1" else -1
+			var validation: Dictionary = placement.fit_and_validate(
+				kind, candidate, sim, terrain, player.global_position, node_id)
+			if not validation["ok"]:
+				continue
+			var next_id_before: int = sim.next_id
+			_place_building({"position": candidate})
+			if sim.next_id == next_id_before + 1:
+				ids.append(next_id_before)
+				placed = true
+				break
+		if not placed:
+			push_error("V11 capture line placement failed for %s" % kind)
+			return false
+
+	build_system.choose("belt_mk1")
+	for index: int in range(3):
+		var source_id: int = ids[index]
+		var target_id: int = ids[index + 1]
+		var source_port: Vector3 = sim.port_world(source_id, "out0")["pos"]
+		var target_port: Vector3 = sim.port_world(target_id, "in0")["pos"]
+		belt_start.clear()
+		_build_belt_click({"position": source_port})
+		_build_belt_click({"position": target_port})
+		if not sim.port_links.has("%d:out0" % source_id) \
+				or not sim.port_links.has("%d:in0" % target_id):
+			push_error("V11 capture belt %d failed to connect: %s" % [index, hud.toast_label.text])
+			return false
+	print("V11 player-built line: %s" % str(ids))
+	return true
 
 func _build_demo_factory() -> void:
 	var node_id: int = _nearest_node_id(Vector3(-17.0, 0.0, -2.0))
