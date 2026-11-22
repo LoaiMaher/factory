@@ -19,6 +19,7 @@ func _run_all() -> void:
 	_test_ore_boulders()
 	_test_foliage_state()
 	_test_hotbar_model()
+	_test_hotbar_input_filtering()
 	print("RESULT: %d/%d test groups passed" % [passed_groups, groups])
 	quit(1 if failures > 0 else 0)
 
@@ -565,6 +566,27 @@ func _test_hotbar_model() -> void:
 	_check("old saves without hotbar data receive the defaults",
 		old_save.slot_at(0) == {"type": "building", "id": "miner_mk1"}
 		and old_save.selected_index == -1, str(old_save.to_dict()))
+	_finish_group()
+
+func _test_hotbar_input_filtering() -> void:
+	var hotbar: FactoryHotbar = FactoryHotbar.new()
+	hotbar.configure(HotbarModel.new(), FactoryIconCache.new())
+	get_root().add_child(hotbar)
+	hotbar.set_interactive(true)
+	var row: Control = hotbar.get_node("SlotRow") as Control
+	var first_slot: Control = row.get_child(0) as Control
+	_check("hotbar containers ignore panel pointer events",
+		hotbar.mouse_filter == Control.MOUSE_FILTER_IGNORE
+		and row.mouse_filter == Control.MOUSE_FILTER_IGNORE,
+		str([hotbar.mouse_filter, row.mouse_filter]))
+	_check("hotbar slots alone accept panel pointer events",
+		first_slot.mouse_filter == Control.MOUSE_FILTER_STOP,
+		str(first_slot.mouse_filter))
+	hotbar.set_interactive(false)
+	_check("hotbar slots ignore pointer events outside panels",
+		first_slot.mouse_filter == Control.MOUSE_FILTER_IGNORE,
+		str(first_slot.mouse_filter))
+	hotbar.queue_free()
 	_finish_group()
 
 func _connect(sim: FactorySim, kind: String, from_id: int, from_port: String, to_id: int, to_port: String) -> Dictionary:

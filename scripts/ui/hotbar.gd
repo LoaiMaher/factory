@@ -29,7 +29,7 @@ func configure(factory_model: HotbarModel, factory_icons: FactoryIconCache) -> v
 
 func _ready() -> void:
 	set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	mouse_filter = Control.MOUSE_FILTER_PASS
+	mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_create_slot_row()
 	_create_selected_name()
 	refresh(model, inventory, unlocked_tiers)
@@ -105,7 +105,7 @@ func _create_slot_row() -> void:
 	row.offset_top = -76.0
 	row.offset_bottom = -12.0
 	row.add_theme_constant_override("separation", SLOT_GAP)
-	row.mouse_filter = Control.MOUSE_FILTER_PASS
+	row.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(row)
 	for index: int in range(HotbarModel.SLOT_COUNT):
 		var button: Button = Button.new()
