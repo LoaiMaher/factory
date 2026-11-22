@@ -8,7 +8,7 @@ var save_path: String = SAVE_PATH
 var backup_path: String = "user://save.bak.json"
 
 func save_game(sim: FactorySim, player: FactoryPlayer, unlocked_tiers: int,
-		world_state: Dictionary = {}, hotbar_data: Dictionary = {}) -> bool:
+		world_state: Dictionary = {}, hotbar_data: Dictionary = {}, power_bypass: bool = true) -> bool:
 	var data: Dictionary = {
 		"version": SAVE_VERSION,
 		"sim": sim.to_dict(),
@@ -17,7 +17,8 @@ func save_game(sim: FactorySim, player: FactoryPlayer, unlocked_tiers: int,
 			"inventory": player.inventory.duplicate(true)},
 		"unlocked_tiers": unlocked_tiers,
 		"world": world_state.duplicate(true),
-		"hotbar": hotbar_data.duplicate(true)
+		"hotbar": hotbar_data.duplicate(true),
+		"power_bypass": power_bypass
 	}
 	var file: FileAccess = FileAccess.open(save_path, FileAccess.WRITE)
 	if file == null:
@@ -53,6 +54,8 @@ func load_game(sim: FactorySim, player: FactoryPlayer) -> Dictionary:
 	var data: Dictionary = parsed
 	var source_version: int = int(data.get("version", 0))
 	var belt_refund: Dictionary = sim.from_dict(data.get("sim", {}))
+	sim.power.bypass = bool(data.get("power_bypass",
+		ProjectSettings.get_setting("factory/dev/power_bypass", true)))
 	var player_data: Dictionary = data.get("player", {})
 	var position: Array = player_data.get("position", [0.0, 1.0, 12.0])
 	player.position = Vector3(float(position[0]), float(position[1]), float(position[2]))

@@ -23,6 +23,10 @@ renderer/rendering_method="forward_plus"
 renderer/rendering_method.mobile="gl_compatibility"
 renderer/rendering_method.web="gl_compatibility"
 
+[factory/dev]
+
+power_bypass=true
+
 [input]
 
 move_forward={

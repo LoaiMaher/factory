@@ -6,6 +6,11 @@ var supply_for: Dictionary = {}
 var demand_for: Dictionary = {}
 var building_definitions: Dictionary = BuildingDefs.all()
 var recipe_definitions: Dictionary = Recipes.all()
+var bypass: bool = bool(ProjectSettings.get_setting("factory/dev/power_bypass", true))
+
+func apply_launch_flags(arguments: PackedStringArray) -> void:
+	if arguments.has("--real-power"):
+		bypass = false
 
 func rebuild(entities: Dictionary) -> void:
 	network_for.clear()
@@ -44,6 +49,8 @@ func update_demand(entities: Dictionary) -> void:
 			demand_for[network] = float(demand_for.get(network, 0.0)) + amount
 
 func satisfaction(entity_id: int, _entities: Dictionary) -> float:
+	if bypass:
+		return 1.0
 	var network: int = int(network_for.get(entity_id, -1))
 	if network < 0:
 		return -1.0

@@ -18,6 +18,7 @@ var milestone_definitions: Array[Dictionary] = Progression.milestones()
 var tier_definitions: Array[Dictionary] = Progression.tiers()
 var root: Control
 var info_label: Label
+var power_bypass_label: Label
 var toast_label: Label
 var hint_label: Label
 var crosshair_hint: Label
@@ -78,6 +79,16 @@ func _ready() -> void:
 	info_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 	info_label.add_theme_font_size_override("font_size", 14)
 	root.add_child(info_label)
+	power_bypass_label = Label.new()
+	power_bypass_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	power_bypass_label.set_anchors_preset(Control.PRESET_TOP_RIGHT)
+	power_bypass_label.position = Vector2(-500, 78)
+	power_bypass_label.size = Vector2(480, 22)
+	power_bypass_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	power_bypass_label.add_theme_font_size_override("font_size", 14)
+	power_bypass_label.add_theme_color_override("font_color", Color("e8792b"))
+	power_bypass_label.text = "DEV: POWER BYPASS"
+	root.add_child(power_bypass_label)
 	hint_label = Label.new()
 	hint_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	hint_label.position = Vector2(18, 660)
@@ -137,8 +148,9 @@ func _process(delta: float) -> void:
 				var current_rate: float = spire.rate(item_id, sim.time) if spire != null else 0.0
 				rates.append("%s %.1f/%.1f" % [Items.item_name(item_id), current_rate, float(milestone["requirements"][item_id])])
 			requirement_status = " · ".join(rates)
-		info_label.text = "Power  %0.0f / %0.0f MW\nTIER %d  ·  %s\n%s" % [totals.y, totals.x, unlocked_tiers, milestone_status, requirement_status]
+		info_label.text = "Power %0.0f / %0.0f MW\nTIER %d  ·  %s\n%s" % [totals.y, totals.x, unlocked_tiers, milestone_status, requirement_status]
 		info_label.add_theme_color_override("font_color", Color("e35c4e") if totals.y > totals.x else Color("d4ddd1"))
+		power_bypass_label.visible = sim.power.bypass
 		if selected_entity_id >= 0 and sim.entities.has(selected_entity_id) and entity_status_label != null:
 			var entity: FactoryEntity = sim.entities[selected_entity_id]
 			entity_status_label.text = _status_markup("%s  ·  %s" % [entity.kind.replace("_", " ").capitalize(), entity.status])
@@ -456,10 +468,10 @@ func _label(text_value: String, font_size: int) -> Label:
 
 func _status_markup(text_value: String) -> String:
 	var color: Color = Color("64c887")
-	if text_value.contains("Low") or text_value.contains("power"):
-		color = Color("e4b94d")
-	elif text_value.contains("full") or text_value.contains("Starved") or text_value.contains("No "):
+	if text_value.contains("No power") or text_value.contains("full") or text_value.contains("Starved") or text_value.contains("No "):
 		color = Color("e26d59")
+	elif text_value.contains("Low") or text_value.contains("power"):
+		color = Color("e4b94d")
 	return "[color=#%s][b]● %s[/b][/color]" % [color.to_html(false), text_value]
 
 func _buffer_summary(entity: FactoryEntity) -> String:

@@ -16,6 +16,7 @@ func _run_all() -> void:
 	_test_production_and_port_routing()
 	_test_save_migration_and_refunds()
 	_test_diagnostics()
+	_test_power_bypass()
 	_test_ore_boulders()
 	_test_foliage_state()
 	_test_hotbar_model()
@@ -481,10 +482,114 @@ func _test_diagnostics() -> void:
 	sim.entities[smelter].input_buffer["iron_ore"] = 1
 	sim.tick(0.05)
 	_check("diagnostics report input and output rates with exact recipe labels",
-		lines.size() == 2 and lines[0].contains("Input Iron Ore: 0.0/min — needs 30.0/min")
-		and lines[1].contains("Output Iron Ingot: 0.0/min"), str(lines))
-	_check("unpowered machine has an actionable status", sim.status_for(smelter) == "Not connected to power", sim.status_for(smelter))
+		lines.size() == 3 and lines[1].contains("Input Iron Ore: 0.0/min — needs 30.0/min")
+		and lines[2].contains("Output Iron Ingot: 0.0/min"), str(lines))
+	_check("unpowered machine has an actionable status", sim.status_for(smelter).begins_with("No power: needs 4 MW"), sim.status_for(smelter))
 	_finish_group()
+
+func _test_power_bypass() -> void:
+	var bypassed: FactorySim = FactorySim.new()
+	var bypass_smelter: int = bypassed.add_entity("smelter", Vector3.ZERO, 0.0, {"recipe": "iron_ingot"})
+	bypassed.entities[bypass_smelter].input_buffer["iron_ore"] = 1
+	bypassed.power.bypass = true
+	_run_for(bypassed, 2.1)
+	_check("unconnected smelter produces with power bypass",
+		int(bypassed.entities[bypass_smelter].output_buffer.get("iron_ingot", 0)) == 1,
+		str(bypassed.entities[bypass_smelter].output_buffer))
+	_check("bypass diagnostics state the hypothetical power need",
+		bypassed.diagnostics(bypass_smelter)[0] == "Power: bypassed (would need 4 MW)",
+		str(bypassed.diagnostics(bypass_smelter)))
+
+	var unpowered: FactorySim = FactorySim.new()
+	var unpowered_smelter: int = unpowered.add_entity("smelter", Vector3.ZERO, 0.0, {"recipe": "iron_ingot"})
+	unpowered.entities[unpowered_smelter].input_buffer["iron_ore"] = 1
+	unpowered.power.bypass = false
+	_run_for(unpowered, 2.1)
+	_check("unconnected smelter stalls without power",
+		int(unpowered.entities[unpowered_smelter].output_buffer.get("iron_ingot", 0)) == 0
+		and unpowered.status_for(unpowered_smelter) == "No power: needs 4 MW, network supplies 0 MW",
+		str([unpowered.entities[unpowered_smelter].output_buffer, unpowered.status_for(unpowered_smelter)]))
+
+	for bypass_mode: bool in [true, false]:
+		var connected: FactorySim = FactorySim.new()
+		connected.register_vent("vent_a", Vector3(-8.0, 0.0, 0.0))
+		connected.add_entity("geo_tap", Vector3(-8.0, 0.0, 0.0))
+		connected.add_entity("power_pole", Vector3(-4.0, 0.0, 0.0))
+		var connected_smelter: int = connected.add_entity("smelter", Vector3(0.0, 0.0, 6.0), 0.0,
+			{"recipe": "iron_ingot"})
+		connected.entities[connected_smelter].input_buffer["iron_ore"] = 1
+		connected.power.bypass = bypass_mode
+		_run_for(connected, 2.1)
+		_check("Geo Tap, pole and smelter produce with bypass %s" % ("on" if bypass_mode else "off"),
+			connected_smelter > 0 and int(connected.entities[connected_smelter].output_buffer.get("iron_ingot", 0)) == 1,
+			str(connected.entities[connected_smelter].output_buffer if connected_smelter > 0 else {}))
+
+	var real_power: FactorySim = _make_overloaded_power_sim(false)
+	var bypass_power: FactorySim = _make_overloaded_power_sim(true)
+	_run_for(real_power, 1.0)
+	_run_for(bypass_power, 1.0)
+	var real_smelt: FactoryEntity = real_power.entities[real_power.next_id - 1]
+	var bypass_smelt: FactoryEntity = bypass_power.entities[bypass_power.next_id - 1]
+	var real_satisfaction: float = real_power.power.satisfaction(real_smelt.id, real_power.entities)
+	_check("overloaded network browns out in real-power mode",
+		real_satisfaction > 0.0 and real_satisfaction < 1.0 and real_smelt.progress < bypass_smelt.progress,
+		str([real_satisfaction, real_smelt.progress, bypass_smelt.progress]))
+	_check("overloaded network runs at full speed with bypass",
+		is_equal_approx(bypass_power.power.satisfaction(bypass_smelt.id, bypass_power.entities), 1.0)
+		and is_equal_approx(bypass_smelt.progress, 1.0), str(bypass_smelt.progress))
+
+	var save_system: FactorySaveSystem = FactorySaveSystem.new()
+	save_system.save_path = "user://phase4_power_test.json"
+	var saved_sim: FactorySim = FactorySim.new()
+	saved_sim.power.bypass = false
+	var saved_player: FactoryPlayer = FactoryPlayer.new()
+	get_root().add_child(saved_player)
+	save_system.save_game(saved_sim, saved_player, 0, {}, {}, saved_sim.power.bypass)
+	var restored_sim: FactorySim = FactorySim.new()
+	restored_sim.power.bypass = true
+	var restored_player: FactoryPlayer = FactoryPlayer.new()
+	get_root().add_child(restored_player)
+	save_system.load_game(restored_sim, restored_player)
+	_check("save/load keeps the power bypass flag", not restored_sim.power.bypass, str(restored_sim.power.bypass))
+
+	var setting: Variant = ProjectSettings.get_setting("factory/dev/power_bypass", true)
+	ProjectSettings.set_setting("factory/dev/power_bypass", false)
+	var save_file: FileAccess = FileAccess.open(save_system.save_path, FileAccess.READ)
+	var save_data: Dictionary = JSON.parse_string(save_file.get_as_text())
+	save_file.close()
+	save_data.erase("power_bypass")
+	save_file = FileAccess.open(save_system.save_path, FileAccess.WRITE)
+	save_file.store_string(JSON.stringify(save_data))
+	save_file.close()
+	restored_sim.power.bypass = true
+	save_system.load_game(restored_sim, restored_player)
+	_check("legacy save uses the project power bypass setting", not restored_sim.power.bypass,
+		str(restored_sim.power.bypass))
+	ProjectSettings.set_setting("factory/dev/power_bypass", setting)
+
+	var launch_power: FactoryPower = FactoryPower.new()
+	launch_power.apply_launch_flags(PackedStringArray(["--real-power"]))
+	_check("--real-power starts with bypass off", not launch_power.bypass, str(launch_power.bypass))
+	DirAccess.remove_absolute(ProjectSettings.globalize_path(save_system.save_path))
+	saved_player.queue_free()
+	restored_player.queue_free()
+	_finish_group()
+
+func _make_overloaded_power_sim(bypass_mode: bool) -> FactorySim:
+	var sim: FactorySim = FactorySim.new()
+	sim.register_vent("vent_overload", Vector3(-20.0, 0.0, 0.0))
+	sim.add_entity("geo_tap", Vector3(-20.0, 0.0, 0.0))
+	for x: float in [-20.0, 0.0, 20.0]:
+		sim.add_entity("power_pole", Vector3(x, 0.0, 8.0))
+	for index: int in range(13):
+		var x: float = -25.0 + float(index) * 4.0
+		var smelter: int = sim.add_entity("smelter", Vector3(x, 0.0, 0.0), 0.0,
+			{"recipe": "iron_ingot"})
+		if smelter < 0:
+			continue
+		sim.entities[smelter].input_buffer["iron_ore"] = 1
+	sim.power.bypass = bypass_mode
+	return sim
 
 func _test_ore_boulders() -> void:
 	var boulders: OreBoulders = OreBoulders.new()

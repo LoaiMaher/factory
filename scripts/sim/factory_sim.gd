@@ -242,6 +242,7 @@ func diagnostics(entity_id: int) -> Array[String]:
 	if not entities.has(entity_id):
 		return result
 	var entity: FactoryEntity = entities[entity_id]
+	result.append(_power_diagnostic(entity))
 	if not recipe_definitions.has(entity.recipe_id):
 		return result
 	var recipe: Dictionary = recipe_definitions[entity.recipe_id]
@@ -250,6 +251,19 @@ func diagnostics(entity_id: int) -> Array[String]:
 	for item: String in recipe["outputs"]:
 		result.append("Output %s: %.1f/min (max %.1f)" % [Items.item_name(item), entity.rate(item, time), float(recipe["outputs"][item]) * 60.0 / float(recipe["time"])])
 	return result
+
+func _power_diagnostic(entity: FactoryEntity) -> String:
+	var need: float = float(building_definitions.get(entity.kind, {}).get("power", 0.0))
+	if power.bypass:
+		return "Power: bypassed (would need %.0f MW)" % need
+	var network: int = int(power.network_for.get(entity.id, -1))
+	var supply: float = float(power.supply_for.get(network, 0.0))
+	var demand: float = float(power.demand_for.get(network, 0.0))
+	var satisfaction: float = power.satisfaction(entity.id, entities)
+	if satisfaction <= 0.0:
+		return "No power: needs %.0f MW, network supplies %.0f MW" % [need, supply]
+	return "Power: %.0f / %.0f MW network · %d%% satisfaction" % [
+		supply, demand, roundi(satisfaction * 100.0)]
 
 func remove_entity_with_refund(entity_id: int) -> Dictionary:
 	if not entities.has(entity_id):
@@ -450,11 +464,8 @@ func _update_miner(entity: FactoryEntity, dt: float) -> void:
 		entity.status = "No resource node"
 		return
 	var sat: float = power.satisfaction(entity.id, entities)
-	if sat < 0.0:
-		entity.status = "Not connected to power"
-		return
-	if sat == 0.0:
-		entity.status = "No power"
+	if sat <= 0.0:
+		entity.status = _power_diagnostic(entity)
 		return
 	var node: Dictionary = nodes[node_id]
 	entity.progress += dt * float(node["rate"]) / 60.0 * sat
@@ -481,11 +492,8 @@ func _update_machine(entity: FactoryEntity, dt: float) -> void:
 			entity.status = "Output full"
 			return
 	var sat: float = power.satisfaction(entity.id, entities)
-	if sat < 0.0:
-		entity.status = "Not connected to power"
-		return
-	if sat == 0.0:
-		entity.status = "No power"
+	if sat <= 0.0:
+		entity.status = _power_diagnostic(entity)
 		return
 	entity.progress += dt * sat
 	if entity.progress >= float(recipe["time"]):
@@ -497,7 +505,7 @@ func _update_machine(entity: FactoryEntity, dt: float) -> void:
 			entity.output_buffer[item_id] = int(entity.output_buffer.get(item_id, 0)) + count
 			entity.record(item_id, count, time)
 		_push_outputs(entity)
-	entity.status = "Running"
+	entity.status = "Running" if sat >= 1.0 else "Low power (%d%%)" % roundi(sat * 100.0)
 
 func _push_outputs(entity: FactoryEntity) -> void:
 	for item_id: String in entity.output_buffer:

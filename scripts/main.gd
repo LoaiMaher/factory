@@ -111,6 +111,7 @@ func _ready() -> void:
 			hud.show_toast("Save couldn't be loaded; starting a new game.", 6.0)
 	else:
 		hud.show_toast("Press H for controls · E to interact · B to build.", 6.0)
+	sim.power.apply_launch_flags(OS.get_cmdline_user_args())
 	visuals.refresh()
 	for argument: String in OS.get_cmdline_user_args():
 		if argument == "--capture-all":
@@ -245,6 +246,10 @@ func _unhandled_input(event: InputEvent) -> void:
 			get_viewport().set_input_as_handled()
 		elif key == KEY_F9:
 			_load_game()
+			get_viewport().set_input_as_handled()
+		elif key == KEY_F8:
+			sim.power.bypass = not sim.power.bypass
+			hud.show_toast("Power bypass %s." % ("enabled" if sim.power.bypass else "disabled"))
 			get_viewport().set_input_as_handled()
 		elif key == KEY_Q:
 			_clear_hotbar_selection()
@@ -842,7 +847,7 @@ func _save_game() -> void:
 		"boulders": terrain.ore_boulders.to_dict(),
 		"foliage": foliage.state.to_dict()
 	}
-	if save_system.save_game(sim, player, unlocked_tiers, world_state, hotbar_model.to_dict()):
+	if save_system.save_game(sim, player, unlocked_tiers, world_state, hotbar_model.to_dict(), sim.power.bypass):
 		hud.show_toast("Saved to user://save.json")
 	else:
 		hud.show_toast("Save failed.")
