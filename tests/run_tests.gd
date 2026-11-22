@@ -9,447 +9,426 @@ func _initialize() -> void:
 	call_deferred("_run_all")
 
 func _run_all() -> void:
-	_test_belt_throughput()
-	_test_production_line()
-	_test_splitter_and_merger()
-	_test_power_networks()
+	_test_placement_and_ports()
+	_test_deposit_reservations()
+	_test_belt_validation_and_flow()
+	_test_splitter_merger_backpressure()
+	_test_production_and_port_routing()
+	_test_save_migration_and_refunds()
 	_test_diagnostics()
-	_test_spire_progress()
-	_test_save_round_trip()
-	_test_save_backup()
-	_test_ore_boulders()
-	_test_foliage_state()
-	print("RESULT: %d/10 test groups passed" % passed_groups)
+	print("RESULT: %d/%d test groups passed" % [passed_groups, groups])
 	quit(1 if failures > 0 else 0)
 
-func _test_belt_throughput() -> void:
+func _test_placement_and_ports() -> void:
 	var sim: FactorySim = FactorySim.new()
-	sim.add_entity("source", Vector2i(0, 0), 0, {"item": "iron_ore", "items_per_second": 1.0})
-	for index: int in range(10):
-		sim.add_entity("belt_mk1", Vector2i(0, index + 1))
-	var sink_id: int = sim.add_entity("sink", Vector2i(0, 11))
-	_run_for(sim, 120.0)
-	var rate: float = sim.get_rate(sink_id, "iron_ore")
-	_check("belt line delivers about 60/min", absf(rate - 60.0) <= 3.0, "observed %.1f/min" % rate)
+	var existing: int = sim.add_entity("smelter", Vector3.ZERO)
+	_check("world-space entity has a stable ID", existing > 0, str(existing))
+	var overlap: Dictionary = sim.check_place("constructor", Vector3(3.8, 0.0, 0.0), PI / 4.0)
+	_check("rotated OBB overlap is rejected", not bool(overlap["ok"]), str(overlap))
+	var edge_sim: FactorySim = FactorySim.new()
+	edge_sim.add_entity("smelter", Vector3.ZERO)
+	var edge: Dictionary = edge_sim.check_place("smelter", Vector3(4.0, 0.0, 0.0), 0.0)
+	_check("edge-touching footprints are allowed", bool(edge["ok"]), str(edge))
+	var port: Dictionary = sim.port_world(existing, "out0")
+	_check("port transform uses metre-based local position and normal",
+		port.get("pos", Vector3.ZERO).is_equal_approx(Vector3(-1.0, 0.62, 2.0))
+		and port.get("normal", Vector3.ZERO).is_equal_approx(Vector3.BACK),
+		str(port))
 	_finish_group()
 
-func _test_production_line() -> void:
+func _test_deposit_reservations() -> void:
 	var sim: FactorySim = FactorySim.new()
-	var miner_id: int = sim.add_entity("miner_mk1", Vector2i(0, 0), 0, {"node": {"item": "iron_ore", "rate": 60.0}})
-	sim.add_entity("belt_mk1", Vector2i(0, 2))
-	sim.add_entity("belt_mk1", Vector2i(0, 3))
-	var smelter_id: int = sim.add_entity("smelter", Vector2i(0, 4), 0, {"recipe": "iron_ingot"})
-	sim.add_entity("belt_mk1", Vector2i(0, 6))
-	sim.add_entity("belt_mk1", Vector2i(0, 7))
-	var constructor_id: int = sim.add_entity("constructor", Vector2i(0, 8), 0, {"recipe": "iron_plate"})
-	sim.add_entity("belt_mk1", Vector2i(0, 11))
-	var storage_id: int = sim.add_entity("storage", Vector2i(0, 12))
-	sim.add_entity("geo_tap", Vector2i(-6, 0))
-	sim.add_entity("power_pole", Vector2i(-4, 0))
-	sim.add_entity("power_pole", Vector2i(-2, 2))
-	sim.add_entity("power_pole", Vector2i(2, 4))
-	sim.add_entity("power_pole", Vector2i(2, 8))
-	_run_for(sim, 120.0)
-	var storage: FactoryEntity = sim.entities[storage_id]
-	var ingot_rate: float = sim.get_rate(smelter_id, "iron_ingot")
-	var plate_rate: float = sim.get_rate(constructor_id, "iron_plate")
-	_check("miner → smelter → constructor stores plates", int(storage.input_buffer.get("iron_plate", 0)) > 0, "storage buffer %s" % str(storage.input_buffer))
-	_check("smelter recipe rate is near 30/min", absf(ingot_rate - 30.0) <= 2.0, "observed %.1f/min" % ingot_rate)
-	_check("plate recipe rate is near 20/min", absf(plate_rate - 20.0) <= 2.0, "observed %.1f/min" % plate_rate)
-	_check("miner applies back pressure when the downstream line is saturated", sim.status_for(miner_id) == "Output full",
-		"status %s" % sim.status_for(miner_id))
-	var stored_plates: int = int(storage.input_buffer.get("iron_plate", 0))
-	var withdrawn_storage: Dictionary = sim.take_storage(storage_id)
-	_check("storage Take all returns and clears stored items", int(withdrawn_storage.get("iron_plate", 0)) == stored_plates
-		and stored_plates > 0 and sim.entities[storage_id].input_buffer.is_empty(), str(withdrawn_storage))
-	var assembler_id: int = sim.add_entity("assembler", Vector2i(20, 20), 0, {"recipe": "hull_panel"})
-	var assembler_ports: Array[Vector2i] = sim.port_cells("assembler", Vector2i(20, 20), 0)["input"]
-	var left_accepted: bool = sim.try_insert(assembler_id, "iron_plate", assembler_ports[0])
-	var right_accepted: bool = sim.try_insert(assembler_id, "iron_plate", assembler_ports[1])
-	_check("assembler accepts both back ports", left_accepted and right_accepted, "ports %s" % str(assembler_ports))
+	sim.register_node(7, "iron_ore", "pure", Vector3(20.0, 0.0, 10.0), 120.0)
+	var no_node: Dictionary = sim.check_place("miner_mk1", Vector3.ZERO, 0.0)
+	_check("miner requires a registered deposit", not bool(no_node["ok"]) and no_node["reason"] == "Place a Miner here", str(no_node))
+	var off_deposit: Dictionary = sim.check_place("miner_mk1", Vector3(22.0, 0.0, 10.0), 0.0, 7)
+	_check("miner center must be within 1.5 m of deposit", not bool(off_deposit["ok"]), str(off_deposit))
+	var miner_id: int = sim.add_entity("miner_mk1", Vector3(20.0, 0.0, 10.0), 0.0, {"node_id": 7})
+	var duplicate: Dictionary = sim.check_place("miner_mk1", Vector3(20.0, 0.0, 10.0), 0.0, 7)
+	_check("one extractor reserves each deposit with the required reason",
+		miner_id > 0 and duplicate["reason"] == "Deposit already has an extractor", str(duplicate))
+	sim.remove_entity(miner_id)
+	var released: int = sim.add_entity("miner_mk1", Vector3(20.0, 0.0, 10.0), 0.0, {"node_id": 7})
+	_check("removing an extractor releases its deposit", released > 0 and sim.node_reservations.get(7, -1) == released, str(sim.node_reservations))
+	var saved: Dictionary = sim.to_dict()
+	var restored: FactorySim = FactorySim.new()
+	restored.register_node(7, "iron_ore", "pure", Vector3(20.0, 0.0, 10.0), 120.0)
+	restored.from_dict(saved)
+	var restored_duplicate: Dictionary = restored.check_place("miner_mk1", Vector3(20.0, 0.0, 10.0), 0.0, 7)
+	_check("deposit reservation is derived after save/load",
+		restored.node_reservations.get(7, -1) == released
+		and restored_duplicate["reason"] == "Deposit already has an extractor", str(restored.node_reservations))
+
+	restored.register_vent("vent_a", Vector3(40.0, 0.0, 0.0))
+	var tap_id: int = restored.add_entity("geo_tap", Vector3(40.0, 0.0, 0.0))
+	var duplicate_tap: Dictionary = restored.check_place("geo_tap", Vector3(40.0, 0.0, 0.0), 0.0)
+	_check("Geo Tap reserves one vent", tap_id > 0 and duplicate_tap["reason"] == "Vent already has a tap", str(duplicate_tap))
+	restored.remove_entity(tap_id)
+	_check("removing Geo Tap releases its vent", bool(restored.check_place("geo_tap", Vector3(40.0, 0.0, 0.0), 0.0)["ok"]), str(restored.vent_reservations))
 	_finish_group()
 
-func _test_splitter_and_merger() -> void:
+func _test_belt_validation_and_flow() -> void:
 	var sim: FactorySim = FactorySim.new()
-	sim.add_entity("source", Vector2i(0, -2), 0, {"item": "iron_ore", "items_per_second": 1.0})
-	sim.add_entity("belt_mk1", Vector2i(0, -1))
-	var splitter_id: int = sim.add_entity("splitter", Vector2i(0, 0))
-	var sink_ids: Array[int] = [
-		sim.add_entity("sink", Vector2i(-1, 0)),
-		sim.add_entity("sink", Vector2i(0, 1)),
-		sim.add_entity("sink", Vector2i(1, 0))
-	]
-	_run_for(sim, 60.0)
-	var counts: Array[int] = []
-	for sink_id: int in sink_ids:
-		counts.append(int(sim.entities[sink_id].extra.get("received", 0)))
-	var balanced: bool = maxi(counts[0], maxi(counts[1], counts[2])) - mini(counts[0], mini(counts[1], counts[2])) <= 1
-	_check("splitter distributes evenly", balanced, "counts %s" % str(counts))
+	var source_id: int = sim.add_entity("smelter", Vector3.ZERO, 0.0, {"recipe": "iron_ingot"})
+	var storage_id: int = sim.add_entity("storage", Vector3(0.0, 0.0, 8.0))
+	var result: Dictionary = _connect(sim, "belt_mk1", source_id, "out0", storage_id, "in0")
+	var belt_id: int = int(result["id"])
+	_check("out-to-in belt link is created", belt_id > 0, str(result))
+	var reverse: Dictionary = sim.add_belt("belt_mk1", source_id, "in0", storage_id, "out0",
+		_port_curve(sim, source_id, "in0", storage_id, "out0"))
+	_check("input-to-output links are rejected", reverse["reason"] == "Can't connect output to output", str(reverse))
+	var same_entity: Dictionary = sim.add_belt("belt_mk1", source_id, "out0", source_id, "in0",
+		_port_curve(sim, source_id, "out0", source_id, "in0"))
+	_check("belt endpoints must be different entities", same_entity["reason"] == "Invalid belt endpoints", str(same_entity))
+	var endpoint_sim: FactorySim = FactorySim.new()
+	var endpoint_source: int = endpoint_sim.add_entity("smelter", Vector3.ZERO)
+	var endpoint_storage: int = endpoint_sim.add_entity("storage", Vector3(0.0, 0.0, 8.0))
+	var wrong_endpoint: PackedVector3Array = _port_curve(endpoint_sim, endpoint_source, "out0", endpoint_storage, "in0")
+	wrong_endpoint[0].x += 0.1
+	var endpoint_result: Dictionary = endpoint_sim.add_belt("belt_mk1", endpoint_source, "out0", endpoint_storage, "in0", wrong_endpoint)
+	_check("curve endpoints must match port transforms", endpoint_result["reason"] == "Belt curve endpoints must match ports", str(endpoint_result))
+	var occupied: Dictionary = sim.add_belt("belt_mk1", source_id, "out0", storage_id, "in0",
+		_port_curve(sim, source_id, "out0", storage_id, "in0"))
+	_check("occupied ports reject a second belt", occupied["reason"] == "Port already connected", str(occupied))
+	_check("linked ports are no longer free",
+		not sim.is_port_free(source_id, "out0") and not sim.is_port_free(storage_id, "in0"), str(sim.port_links))
+
+	var first_pushed: bool = sim.try_push_from_port(source_id, "out0", "iron_ore")
+	var second_blocked: bool = not sim.try_push_from_port(source_id, "out0", "iron_ore")
+	sim.tick(1.0)
+	var second_pushed: bool = sim.try_push_from_port(source_id, "out0", "iron_ore")
+	sim.tick(1.0)
+	var belt: FactoryEntity = sim.entities[belt_id]
+	var spacing_ok: bool = (belt.belt_items.size() == 2 and is_equal_approx(float(belt.belt_items[0]["s"]), 2.0)
+		and is_equal_approx(float(belt.belt_items[1]["s"]), 1.0))
+	_check("Mk1 speed and one-metre item spacing", first_pushed and second_blocked and second_pushed and spacing_ok, str(belt.belt_items))
+	sim.tick(3.0)
+	_check("items deliver to the linked target port", int(sim.entities[storage_id].input_buffer.get("iron_ore", 0)) == 1,
+		str(sim.entities[storage_id].input_buffer))
+
+	var mk2: FactorySim = FactorySim.new()
+	var mk2_source: int = mk2.add_entity("smelter", Vector3.ZERO, 0.0, {"recipe": "iron_ingot"})
+	var mk2_storage: int = mk2.add_entity("storage", Vector3(0.0, 0.0, 8.0))
+	var mk2_result: Dictionary = _connect(mk2, "belt_mk2", mk2_source, "out0", mk2_storage, "in0")
+	mk2.try_push_from_port(mk2_source, "out0", "iron_ore")
+	mk2.tick(0.5)
+	var mk2_belt: FactoryEntity = mk2.entities[int(mk2_result["id"])]
+	_check("Mk2 moves at two metres per second", is_equal_approx(float(mk2_belt.belt_items[0]["s"]), 1.0),
+		str(mk2_belt.belt_items))
 
 	var blocked: FactorySim = FactorySim.new()
-	var upstream_id: int = blocked.add_entity("belt_mk1", Vector2i(10, -1))
-	var blocked_splitter_id: int = blocked.add_entity("splitter", Vector2i(10, 0))
-	for blocked_cell: Vector2i in [Vector2i(9, 0), Vector2i(10, 1), Vector2i(11, 0)]:
-		var output_id: int = blocked.add_entity("belt_mk1", blocked_cell)
-		blocked.entities[output_id].belt_items.assign([
-			{"item": "iron_ore", "pos": 0.0},
-			{"item": "iron_ore", "pos": 0.5}
-		])
-	_check("splitter accepts one buffered item", blocked.try_insert(blocked_splitter_id, "iron_ore", Vector2i(10, -1)), "first insert rejected")
-	blocked.tick(0.05)
-	var upstream_belt: FactoryEntity = blocked.entities[upstream_id]
-	upstream_belt.belt_items = [{"item": "iron_ore", "pos": 0.99}]
-	blocked.tick(0.05)
-	_check("blocked splitter holds its item", int(blocked.entities[blocked_splitter_id].input_buffer.get("iron_ore", 0)) == 1, str(blocked.entities[blocked_splitter_id].input_buffer))
-	_check("full splitter refuses another item", not blocked.try_insert(blocked_splitter_id, "copper_ore", Vector2i(10, -1)), str(blocked.entities[blocked_splitter_id].input_buffer))
-	var second_upstream_accepted: bool = blocked.try_insert(upstream_id, "iron_ore", Vector2i(10, -2))
-	_check("upstream belt backs up at blocked splitter", is_equal_approx(float(upstream_belt.belt_items[0]["pos"]), 1.0)
-		and second_upstream_accepted and not blocked.try_insert(upstream_id, "iron_ore", Vector2i(10, -2)), str(upstream_belt.belt_items))
+	var blocked_source: int = blocked.add_entity("smelter", Vector3.ZERO, 0.0, {"recipe": "iron_ingot"})
+	var blocked_storage: int = blocked.add_entity("storage", Vector3(0.0, 0.0, 8.0))
+	var blocked_result: Dictionary = _connect(blocked, "belt_mk1", blocked_source, "out0", blocked_storage, "in0")
+	blocked.entities[blocked_storage].input_buffer["iron_ore"] = 1000
+	blocked.try_push_from_port(blocked_source, "out0", "iron_ore")
+	blocked.tick(10.0)
+	var blocked_belt: FactoryEntity = blocked.entities[int(blocked_result["id"])]
+	_check("failed insertion leaves the leading item at the endpoint",
+		blocked_belt.belt_items.size() == 1 and is_equal_approx(float(blocked_belt.belt_items[0]["s"]), float(blocked_belt.extra["length"])),
+		str(blocked_belt.belt_items))
 
-	var blocked_merger: FactorySim = FactorySim.new()
-	var merger_input_a: int = blocked_merger.add_entity("belt_mk1", Vector2i(20, -1))
-	var merger_input_b: int = blocked_merger.add_entity("belt_mk1", Vector2i(19, 0), 1)
-	var blocked_merger_id: int = blocked_merger.add_entity("merger", Vector2i(20, 0))
-	var merger_output: int = blocked_merger.add_entity("belt_mk1", Vector2i(20, 1))
-	blocked_merger.entities[merger_output].belt_items.assign([
-		{"item": "iron_ore", "pos": 0.0},
-		{"item": "iron_ore", "pos": 0.5}
-	])
-	var merger_a_accepted: bool = blocked_merger.try_insert(blocked_merger_id, "iron_ore", Vector2i(20, -1))
-	var merger_b_accepted: bool = blocked_merger.try_insert(blocked_merger_id, "copper_ore", Vector2i(19, 0))
-	blocked_merger.tick(0.05)
-	blocked_merger.entities[merger_input_a].belt_items.assign([{"item": "iron_ore", "pos": 0.99}])
-	blocked_merger.entities[merger_input_b].belt_items.assign([{"item": "copper_ore", "pos": 0.99}])
-	blocked_merger.tick(0.05)
-	var blocked_queues: Dictionary = blocked_merger.entities[blocked_merger_id].extra["merge_queues"]
-	_check("blocked merger output fills each source queue", merger_a_accepted and merger_b_accepted
-		and blocked_queues["20,-1"].size() == 1 and blocked_queues["19,0"].size() == 1, str(blocked_queues))
-	_check("blocked merger backpressures both inputs",
-		is_equal_approx(float(blocked_merger.entities[merger_input_a].belt_items[0]["pos"]), 1.0)
-		and is_equal_approx(float(blocked_merger.entities[merger_input_b].belt_items[0]["pos"]), 1.0)
-		and not blocked_merger.try_insert(blocked_merger_id, "iron_ore", Vector2i(20, -1))
-		and not blocked_merger.try_insert(blocked_merger_id, "copper_ore", Vector2i(19, 0)),
-		str([blocked_merger.entities[merger_input_a].belt_items, blocked_merger.entities[merger_input_b].belt_items]))
+	var incompatible: FactorySim = FactorySim.new()
+	incompatible.register_node(1, "iron_ore", "normal", Vector3.ZERO, 60.0)
+	var miner: int = incompatible.add_entity("miner_mk1", Vector3.ZERO, 0.0, {"node_id": 1})
+	var copper_smelter: int = incompatible.add_entity("smelter", Vector3(0.0, 0.0, 10.0), 0.0, {"recipe": "copper_ingot"})
+	var incompatible_result: Dictionary = _connect(incompatible, "belt_mk1", miner, "out0", copper_smelter, "in0")
+	incompatible.try_push_from_port(miner, "out0", "iron_ore")
+	incompatible.tick(10.0)
+	var incompatible_belt: FactoryEntity = incompatible.entities[int(incompatible_result["id"])]
+	_check("item compatibility does not block link creation but rejected items back up",
+		int(incompatible_result["id"]) > 0 and incompatible_belt.belt_items.size() == 1
+		and is_equal_approx(float(incompatible_belt.belt_items[0]["s"]), float(incompatible_belt.extra["length"])),
+		str(incompatible_result))
+	_finish_group()
 
-	var path_sim: FactorySim = FactorySim.new()
-	var input_machine_id: int = path_sim.add_entity("smelter", Vector2i(8, 4), 1, {"recipe": "iron_ingot"})
-	var input_cell: Vector2i = path_sim.back_port_for(input_machine_id)
-	var path_builder: FactoryBuildSystem = FactoryBuildSystem.new()
-	var input_path: Array[Dictionary] = path_builder.belt_path(Vector2i.ZERO, input_cell, path_sim.entities[input_machine_id].rotation)
-	_check("belt terminal faces into the machine input", input_path.back()["cell"] == input_cell
-		and int(input_path.back()["rotation"]) == 1, str(input_path.back()))
-	var side_merge_path: Array[Dictionary] = path_builder.belt_path_to_belt(Vector2i.ZERO, Vector2i(4, 0), 0)
-	_check("belt path side-merges one cell before an existing belt", side_merge_path.back()["cell"] == Vector2i(3, 0)
-		and int(side_merge_path.back()["rotation"]) == 1, str(side_merge_path.back()))
+func _test_splitter_merger_backpressure() -> void:
+	var splitter_sim: FactorySim = FactorySim.new()
+	var splitter_id: int = splitter_sim.add_entity("splitter", Vector3.ZERO)
+	var targets: Array[int] = [
+		splitter_sim.add_entity("storage", Vector3(-8.0, 0.0, 0.0)),
+		splitter_sim.add_entity("storage", Vector3(0.0, 0.0, 8.0)),
+		splitter_sim.add_entity("storage", Vector3(8.0, 0.0, 0.0))
+	]
+	for index: int in range(3):
+		var connected: Dictionary = _connect(splitter_sim, "belt_mk1", splitter_id, "out%d" % index, targets[index], "in0")
+		_check("splitter output %d has a port-linked belt" % index, int(connected["id"]) > 0, str(connected))
+	var accepted: int = 0
+	for _step: int in range(700):
+		if accepted < 6 and splitter_sim.try_insert(splitter_id, "iron_ore", "in0"):
+			accepted += 1
+		splitter_sim.tick(0.05)
+	var counts: Array[int] = []
+	for target_id: int in targets:
+		counts.append(int(splitter_sim.entities[target_id].input_buffer.get("iron_ore", 0)))
+	_check("splitter round-robins items across its three outputs",
+		accepted == 6 and counts == [2, 2, 2], str(counts))
+
+	var blocked_splitter: FactorySim = FactorySim.new()
+	var blocked_splitter_id: int = blocked_splitter.add_entity("splitter", Vector3.ZERO)
+	var blocked_targets: Array[int] = [
+		blocked_splitter.add_entity("storage", Vector3(-8.0, 0.0, 0.0)),
+		blocked_splitter.add_entity("storage", Vector3(0.0, 0.0, 8.0)),
+		blocked_splitter.add_entity("storage", Vector3(8.0, 0.0, 0.0))
+	]
+	for index: int in range(3):
+		_connect(blocked_splitter, "belt_mk1", blocked_splitter_id, "out%d" % index, blocked_targets[index], "in0")
+		blocked_splitter.entities[blocked_targets[index]].input_buffer["iron_ore"] = 1000
+		var output_belt_id: int = int(blocked_splitter.port_links["%d:out%d" % [blocked_splitter_id, index]])
+		var output_belt: FactoryEntity = blocked_splitter.entities[output_belt_id]
+		output_belt.belt_items = [{"item": "iron_ore", "s": 0.0, "born_at": -1.0}]
+	var upstream: int = blocked_splitter.add_entity("storage", Vector3(0.0, 0.0, -10.0))
+	_connect(blocked_splitter, "belt_mk1", upstream, "out0", blocked_splitter_id, "in0")
+	blocked_splitter.try_insert(blocked_splitter_id, "iron_ore", "in0")
+	var upstream_belt_id: int = int(blocked_splitter.port_links["%d:out0" % upstream])
+	var upstream_belt: FactoryEntity = blocked_splitter.entities[upstream_belt_id]
+	upstream_belt.belt_items = [{"item": "iron_ore", "s": float(upstream_belt.extra["length"]), "born_at": -1.0}]
+	blocked_splitter.tick(0.05)
+	var splitter_rejected_second: bool = not blocked_splitter.try_insert(blocked_splitter_id, "iron_ore", "in0")
+	var splitter_buffer_count: int = int(blocked_splitter.entities[blocked_splitter_id].input_buffer.get("iron_ore", 0))
+	var splitter_upstream_blocked: bool = upstream_belt.belt_items.size() == 1 and float(upstream_belt.belt_items[0]["s"]) >= float(upstream_belt.extra["length"]) - 0.01
+	_check("all-blocked splitter caps its input at one and backs up the upstream belt",
+		splitter_rejected_second and splitter_buffer_count == 1 and splitter_upstream_blocked,
+		str([splitter_rejected_second, splitter_buffer_count, splitter_upstream_blocked, upstream_belt.belt_items, upstream_belt.extra["length"]]))
+
+	var merger_sim: FactorySim = FactorySim.new()
+	var merger_id: int = merger_sim.add_entity("merger", Vector3.ZERO)
+	var output_storage: int = merger_sim.add_entity("storage", Vector3(0.0, 0.0, 8.0))
+	_connect(merger_sim, "belt_mk1", merger_id, "out0", output_storage, "in0")
+	var source_positions: Array[Vector3] = [Vector3(-8.0, 0.0, 0.0), Vector3(0.0, 0.0, -10.0), Vector3(8.0, 0.0, 0.0)]
+	var input_ports: Array[String] = ["in0", "in1", "in2"]
+	var source_ids: Array[int] = []
+	var input_belt_ids: Array[int] = []
+	var output_belt_id: int = int(merger_sim.port_links["%d:out0" % merger_id])
+	var output_belt: FactoryEntity = merger_sim.entities[output_belt_id]
+	output_belt.belt_items = [{"item": "iron_ore", "s": 0.0, "born_at": -1.0}]
+	for index: int in range(3):
+		var source_id: int = merger_sim.add_entity("storage", source_positions[index])
+		source_ids.append(source_id)
+		var result: Dictionary = _connect(merger_sim, "belt_mk1", source_id, "out0", merger_id, input_ports[index])
+		input_belt_ids.append(int(result["id"]))
+	merger_sim.entities[output_storage].input_buffer["iron_ore"] = 1000
+	for index: int in range(3):
+		_check("merger source queue %d accepts one item" % index,
+			merger_sim.try_insert(merger_id, "iron_ore", input_ports[index]), input_ports[index])
+		_check("merger source queue %d refuses a second item" % index,
+			not merger_sim.try_insert(merger_id, "copper_ore", input_ports[index]), input_ports[index])
+		var input_belt: FactoryEntity = merger_sim.entities[input_belt_ids[index]]
+		input_belt.belt_items = [{"item": "iron_ore", "s": float(input_belt.extra["length"]), "born_at": -1.0}]
+	merger_sim.tick(0.05)
+	var queues: Dictionary = merger_sim.entities[merger_id].extra.get("merge_queues", {})
+	var inputs_backed_up: bool = true
+	for index: int in range(3):
+		var input_belt: FactoryEntity = merger_sim.entities[input_belt_ids[index]]
+		inputs_backed_up = (inputs_backed_up and input_belt.belt_items.size() == 1
+			and is_equal_approx(float(input_belt.belt_items[0]["s"]), float(input_belt.extra["length"])))
+	_check("blocked merger output fills one-item source queues and backs up all inputs",
+		queues.get("in0", []).size() == 1 and queues.get("in1", []).size() == 1
+		and queues.get("in2", []).size() == 1 and inputs_backed_up, str([queues, inputs_backed_up]))
+	_finish_group()
+
+func _test_production_and_port_routing() -> void:
+	var sim: FactorySim = FactorySim.new()
+	sim.register_node(1, "iron_ore", "normal", Vector3.ZERO, 60.0)
+	sim.register_vent("vent_a", Vector3(-8.0, 0.0, 0.0))
+	var miner: int = sim.add_entity("miner_mk1", Vector3.ZERO, 0.0, {"node_id": 1})
+	var smelter: int = sim.add_entity("smelter", Vector3(0.0, 0.0, 6.0), 0.0, {"recipe": "iron_ingot"})
+	var constructor: int = sim.add_entity("constructor", Vector3(0.0, 0.0, 12.0), 0.0, {"recipe": "iron_plate"})
+	var storage: int = sim.add_entity("storage", Vector3(0.0, 0.0, 19.0))
+	var tap: int = sim.add_entity("geo_tap", Vector3(-8.0, 0.0, 0.0))
+	sim.add_entity("power_pole", Vector3(-4.0, 0.0, 0.0))
+	sim.add_entity("power_pole", Vector3(-4.0, 0.0, 12.0))
+	var links_ok: bool = (int(_connect(sim, "belt_mk1", miner, "out0", smelter, "in0")["id"]) > 0
+		and int(_connect(sim, "belt_mk1", smelter, "out0", constructor, "in0")["id"]) > 0
+		and int(_connect(sim, "belt_mk1", constructor, "out0", storage, "in0")["id"]) > 0)
+	_run_for(sim, 180.0)
+	_check("miner → smelter → constructor → storage runs over connected ports",
+		links_ok and miner > 0 and smelter > 0 and constructor > 0 and storage > 0 and tap > 0
+		and int(sim.entities[storage].input_buffer.get("iron_plate", 0)) > 0,
+		str(sim.entities[storage].input_buffer))
 
 	var assembler_sim: FactorySim = FactorySim.new()
-	var routed_assembler_id: int = assembler_sim.add_entity("assembler", Vector2i(20, 20), 0, {"recipe": "hull_panel"})
-	var assembler_input_cells: Array[Vector2i] = assembler_sim.input_port_cells(routed_assembler_id)
-	var chosen_assembler_input: Vector2i = assembler_input_cells[0]
-	var assembler_start: Vector2i = chosen_assembler_input - Vector2i(0, 3)
-	var assembler_path: Array[Dictionary] = path_builder.belt_path(assembler_start, chosen_assembler_input, 0)
-	var assembler_path_placed: bool = path_builder.place_path(assembler_sim, assembler_path, "belt_mk1")
-	var first_assembler_belt: FactoryEntity = assembler_sim.entity_at(assembler_start)
-	var assembler_input_accepted: bool = false
-	if assembler_path_placed and first_assembler_belt != null:
-		var assembler_source_cell: Vector2i = assembler_start - path_builder._forward(int(assembler_path[0]["rotation"]))
-		assembler_input_accepted = assembler_sim.try_insert(first_assembler_belt.id, "iron_plate", assembler_source_cell)
-	_run_for(assembler_sim, 10.0)
-	_check("belt delivers into the chosen assembler input", assembler_input_accepted
-		and int(assembler_sim.entities[routed_assembler_id].input_buffer.get("iron_plate", 0)) == 1,
-		str(assembler_sim.entities[routed_assembler_id].input_buffer))
+	var assembler: int = assembler_sim.add_entity("assembler", Vector3(30.0, 0.0, 0.0), 0.0, {"recipe": "hull_panel"})
+	var assembler_source: int = assembler_sim.add_entity("storage", Vector3(33.0, 0.0, -10.0))
+	var assembler_link: Dictionary = _connect(assembler_sim, "belt_mk1", assembler_source, "out0", assembler, "in1")
+	assembler_sim.try_push_from_port(assembler_source, "out0", "iron_plate")
+	_run_for(assembler_sim, 8.0)
+	_check("belt delivers into the selected assembler input mouth",
+		int(assembler_link["id"]) > 0 and int(assembler_sim.entities[assembler].input_buffer.get("iron_plate", 0)) == 1,
+		str(assembler_sim.entities[assembler].input_buffer))
 
 	var spire_sim: FactorySim = FactorySim.new()
-	var routed_spire_id: int = spire_sim.add_entity("spire", Vector2i(40, 40), 0)
-	var spire_input_cells: Array[Vector2i] = spire_sim.input_port_cells(routed_spire_id)
-	_check("Spire stage 0 exposes its accepted input ports", spire_input_cells.size() == 2
-		and spire_input_cells.has(Vector2i(41, 46)) and spire_input_cells.has(Vector2i(44, 46)), str(spire_input_cells))
-	spire_sim.spire_stage = 1
-	var stage_one_spire_ports: Array[Vector2i] = spire_sim.input_port_cells(routed_spire_id)
-	_check("Spire stage 1 adds cable input ports", stage_one_spire_ports.size() == 4
-		and stage_one_spire_ports.has(Vector2i(42, 46)) and stage_one_spire_ports.has(Vector2i(43, 46)),
-		str(stage_one_spire_ports))
-	spire_sim.spire_stage = 0
-	var chosen_spire_input: Vector2i = spire_input_cells[0]
-	var spire_start: Vector2i = chosen_spire_input + Vector2i(0, 3)
-	var spire_path: Array[Dictionary] = path_builder.belt_path(spire_start, chosen_spire_input, 2)
-	var spire_path_placed: bool = path_builder.place_path(spire_sim, spire_path, "belt_mk1")
-	var first_spire_belt: FactoryEntity = spire_sim.entity_at(spire_start)
-	var spire_input_accepted: bool = false
-	if spire_path_placed and first_spire_belt != null:
-		var spire_source_cell: Vector2i = spire_start - path_builder._forward(int(spire_path[0]["rotation"]))
-		spire_input_accepted = spire_sim.try_insert(first_spire_belt.id, "hull_panel", spire_source_cell)
-	_run_for(spire_sim, 10.0)
-	_check("belt delivers through a Spire input port", spire_input_accepted
-		and spire_sim.entities[routed_spire_id].last_delivery_time.has("hull_panel"),
-		str(spire_sim.entities[routed_spire_id].last_delivery_time))
-
-	var merger_id: int = sim.add_entity("merger", Vector2i(10, 0))
-	var merger_sink: int = sim.add_entity("sink", Vector2i(10, 1))
-	var iron_inserted: int = 0
-	var copper_inserted: int = 0
-	var initial_iron_accepted: bool = sim.try_insert(merger_id, "iron_ore", Vector2i(10, -1))
-	var second_iron_accepted: bool = sim.try_insert(merger_id, "iron_ore", Vector2i(10, -1))
-	var initial_copper_accepted: bool = sim.try_insert(merger_id, "copper_ore", Vector2i(9, 0))
-	var second_copper_accepted: bool = sim.try_insert(merger_id, "copper_ore", Vector2i(9, 0))
-	iron_inserted += 1 if initial_iron_accepted else 0
-	copper_inserted += 1 if initial_copper_accepted else 0
-	_check("merger limits each source queue to one item",
-		initial_iron_accepted and initial_copper_accepted and not second_iron_accepted and not second_copper_accepted,
-		str(sim.entities[merger_id].extra.get("merge_queues", {})))
-	for _index: int in range(120):
-		if iron_inserted < 6 and sim.try_insert(merger_id, "iron_ore", Vector2i(10, -1)):
-			iron_inserted += 1
-		if copper_inserted < 6 and sim.try_insert(merger_id, "copper_ore", Vector2i(9, 0)):
-			copper_inserted += 1
-		sim.tick(0.05)
-	var received: Dictionary = sim.entities[merger_sink].extra.get("received_by_item", {})
-	_check("merger alternates queued input sources", int(received.get("iron_ore", 0)) == 6 and int(received.get("copper_ore", 0)) == 6,
-		"received %s" % str(received))
-	_check("splitter entity remains in sim", sim.entities.has(splitter_id), "entity missing")
+	var spire: int = spire_sim.add_entity("spire", Vector3(50.0, 0.0, 0.0))
+	var spire_source: int = spire_sim.add_entity("storage", Vector3(53.0, 0.0, 16.0))
+	var spire_link: Dictionary = _connect(spire_sim, "belt_mk1", spire_source, "out0", spire, "in1")
+	spire_sim.try_push_from_port(spire_source, "out0", "hull_panel")
+	_run_for(spire_sim, 16.0)
+	_check("belt delivers to the selected Spire input port",
+		int(spire_link["id"]) > 0 and spire_sim.entities[spire].last_delivery_time.has("hull_panel"),
+		str(spire_sim.entities[spire].last_delivery_time))
 	_finish_group()
 
-func _test_power_networks() -> void:
+func _test_save_migration_and_refunds() -> void:
 	var sim: FactorySim = FactorySim.new()
-	sim.add_entity("geo_tap", Vector2i(0, 0))
-	sim.add_entity("power_pole", Vector2i(2, 2))
-	sim.add_entity("power_pole", Vector2i(12, 2))
-	var machines: Array[int] = []
-	for index: int in range(12):
-		var cell: Vector2i = Vector2i(4 + (index % 5) * 2, 4 + int(index / 5) * 2)
-		var machine_id: int = sim.add_entity("smelter", cell, 0, {"recipe": "iron_ingot"})
-		machines.append(machine_id)
-		sim.entities[machine_id].input_buffer["iron_ore"] = 1
-	sim.add_entity("power_pole", Vector2i(2, 10))
-	sim.power.update_demand(sim.entities)
-	var twelve_satisfaction: float = sim.power.satisfaction(machines[0], sim.entities)
-	_check("50 MW covers twelve smelters", sim.power.demand_for.values().has(48.0) and twelve_satisfaction == 1.0, "satisfaction %.3f, demand %s" % [twelve_satisfaction, str(sim.power.demand_for)])
-	for index: int in range(3):
-		var machine_index: int = index + 12
-		var cell: Vector2i = Vector2i(4 + (machine_index % 5) * 2, 4 + int(machine_index / 5) * 2)
-		var machine_id: int = sim.add_entity("smelter", cell, 0, {"recipe": "iron_ingot"})
-		machines.append(machine_id)
-		sim.entities[machine_id].input_buffer["iron_ore"] = 1
-	sim.power.update_demand(sim.entities)
-	var fifteen_satisfaction: float = sim.power.satisfaction(machines[14], sim.entities)
-	_run_for(sim, 0.1)
-	_check("15 smelters receive less than full power", fifteen_satisfaction < 1.0, "satisfaction %.3f" % fifteen_satisfaction)
-	_check("low-power status is readable", sim.status_for(machines[14]).begins_with("Low power"), sim.status_for(machines[14]))
-	var isolated: FactorySim = FactorySim.new()
-	var isolated_id: int = isolated.add_entity("smelter", Vector2i.ZERO, 0, {"recipe": "iron_ingot"})
-	isolated.entities[isolated_id].input_buffer["iron_ore"] = 1
-	isolated.tick(0.05)
-	_check("unconnected machine reports not connected", isolated.status_for(isolated_id) == "Not connected to power", isolated.status_for(isolated_id))
-	_finish_group()
-
-func _test_diagnostics() -> void:
-	var sim: FactorySim = FactorySim.new()
-	var machine_id: int = sim.add_entity("smelter", Vector2i.ZERO, 0, {"recipe": "iron_ingot"})
-	sim.add_entity("geo_tap", Vector2i(4, 0))
-	sim.add_entity("power_pole", Vector2i(2, 0))
-	sim.tick(0.05)
-	_check("missing input names the required item", sim.status_for(machine_id) == "Missing input: Iron Ore", sim.status_for(machine_id))
-	var machine: FactoryEntity = sim.entities[machine_id]
-	machine.input_buffer["iron_ore"] = 1
-	machine.output_buffer["iron_ingot"] = 20
-	sim.tick(0.05)
-	_check("blocked output reports Output full", sim.status_for(machine_id) == "Output full", sim.status_for(machine_id))
-	var lines: Array[String] = sim.diagnostics(machine_id)
-	_check("diagnostic panel includes per-port rates", lines.size() == 2 and lines[0].contains("needs 30.0/min"), str(lines))
-	_finish_group()
-
-func _test_spire_progress() -> void:
-	var sim: FactorySim = FactorySim.new()
-	var spire_id: int = sim.add_entity("spire", Vector2i.ZERO)
-	var spire: FactoryEntity = sim.entities[spire_id]
-	var dt: float = 0.05
-	for tick: int in range(1800):
-		spire.record("hull_panel", 2.0 * dt / 60.0, sim.time)
-		spire.record("rotor", 1.5 * dt / 60.0, sim.time)
-		sim.tick(dt)
-	for tick: int in range(400):
-		sim.tick(dt)
-	var saved_progress: float = sim.spire_progress[0]
-	for tick: int in range(800):
-		sim.tick(dt)
-	var paused_progress: float = sim.spire_progress[0]
-	_check("starvation pauses accumulated milestone progress", is_equal_approx(paused_progress, saved_progress), "progress %.1f → %.1f" % [saved_progress, paused_progress])
-	for tick: int in range(3600):
-		spire.record("hull_panel", 2.0 * dt / 60.0, sim.time)
-		spire.record("rotor", 1.5 * dt / 60.0, sim.time)
-		sim.tick(dt)
-	_check("milestone completes after 120 s of met rates", sim.spire_stage >= 1 and sim.spire_progress[0] >= 120.0,
-		"stage %d, progress %.1f, time %.0f" % [sim.spire_stage, sim.spire_progress[0], sim.time])
-	_finish_group()
-
-func _test_save_round_trip() -> void:
-	var sim: FactorySim = FactorySim.new()
-	var belt_id: int = sim.add_entity("belt_mk1", Vector2i.ZERO)
-	sim.entities[belt_id].belt_items.append({"item": "iron_ore", "pos": 0.62})
-	var machine_id: int = sim.add_entity("smelter", Vector2i(2, 0), 0, {"recipe": "iron_ingot"})
-	sim.entities[machine_id].input_buffer["iron_ore"] = 3
-	sim.entities[machine_id].output_buffer["iron_ingot"] = 2
-	var spire_id: int = sim.add_entity("spire", Vector2i(8, 0), 0, {}, 42)
-	sim.spire_progress[0] = 47.5
-	sim.discovered_nodes["hidden_iron"] = true
+	sim.register_node(3, "iron_ore", "normal", Vector3(2.0, 0.0, 2.0))
+	var source: int = sim.add_entity("smelter", Vector3(100.0, 0.0, 100.0), 0.0, {"recipe": "iron_ingot"}, 42)
+	var target: int = sim.add_entity("storage", Vector3(100.0, 0.0, 108.0))
+	var linked: Dictionary = _connect(sim, "belt_mk2", source, "out0", target, "in0")
+	var belt_id: int = int(linked["id"])
+	var belt: FactoryEntity = sim.entities[belt_id]
+	belt.belt_items = [{"item": "iron_ore", "s": 1.25, "born_at": 0.0}]
 	var save_system: FactorySaveSystem = FactorySaveSystem.new()
-	save_system.save_path = "user://factory_round_trip_test.json"
-	var world_state: Dictionary = {
-		"boulders": {"near_iron_00": {"item": "iron_ore", "remaining": 7, "capacity": 15}},
-		"foliage": ["tree_00001", "rock_00002"]
-	}
+	save_system.save_path = "user://phase2_round_trip_test.json"
 	var player: FactoryPlayer = FactoryPlayer.new()
 	get_root().add_child(player)
 	player.set_panel_open(true)
-	player.position = Vector3(4.0, 2.0, 9.0)
 	player.inventory["cable"] = 17
-	var saved: bool = save_system.save_game(sim, player, 2, world_state)
+	var world_state: Dictionary = {"boulders": {"iron_a": {"item": "iron_ore", "remaining": 4}},
+		"foliage": ["tree_00001", "rock_00002"]}
+	var save_ok: bool = save_system.save_game(sim, player, 2, world_state)
 	var restored: FactorySim = FactorySim.new()
 	var restored_player: FactoryPlayer = FactoryPlayer.new()
 	get_root().add_child(restored_player)
 	restored_player.set_panel_open(true)
-	if not saved:
-		_check("save/load file round trip succeeds", false, "save file could not be written")
-		DirAccess.remove_absolute(ProjectSettings.globalize_path(save_system.save_path))
-		player.queue_free()
-		restored_player.queue_free()
-		_finish_group()
-		return
-	var loaded: Dictionary = save_system.load_game(restored, restored_player) if saved else {}
-	if loaded.is_empty():
-		_check("save/load file round trip succeeds", false, "save file could not be read")
-		DirAccess.remove_absolute(ProjectSettings.globalize_path(save_system.save_path))
-		player.queue_free()
-		restored_player.queue_free()
-		_finish_group()
-		return
-	var restored_machine: FactoryEntity = restored.entities[machine_id]
-	var restored_belt: FactoryEntity = restored.entities[belt_id]
-	_check("save/load file round trip succeeds", true, "loaded %s" % str(loaded))
-	_check("save/load preserves entity count", restored.entities.size() == sim.entities.size(), "%d vs %d" % [restored.entities.size(), sim.entities.size()])
-	_check("save/load preserves belt items", restored_belt.belt_items.size() == 1 and str(restored_belt.belt_items[0]["item"]) == "iron_ore", str(restored_belt.belt_items))
-	_check("save/load preserves machine buffers", restored_machine.input_buffer == {"iron_ore": 3} and restored_machine.output_buffer == {"iron_ingot": 2}, "%s / %s" % [str(restored_machine.input_buffer), str(restored_machine.output_buffer)])
-	_check("save/load preserves milestone and discovery", is_equal_approx(restored.spire_progress[0], 47.5) and restored.discovered_nodes.get("hidden_iron", false) and restored.entities.has(spire_id), "progress %.1f" % restored.spire_progress[0])
-	_check("save/load preserves sparse IDs without rescanning the grid", restored.entities.has(42) and restored.next_id == 43,
-		"IDs %s, next %d" % [str(restored.entities.keys()), restored.next_id])
-	_check("save/load preserves player inventory, transform and tier", restored_player.inventory == player.inventory and restored_player.position.is_equal_approx(player.position) and int(loaded.get("unlocked_tiers", -1)) == 2,
-		"inventory %s, position %s, tier %s" % [str(restored_player.inventory), str(restored_player.position), str(loaded.get("unlocked_tiers", -1))])
-	var restored_world: Dictionary = loaded.get("world", {})
-	var restored_boulder: Dictionary = restored_world.get("boulders", {}).get("near_iron_00", {})
-	var restored_foliage: Array = restored_world.get("foliage", [])
-	_check("save/load preserves world resource state",
-		str(restored_boulder.get("item", "")) == "iron_ore" and int(restored_boulder.get("remaining", -1)) == 7
-		and restored_foliage.has("tree_00001") and restored_foliage.has("rock_00002") and restored_foliage.size() == 2,
-		str(restored_world))
+	var loaded: Dictionary = save_system.load_game(restored, restored_player) if save_ok else {}
+	var restored_belt: FactoryEntity = restored.entities.get(belt_id)
+	_check("v3 save round-trip succeeds", not loaded.is_empty(), str(loaded))
+	_check("v3 saves world positions, yaw, belt curve and progress",
+		restored.entities.has(source) and restored.entities.has(target) and restored_belt != null
+		and restored_belt.extra.get("curve", PackedVector3Array()).size() == 4
+		and is_equal_approx(float(restored_belt.belt_items[0]["s"]), 1.25)
+		and restored.port_links.has("%d:out0" % source) and not restored.is_port_free(source, "out0"),
+		str(restored_belt.extra if restored_belt != null else {}))
+	_check("sparse forced IDs and player inventory survive save/load",
+		restored.entities.has(42) and restored.next_id > belt_id and restored_player.inventory.get("cable", 0) == 17,
+		str([restored.entities.keys(), restored.next_id, restored_player.inventory]))
+	var saved_world: Dictionary = loaded.get("world", {})
+	_check("boulder and removed-foliage state survive world save/load",
+		int(saved_world.get("boulders", {}).get("iron_a", {}).get("remaining", -1)) == 4
+		and saved_world.get("foliage", []).has("tree_00001"), str(saved_world))
 
-	var legacy_data: Dictionary = {
-		"version": FactorySaveSystem.SAVE_VERSION,
-		"sim": sim.to_dict(),
-		"player": {
-			"position": [0.0, 1.0, 0.0],
-			"rotation_y": 0.0,
-			"pitch": 0.0,
-			"inventory": {}
-		},
-		"unlocked_tiers": 0
+	var legacy_system: FactorySaveSystem = FactorySaveSystem.new()
+	legacy_system.save_path = "user://phase2_v2_migration_test.json"
+	var legacy_root: Dictionary = {
+		"version": 2,
+		"sim": {"next_id": 9, "time": 0.0, "entities": [
+			{"id": 5, "kind": "miner_mk1", "cell": [0, 0], "rotation": 0, "extra": {}, "input": {}, "output": {}},
+			{"id": 6, "kind": "belt_mk1", "cell": [0, 2], "items": [{"item": "iron_ore", "pos": 0.5}]},
+			{"id": 8, "kind": "smelter", "cell": [4, 0], "rotation": 1, "recipe": "iron_ingot", "extra": {}, "input": {}, "output": {}}
+		]},
+		"player": {"position": [0.0, 1.0, 0.0], "inventory": {"iron_plate": 1}},
+		"unlocked_tiers": 1,
+		"world": {"boulders": {"iron_a": {"item": "iron_ore", "remaining": 4}}, "foliage": ["tree_00001"]}
 	}
-	var legacy_file: FileAccess = FileAccess.open(save_system.save_path, FileAccess.WRITE)
-	if legacy_file != null:
-		legacy_file.store_string(JSON.stringify(legacy_data))
-		legacy_file.close()
-	var legacy_sim: FactorySim = FactorySim.new()
-	var legacy_player: FactoryPlayer = FactoryPlayer.new()
-	get_root().add_child(legacy_player)
-	legacy_player.set_panel_open(true)
-	var legacy_loaded: Dictionary = save_system.load_game(legacy_sim, legacy_player)
-	var legacy_boulders: OreBoulders = OreBoulders.new()
-	legacy_boulders.register("near_iron_00", "iron_ore", 15)
-	legacy_boulders.from_dict(legacy_loaded.get("world", {}).get("boulders", {}))
-	_check("old saves without boulder data restore full boulders",
-		legacy_loaded.get("world", {}).get("boulders", {}).is_empty() and legacy_boulders.remaining_for("near_iron_00") == 15,
-		str(legacy_loaded.get("world", {})))
-	DirAccess.remove_absolute(ProjectSettings.globalize_path(save_system.save_path))
+	var legacy_file: FileAccess = FileAccess.open(legacy_system.save_path, FileAccess.WRITE)
+	legacy_file.store_string(JSON.stringify(legacy_root))
+	legacy_file.close()
+	var migrated: FactorySim = FactorySim.new()
+	migrated.register_node(3, "iron_ore", "normal", Vector3(2.0, 0.0, 2.0))
+	var migrated_player: FactoryPlayer = FactoryPlayer.new()
+	get_root().add_child(migrated_player)
+	migrated_player.set_panel_open(true)
+	var migration_result: Dictionary = legacy_system.load_game(migrated, migrated_player)
+	var migrated_miner: FactoryEntity = migrated.entities.get(5)
+	var migrated_smelter: FactoryEntity = migrated.entities.get(8)
+	_check("v2 grid entities migrate to world centers and quarter-turn yaw",
+		int(migration_result.get("migrated_from", 0)) == 2 and migrated_miner != null and migrated_smelter != null
+		and migrated_miner.position.is_equal_approx(Vector3(2.0, 0.0, 2.0))
+		and is_equal_approx(migrated_smelter.yaw, PI / 2.0),
+		str([migrated_miner, migrated_smelter]))
+	_check("v2 miner is assigned to matching registered deposit",
+		migrated_miner != null and int(migrated_miner.extra.get("node_id", -1)) == 3
+		and migrated.node_reservations.get(3, -1) == 5, str(migrated.node_reservations))
+	_check("legacy grid belts are removed and items/materials refunded",
+		not migrated.entities.has(6) and int(migration_result.get("belt_refund", {}).get("iron_ore", 0)) == 1
+		and int(migration_result.get("belt_refund", {}).get("iron_plate", 0)) == 1,
+		str(migration_result.get("belt_refund", {})))
+	_check("migration preserves boulder and foliage world state",
+		migration_result.get("world", {}).get("foliage", []).has("tree_00001")
+		and int(migration_result.get("world", {}).get("boulders", {}).get("iron_a", {}).get("remaining", -1)) == 4,
+		str(migration_result.get("world", {})))
+	legacy_root["version"] = 1
+	legacy_file = FileAccess.open(legacy_system.save_path, FileAccess.WRITE)
+	legacy_file.store_string(JSON.stringify(legacy_root))
+	legacy_file.close()
+	var v1_sim: FactorySim = FactorySim.new()
+	v1_sim.register_node(3, "iron_ore", "normal", Vector3(2.0, 0.0, 2.0))
+	var v1_player: FactoryPlayer = FactoryPlayer.new()
+	get_root().add_child(v1_player)
+	v1_player.set_panel_open(true)
+	var v1_result: Dictionary = legacy_system.load_game(v1_sim, v1_player)
+	_check("repository v1 grid saves remain loadable",
+		int(v1_result.get("migrated_from", 0)) == 1 and v1_sim.entities.has(5)
+		and v1_sim.node_reservations.get(3, -1) == 5, str(v1_result))
+	v1_player.queue_free()
+
+	var refund_sim: FactorySim = FactorySim.new()
+	var refund_source: int = refund_sim.add_entity("smelter", Vector3.ZERO, 0.0, {"recipe": "iron_ingot"})
+	var refund_target: int = refund_sim.add_entity("storage", Vector3(0.0, 0.0, 8.0))
+	var refund_link: Dictionary = _connect(refund_sim, "belt_mk1", refund_source, "out0", refund_target, "in0")
+	var refund_belt: FactoryEntity = refund_sim.entities[int(refund_link["id"])]
+	refund_belt.belt_items = [{"item": "copper_ore", "s": 0.5}]
+	refund_sim.entities[refund_source].input_buffer["iron_ore"] = 2
+	refund_sim.entities[refund_source].output_buffer["iron_ingot"] = 1
+	var expected_belt_plates: int = ceili(float(refund_belt.extra["length"]) / 2.0)
+	var refund: Dictionary = refund_sim.remove_entity_with_refund(refund_source)
+	_check("dismantling refunds buffers, belt items and belt length cost",
+		not refund_sim.entities.has(int(refund_link["id"]))
+		and int(refund.get("iron_rod", 0)) == 5 and int(refund.get("wire", 0)) == 8
+		and int(refund.get("iron_ore", 0)) == 2 and int(refund.get("iron_ingot", 0)) == 1
+		and int(refund.get("copper_ore", 0)) == 1 and int(refund.get("iron_plate", 0)) == expected_belt_plates,
+		str(refund))
+
+	var merger: int = refund_sim.add_entity("merger", Vector3(50.0, 0.0, 0.0))
+	refund_sim.entities[merger].extra["merge_queues"] = {"in0": ["iron_ore"], "in1": ["copper_ore", "copper_ore"]}
+	var merger_refund: Dictionary = refund_sim.remove_entity_with_refund(merger)
+	_check("dismantling merger refunds every queued item",
+		int(merger_refund.get("iron_ore", 0)) == 1 and int(merger_refund.get("copper_ore", 0)) == 2,
+		str(merger_refund))
+	var take_storage: int = refund_sim.add_entity("storage", Vector3(60.0, 0.0, 0.0))
+	refund_sim.entities[take_storage].input_buffer = {"iron_plate": 3, "cable": 2}
+	var taken: Dictionary = refund_sim.take_storage(take_storage)
+	_check("Take all moves storage contents and clears the buffer",
+		taken == {"iron_plate": 3, "cable": 2} and refund_sim.entities[take_storage].input_buffer.is_empty(), str(taken))
+
+	for path: String in [save_system.save_path, legacy_system.save_path]:
+		DirAccess.remove_absolute(ProjectSettings.globalize_path(path))
 	player.queue_free()
 	restored_player.queue_free()
-	legacy_player.queue_free()
+	migrated_player.queue_free()
 	_finish_group()
 
-func _test_save_backup() -> void:
-	var save_system: FactorySaveSystem = FactorySaveSystem.new()
-	var suffix: String = str(int(Time.get_unix_time_from_system()))
-	save_system.save_path = "user://factory_backup_source_%s.json" % suffix
-	save_system.backup_path = "user://factory_backup_target_%s.json" % suffix
-	var source_file: FileAccess = FileAccess.open(save_system.save_path, FileAccess.WRITE)
-	if source_file == null:
-		_check("new game backs up an existing save", false, "source save could not be written")
-		_finish_group()
-		return
-	source_file.store_string("existing save data")
-	source_file.close()
-	var backed_up: bool = save_system.backup_existing_save()
-	var backup_file: FileAccess = FileAccess.open(save_system.backup_path, FileAccess.READ)
-	var backup_text: String = backup_file.get_as_text() if backup_file != null else ""
-	if backup_file != null:
-		backup_file.close()
-	_check("new game backs up an existing save", backed_up and not FileAccess.file_exists(save_system.save_path) and backup_text == "existing save data",
-		"backup contents %s" % backup_text)
-	if FileAccess.file_exists(save_system.save_path):
-		DirAccess.remove_absolute(ProjectSettings.globalize_path(save_system.save_path))
-	if FileAccess.file_exists(save_system.backup_path):
-		DirAccess.remove_absolute(ProjectSettings.globalize_path(save_system.backup_path))
+func _test_diagnostics() -> void:
+	var sim: FactorySim = FactorySim.new()
+	var smelter: int = sim.add_entity("smelter", Vector3.ZERO, 0.0, {"recipe": "iron_ingot"})
+	var lines: Array[String] = sim.diagnostics(smelter)
+	sim.entities[smelter].input_buffer["iron_ore"] = 1
+	sim.tick(0.05)
+	_check("diagnostics report input and output rates with exact recipe labels",
+		lines.size() == 2 and lines[0].contains("Input Iron Ore: 0.0/min — needs 30.0/min")
+		and lines[1].contains("Output Iron Ingot: 0.0/min"), str(lines))
+	_check("unpowered machine has an actionable status", sim.status_for(smelter) == "Not connected to power", sim.status_for(smelter))
 	_finish_group()
 
-func _test_ore_boulders() -> void:
-	var deposits: OreBoulders = OreBoulders.new()
-	deposits.register("iron_0", "iron_ore", 8)
-	var mined: Dictionary = {}
-	for _index: int in range(8):
-		mined = deposits.mine("iron_0")
-	_check("ore boulder yields finite units and depletes", int(mined.get("remaining", -1)) == 0
-		and bool(mined.get("depleted", false)) and deposits.mine("iron_0").is_empty(),
-		"remaining %d, last result %s" % [deposits.remaining_for("iron_0"), str(mined)])
+func _connect(sim: FactorySim, kind: String, from_id: int, from_port: String, to_id: int, to_port: String) -> Dictionary:
+	return sim.add_belt(kind, from_id, from_port, to_id, to_port, _port_curve(sim, from_id, from_port, to_id, to_port))
 
-	var partially_mined: OreBoulders = OreBoulders.new()
-	partially_mined.register("copper_0", "copper_ore", 14)
-	for _index: int in range(5):
-		partially_mined.mine("copper_0")
-	var restored: OreBoulders = OreBoulders.new()
-	restored.register("copper_0", "copper_ore", 14)
-	restored.from_dict(partially_mined.to_dict())
-	_check("ore boulder save/load preserves item and remaining count",
-		restored.item_for("copper_0") == "copper_ore" and restored.remaining_for("copper_0") == 9,
-		str(restored.to_dict()))
-
-	var old_save: OreBoulders = OreBoulders.new()
-	old_save.register("limestone_0", "limestone", 11)
-	old_save.from_dict({})
-	_check("missing boulder key leaves legacy deposits full", old_save.remaining_for("limestone_0") == 11,
-		str(old_save.to_dict()))
-	_finish_group()
-
-func _test_foliage_state() -> void:
-	var state: FoliageState = FoliageState.new()
-	state.remove("tree_00001")
-	state.remove("bush_00008")
-	var restored: FoliageState = FoliageState.new()
-	restored.from_dict(state.to_dict())
-	_check("foliage removal IDs survive save/load", restored.is_removed("tree_00001")
-		and restored.is_removed("bush_00008") and restored.to_dict().size() == 2, str(restored.to_dict()))
-	var empty_state: FoliageState = FoliageState.new()
-	empty_state.from_dict([])
-	_check("missing foliage data starts with all foliage present", empty_state.to_dict().is_empty(), str(empty_state.to_dict()))
-	_finish_group()
+func _port_curve(sim: FactorySim, from_id: int, from_port: String, to_id: int, to_port: String) -> PackedVector3Array:
+	var start: Dictionary = sim.port_world(from_id, from_port)
+	var finish: Dictionary = sim.port_world(to_id, to_port)
+	var handle: float = clampf(start["pos"].distance_to(finish["pos"]) * 0.4, 1.0, 8.0)
+	return PackedVector3Array([start["pos"], start["pos"] + start["normal"] * handle,
+		finish["pos"] + finish["normal"] * handle, finish["pos"]])
 
 func _run_for(sim: FactorySim, seconds: float) -> void:
-	var ticks: int = roundi(seconds / 0.05)
-	for _index: int in range(ticks):
+	for _step: int in range(ceili(seconds / 0.05)):
 		sim.tick(0.05)
 
-func _check(label: String, passed: bool, details: String) -> void:
+func _check(name: String, passed: bool, detail: String) -> void:
 	if passed:
-		print("PASS: ", label)
+		print("PASS: %s" % name)
 	else:
-		print("FAIL: ", label, " — ", details)
+		print("FAIL: %s — %s" % [name, detail])
 		failures += 1
 		current_group_failures += 1
 
@@ -457,7 +436,4 @@ func _finish_group() -> void:
 	groups += 1
 	if current_group_failures == 0:
 		passed_groups += 1
-		print("PASS: test group %d" % groups)
-	else:
-		print("FAIL: test group %d (%d failed assertions)" % [groups, current_group_failures])
 	current_group_failures = 0
