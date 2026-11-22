@@ -92,6 +92,9 @@ func _ready() -> void:
 		if argument == "--capture-all":
 			call_deferred("_capture_all")
 			break
+		if argument == "--capture-machine-set":
+			call_deferred("_capture_machine_set")
+			break
 		if argument.begins_with("--capture-"):
 			call_deferred("_capture_screenshot", argument.trim_prefix("--capture-"))
 			break
@@ -700,9 +703,21 @@ func _quit_game() -> void:
 	get_tree().quit()
 
 func _capture_all() -> void:
+	hud.show_toast("", 0.0)
 	for mode: String in ["spawn", "overview", "forestlake", "mountains", "line", "factory", "orepatch",
 			"boulder-before", "boulder-mid", "boulder-after", "panel"]:
 		await _capture_screenshot(mode)
+	get_tree().quit()
+
+func _capture_machine_set() -> void:
+	hud.show_toast("", 0.0)
+	hud.hide()
+	var belt_capture_cell: Vector2i = Vector2i(-25, -10)
+	if sim.add_entity("belt_mk1", belt_capture_cell) >= 0:
+		visuals.refresh()
+	for kind: String in ["miner_mk1", "smelter", "constructor", "assembler", "geo_tap",
+			"power_pole", "storage", "splitter", "merger", "belt", "spire", "hub", "drop_pod"]:
+		await _capture_screenshot("machine-" + kind)
 	get_tree().quit()
 
 func _build_demo_factory() -> void:
@@ -732,12 +747,43 @@ func _build_demo_factory() -> void:
 func _capture_screenshot(mode: String) -> void:
 	if hud.help_panel.visible:
 		hud.toggle_help()
-	var needs_demo: bool = mode in ["line", "panel", "overview", "factory", "orepatch", "fps-demo"]
+	var needs_demo: bool = mode in ["line", "panel", "overview", "factory", "orepatch", "fps-demo"] or mode.begins_with("machine-")
 	if needs_demo:
 		if sim.entities.size() <= 1:
 			_build_demo_factory()
 			visuals.refresh()
-	if mode == "overview" or mode == "factory":
+	if mode.begins_with("machine-"):
+		var kind: String = mode.trim_prefix("machine-")
+		var target: Vector3 = Vector3.ZERO
+		var camera_position: Vector3
+		if kind == "hub":
+			target = terrain.landing_position + Vector3(4.0, 1.7, 0.0)
+		elif kind == "drop_pod":
+			target = terrain.landing_position + Vector3(-5.0, 2.2, 0.0)
+		else:
+			var entity_kind: String = "spire" if kind == "spire" else "belt_mk1" if kind == "belt" else kind
+			for entity_id: Variant in sim.entities:
+				var entity: FactoryEntity = sim.entities[entity_id]
+				if entity.kind != entity_kind:
+					continue
+				if kind == "belt" and entity.cell != Vector2i(-25, -10):
+					continue
+				var size: Vector2i = building_definitions.get(entity.kind, {}).get("size", Vector2i.ONE)
+				var height: float = {"miner_mk1": 6.5, "smelter": 5.0, "constructor": 3.8,
+					"assembler": 4.2, "geo_tap": 4.2, "power_pole": 6.3, "storage": 3.4,
+					"splitter": 1.9, "merger": 1.9, "spire": 17.0, "belt_mk1": 0.9}.get(entity.kind, 3.0)
+				var visual: Node3D = visuals.entity_nodes.get(entity.id) as Node3D
+				var base_position: Vector3 = visual.global_position if visual != null else terrain.point_for_cell(entity.cell)
+				target = base_position + Vector3(float(size.x - 1), height * 0.5, float(size.y - 1))
+				break
+		camera_position = target + Vector3(0.0, 1.7, 6.0)
+		if kind == "belt":
+			camera_position = target + Vector3(6.0, 1.7, 0.0)
+		elif kind in ["splitter", "merger"]:
+			camera_position = target + Vector3(6.0, 1.7, 4.0)
+		_set_capture_view(target, camera_position)
+		await get_tree().create_timer(0.8).timeout
+	elif mode == "overview" or mode == "factory":
 		player.position = Vector3(-17.0, terrain.height_at(-17.0, 33.0) + 25.0, 33.0)
 		player.velocity = Vector3.ZERO
 		player.rotation.y = 0.0
@@ -825,12 +871,13 @@ func _capture_screenshot(mode: String) -> void:
 	if capture_directory.is_empty():
 		capture_directory = "/home/ubuntu/specs/shots/v2"
 	DirAccess.make_dir_recursive_absolute(capture_directory)
-	var filename: String = "%s/%s.png" % [capture_directory, mode]
+	var filename_mode: String = mode.trim_prefix("machine-") if mode.begins_with("machine-") else mode
+	var filename: String = "%s/%s.png" % [capture_directory, filename_mode]
 	var error: Error = get_viewport().get_texture().get_image().save_png(filename)
 	print("SCREENSHOT: %s (%s)" % [filename, error_string(error)])
 
 func _set_capture_view(target: Vector3, camera_position: Vector3) -> void:
-	player.position = camera_position
+	player.position = camera_position - player.camera.position
 	player.velocity = Vector3.ZERO
 	player.set_physics_process(false)
 	var direction: Vector3 = target - camera_position
