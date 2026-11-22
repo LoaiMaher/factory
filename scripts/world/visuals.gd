@@ -83,7 +83,10 @@ func _make_entity_visual(entity: FactoryEntity) -> Node3D:
 		_add_belt_mesh(root, entity)
 	elif entity.kind == "belt_pole":
 		_add_collider(root, size, Vector3(0.0, size.y * 0.5, 0.0))
-		_add_cylinder(root, "BeltPole", 0.07, 1.5, Vector3.ZERO, Color("5f6a62"), 0.55)
+		_add_box_part(root, "BeltPoleBase", Vector3(0.82, 0.16, 0.72), Vector3(0.0, 0.08, 0.0), Color("b2b8b8"), 0.8)
+		_add_cylinder(root, "BeltPole", 0.09, 1.45, Vector3(0.0, 0.86, 0.0), Color("3b4145"), 0.7)
+		_add_box_part(root, "BeltPoleHead", Vector3(0.86, 0.3, 0.66), Vector3(0.0, 1.68, 0.0), Color("e8792b"), 0.3)
+		_add_box_part(root, "BeltPoleMouth", Vector3(0.68, 0.24, 0.12), Vector3(0.0, 1.68, -0.39), Color("252a2e"), 0.2)
 	else:
 		var collider_size: Vector3 = Vector3(size.x, maxf(1.0, size.y), size.z)
 		var collider_position: Vector3 = Vector3(0.0, size.y * 0.5, 0.0)
@@ -117,6 +120,7 @@ func _make_entity_visual(entity: FactoryEntity) -> Node3D:
 
 func _add_collider(parent: Node3D, dimensions: Vector3, offset: Vector3) -> void:
 	var body: StaticBody3D = StaticBody3D.new()
+	body.collision_layer = 2
 	var shape: CollisionShape3D = CollisionShape3D.new()
 	var box: BoxShape3D = BoxShape3D.new()
 	box.size = dimensions
@@ -124,6 +128,17 @@ func _add_collider(parent: Node3D, dimensions: Vector3, offset: Vector3) -> void
 	shape.position = offset
 	body.add_child(shape)
 	parent.add_child(body)
+
+func _add_box_part(parent: Node3D, part_name: String, dimensions: Vector3, offset: Vector3,
+		color: Color, metallic: float) -> void:
+	var part: MeshInstance3D = MeshInstance3D.new()
+	part.name = part_name
+	var mesh: BoxMesh = BoxMesh.new()
+	mesh.size = dimensions
+	part.mesh = mesh
+	part.position = offset
+	part.material_override = _material(part_name, color, metallic, 0.58)
+	parent.add_child(part)
 
 func _add_belt_mesh(root: Node3D, entity: FactoryEntity) -> void:
 	var curve: PackedVector3Array = entity.extra.get("curve", PackedVector3Array())
@@ -135,33 +150,68 @@ func _add_belt_mesh(root: Node3D, entity: FactoryEntity) -> void:
 	surface.begin(Mesh.PRIMITIVE_TRIANGLES)
 	var rails: SurfaceTool = SurfaceTool.new()
 	rails.begin(Mesh.PRIMITIVE_TRIANGLES)
+	var lips: SurfaceTool = SurfaceTool.new()
+	lips.begin(Mesh.PRIMITIVE_TRIANGLES)
+	var frame: SurfaceTool = SurfaceTool.new()
+	frame.begin(Mesh.PRIMITIVE_TRIANGLES)
 	var previous_center: Vector3 = _belt_point(curve, 0.0)
 	var previous_tangent: Vector3 = (_belt_point(curve, 0.01) - previous_center).normalized()
+	var path_distance: float = 0.0
 	for index: int in range(1, steps + 1):
 		var center: Vector3 = _belt_point(curve, float(index) / float(steps))
 		var tangent: Vector3 = (center - previous_center).normalized()
-		var side: Vector3 = Vector3.UP.cross(tangent).normalized() * 0.42
-		var previous_side: Vector3 = Vector3.UP.cross(previous_tangent).normalized() * 0.42
-		_add_quad(surface, previous_center - previous_side + Vector3.UP * 0.05, previous_center + previous_side + Vector3.UP * 0.05,
-			center + side + Vector3.UP * 0.05, center - side + Vector3.UP * 0.05)
+		var side: Vector3 = Vector3(tangent.z, 0.0, -tangent.x).normalized() * 0.45
+		var previous_side: Vector3 = Vector3(previous_tangent.z, 0.0, -previous_tangent.x).normalized() * 0.45
+		var next_distance: float = path_distance + previous_center.distance_to(center)
+		_add_belt_surface_quad(surface, previous_center - previous_side + Vector3.UP * 0.05,
+			previous_center + previous_side + Vector3.UP * 0.05,
+			center + side + Vector3.UP * 0.05, center - side + Vector3.UP * 0.05, path_distance, next_distance)
 		_add_quad(rails, previous_center - previous_side + Vector3.UP * 0.22, previous_center - previous_side + Vector3.UP * 0.05,
 			center - side + Vector3.UP * 0.05, center - side + Vector3.UP * 0.22)
 		_add_quad(rails, previous_center + previous_side + Vector3.UP * 0.05, previous_center + previous_side + Vector3.UP * 0.22,
 			center + side + Vector3.UP * 0.22, center + side + Vector3.UP * 0.05)
+		_add_quad(lips, previous_center - previous_side * 0.45 + Vector3.UP * 0.22,
+			previous_center - previous_side * 0.28 + Vector3.UP * 0.22,
+			center - side * 0.28 + Vector3.UP * 0.22, center - side * 0.45 + Vector3.UP * 0.22)
+		_add_quad(lips, previous_center + previous_side * 0.28 + Vector3.UP * 0.22,
+			previous_center + previous_side * 0.45 + Vector3.UP * 0.22,
+			center + side * 0.45 + Vector3.UP * 0.22, center + side * 0.28 + Vector3.UP * 0.22)
+		_add_quad(frame, previous_center - previous_side * 0.4 - Vector3.UP * 0.16,
+			previous_center - previous_side * 0.25 - Vector3.UP * 0.16,
+			center - side * 0.25 - Vector3.UP * 0.16, center - side * 0.4 - Vector3.UP * 0.16)
+		_add_quad(frame, previous_center + previous_side * 0.25 - Vector3.UP * 0.16,
+			previous_center + previous_side * 0.4 - Vector3.UP * 0.16,
+			center + side * 0.4 - Vector3.UP * 0.16, center + side * 0.25 - Vector3.UP * 0.16)
 		previous_center = center
 		previous_tangent = tangent
+		path_distance = next_distance
 	var deck: MeshInstance3D = MeshInstance3D.new()
 	deck.name = "BeltSurface"
 	deck.mesh = surface.commit()
-	deck.material_override = _material("belt_surface", Color("262a28"), 0.12, 0.88)
+	var belt_material: ShaderMaterial = ShaderMaterial.new()
+	belt_material.shader = load("res://shaders/belt_surface.gdshader") as Shader
+	belt_material.set_shader_parameter("belt_speed", 0.35 if not entity.belt_items.is_empty() else 0.0)
+	deck.material_override = belt_material
 	root.add_child(deck)
 	var rail_mesh: MeshInstance3D = MeshInstance3D.new()
 	rail_mesh.mesh = rails.commit()
-	rail_mesh.material_override = _material("belt_rail", Color("d29a3c"), 0.58, 0.7)
+	rail_mesh.material_override = _material("belt_rail", Color("b2b8b8"), 0.8, 0.55)
 	(rail_mesh.material_override as StandardMaterial3D).cull_mode = BaseMaterial3D.CULL_DISABLED
 	root.add_child(rail_mesh)
+	var lip_mesh: MeshInstance3D = MeshInstance3D.new()
+	lip_mesh.name = "BeltRailLips"
+	lip_mesh.mesh = lips.commit()
+	lip_mesh.material_override = rail_mesh.material_override
+	root.add_child(lip_mesh)
+	var frame_mesh: MeshInstance3D = MeshInstance3D.new()
+	frame_mesh.name = "BeltFrame"
+	frame_mesh.mesh = frame.commit()
+	frame_mesh.material_override = _material("belt_frame", Color("3b4145"), 0.72, 0.62)
+	(frame_mesh.material_override as StandardMaterial3D).cull_mode = BaseMaterial3D.CULL_DISABLED
+	root.add_child(frame_mesh)
 	var collision_body: StaticBody3D = StaticBody3D.new()
 	collision_body.name = "BeltCollision"
+	collision_body.collision_layer = 2
 	for index: int in range(steps):
 		var t0: float = float(index) / float(steps)
 		var t1: float = float(index + 1) / float(steps)
@@ -177,8 +227,13 @@ func _add_belt_mesh(root: Node3D, entity: FactoryEntity) -> void:
 		collision_body.add_child(collision)
 	root.add_child(collision_body)
 	for distance: int in range(0, ceili(length) + 1, 4):
-		var point: Vector3 = _belt_point(curve, clampf(float(distance) / length, 0.0, 1.0))
-		var height: float = maxf(0.2, point.y - terrain.height_at(point.x, point.z))
+		var t: float = clampf(float(distance) / length, 0.0, 1.0)
+		var point: Vector3 = _belt_point(curve, t)
+		var height: float = point.y - terrain.height_at(point.x, point.z)
+		if height <= 0.3:
+			continue
+		var tangent: Vector3 = _belt_tangent(curve, t)
+		var side: Vector3 = Vector3(tangent.z, 0.0, -tangent.x).normalized()
 		for side_sign: float in [-1.0, 1.0]:
 			var leg: MeshInstance3D = MeshInstance3D.new()
 			var leg_mesh: CylinderMesh = CylinderMesh.new()
@@ -186,9 +241,22 @@ func _add_belt_mesh(root: Node3D, entity: FactoryEntity) -> void:
 			leg_mesh.bottom_radius = 0.065
 			leg_mesh.height = height
 			leg.mesh = leg_mesh
-			leg.position = point + Vector3(side_sign * 0.34, -height * 0.5, 0.0)
+			leg.position = point + side * side_sign * 0.34 - Vector3.UP * height * 0.5
 			leg.material_override = _material("belt_support", Color("6d7770"), 0.62, 0.82)
 			root.add_child(leg)
+	for distance: int in range(0, ceili(length) + 1, 2):
+		var t: float = clampf(float(distance) / length, 0.0, 1.0)
+		var point: Vector3 = _belt_point(curve, t)
+		var tangent: Vector3 = _belt_tangent(curve, t)
+		var brace: MeshInstance3D = MeshInstance3D.new()
+		brace.name = "BeltCrossBrace"
+		var brace_mesh: BoxMesh = BoxMesh.new()
+		brace_mesh.size = Vector3(0.9, 0.1, 0.14)
+		brace.mesh = brace_mesh
+		brace.position = point - Vector3.UP * 0.13
+		brace.rotation.y = atan2(tangent.x, tangent.z)
+		brace.material_override = _material("belt_brace", Color("596166"), 0.72, 0.62)
+		root.add_child(brace)
 
 func _add_quad(tool: SurfaceTool, a: Vector3, b: Vector3, c: Vector3, d: Vector3) -> void:
 	tool.set_normal(Vector3.UP)
@@ -197,6 +265,22 @@ func _add_quad(tool: SurfaceTool, a: Vector3, b: Vector3, c: Vector3, d: Vector3
 	tool.add_vertex(b)
 	tool.add_vertex(a)
 	tool.add_vertex(d)
+	tool.add_vertex(c)
+
+func _add_belt_surface_quad(tool: SurfaceTool, a: Vector3, b: Vector3, c: Vector3, d: Vector3,
+		start_distance: float, end_distance: float) -> void:
+	tool.set_normal(Vector3.UP)
+	tool.set_uv(Vector2(0.0, start_distance))
+	tool.add_vertex(a)
+	tool.set_uv(Vector2(1.0, end_distance))
+	tool.add_vertex(c)
+	tool.set_uv(Vector2(1.0, start_distance))
+	tool.add_vertex(b)
+	tool.set_uv(Vector2(0.0, start_distance))
+	tool.add_vertex(a)
+	tool.set_uv(Vector2(0.0, end_distance))
+	tool.add_vertex(d)
+	tool.set_uv(Vector2(1.0, end_distance))
 	tool.add_vertex(c)
 
 func _belt_point(curve: PackedVector3Array, t: float) -> Vector3:
@@ -330,7 +414,7 @@ func _update_item_instances() -> void:
 			var length: float = float(entity.extra["length"])
 			var s: float = clampf(float(item["s"]) + float(entity.extra["speed"]) * 0.05 * interpolation, 0.0, length)
 			var t: float = s / maxf(length, 0.01)
-			item_positions_by_type[item_id].append({"position": _belt_point(curve, t) + Vector3.UP * 0.32,
+			item_positions_by_type[item_id].append({"position": _belt_point(curve, t) + Vector3.UP * 0.23,
 				"tangent": _belt_tangent(curve, t)})
 	for item_id: String in item_positions_by_type:
 		if item_positions_by_type[item_id].is_empty():
@@ -348,7 +432,10 @@ func _update_item_instances() -> void:
 		mm.instance_count = item_positions_by_type[item_id].size()
 		for index: int in range(item_positions_by_type[item_id].size()):
 			var item_transform: Dictionary = item_positions_by_type[item_id][index]
-			mm.set_instance_transform(index, Transform3D(Basis.looking_at(item_transform["tangent"], Vector3.UP), item_transform["position"]))
+			var item_basis: Basis = Basis.looking_at(item_transform["tangent"], Vector3.UP)
+			if item_id in ["iron_rod", "screw"]:
+				item_basis = item_basis * Basis(Vector3.RIGHT, -PI * 0.5)
+			mm.set_instance_transform(index, Transform3D(item_basis, item_transform["position"]))
 
 func _update_spire(root: Node3D, stage: int) -> void:
 	if int(root.get_meta("visual_spire_stage", -1)) == stage:
@@ -371,24 +458,24 @@ func _item_mesh(item_id: String) -> Mesh:
 	match item_id:
 		"iron_ore", "copper_ore", "limestone":
 			var ore: SphereMesh = SphereMesh.new()
-			ore.radius = 0.28
-			ore.height = 0.42
-			ore.radial_segments = 8
-			ore.rings = 5
+			ore.radius = 0.16
+			ore.height = 0.28
+			ore.radial_segments = 6
+			ore.rings = 4
 			mesh = ore
 		"iron_ingot":
 			var ingot: BoxMesh = BoxMesh.new()
-			ingot.size = Vector3(0.58, 0.2, 0.28)
+			ingot.size = Vector3(0.28, 0.14, 0.36)
 			mesh = ingot
 		"iron_plate":
 			var plate: BoxMesh = BoxMesh.new()
-			plate.size = Vector3(0.62, 0.1, 0.44)
+			plate.size = Vector3(0.38, 0.08, 0.3)
 			mesh = plate
 		"iron_rod", "screw":
 			var rod: CylinderMesh = CylinderMesh.new()
 			rod.top_radius = 0.1
 			rod.bottom_radius = 0.1
-			rod.height = 0.55
+			rod.height = 0.34
 			rod.radial_segments = 8
 			mesh = rod
 		_:
@@ -401,7 +488,10 @@ func _item_material(item_id: String) -> StandardMaterial3D:
 		return item_material_cache[item_id]
 	var item_data: Dictionary = Items.all().get(item_id, {})
 	var material: StandardMaterial3D = StandardMaterial3D.new()
-	material.albedo_color = item_data.get("color", Color("9b8d73"))
+	var item_colors: Dictionary = {"iron_ore": Color("aa653f"), "copper_ore": Color("bd7442"),
+		"limestone": Color("c2b99b"), "iron_ingot": Color("b8c0c1"),
+		"iron_plate": Color("899497"), "iron_rod": Color("b8c0c1"), "screw": Color("b8c0c1")}
+	material.albedo_color = item_colors.get(item_id, item_data.get("color", Color("9b8d73")))
 	material.metallic = 0.22 if item_id in ["iron_ingot", "iron_plate", "iron_rod"] else 0.04
 	material.roughness = 0.72
 	item_material_cache[item_id] = material
