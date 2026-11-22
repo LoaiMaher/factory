@@ -1,5 +1,7 @@
 import math
+import json
 import random
+import sys
 from pathlib import Path
 
 import bpy
@@ -797,6 +799,90 @@ def build_grass(variant):
     return root, (0.8, 0.8, 0.62)
 
 
+def build_hands():
+    root = empty("Hands")
+    for hand_name, side in (("Hand_L", -1.0), ("Hand_R", 1.0)):
+        hand = empty(hand_name, root, (side * 0.28, 0.0, 0.0))
+        cube(hand, "Sleeve_Orange", (0.0, 0.03, -0.07), (0.32, 0.37, 0.2),
+             "Paint_Orange", 0.055)
+        cube(hand, "Sleeve_Armor", (0.0, 0.02, 0.04), (0.27, 0.23, 0.045),
+             "Paint_Orange", 0.025)
+        cube(hand, "Sleeve_Seam", (0.0, -0.14, -0.17), (0.29, 0.035, 0.035),
+             "Hazard", 0.008)
+        cube(hand, "Wrist_Cuff", (0.0, 0.25, -0.02), (0.31, 0.13, 0.23),
+             "Paint_Dark", 0.035)
+        cube(hand, "Cuff_Ridge", (0.0, 0.25, 0.08), (0.27, 0.07, 0.035),
+             "Steel", 0.012)
+        cube(hand, "Glove_Palm", (0.0, 0.39, 0.12), (0.26, 0.24, 0.17),
+             "Rubber", 0.045)
+        cube(hand, "Palm_Pad", (0.0, 0.39, 0.21), (0.19, 0.18, 0.035),
+             "Paint_Dark", 0.018)
+        for finger in range(4):
+            x = (finger - 1.5) * 0.062
+            finger_length = 0.11 if finger in (0, 3) else 0.14
+            cube(hand, "Finger_%d_Base" % finger,
+                 (x, 0.52 + finger_length * 0.18, 0.12),
+                 (0.052, finger_length * 0.62, 0.072), "Rubber", 0.018)
+            cube(hand, "Finger_%d_Knuckle" % finger,
+                 (x, 0.52 + finger_length * 0.57, 0.14),
+                 (0.048, 0.045, 0.078), "Paint_Dark", 0.012)
+            cube(hand, "Finger_%d_Tip" % finger,
+                 (x, 0.52 + finger_length * 0.88, 0.11),
+                 (0.048, finger_length * 0.3, 0.064), "Rubber", 0.018)
+        cube(hand, "Thumb_Base", (side * 0.15, 0.37, 0.11),
+             (0.085, 0.14, 0.09), "Rubber", 0.025,
+             (0.0, 0.0, side * 0.42))
+        cube(hand, "Thumb_Pad", (side * 0.19, 0.45, 0.12),
+             (0.07, 0.09, 0.08), "Paint_Dark", 0.02,
+             (0.0, 0.0, side * 0.36))
+        for finger in range(4):
+            x = (finger - 1.5) * 0.062
+            cube(hand, "Knuckle_Plate_%d" % finger,
+                 (x, 0.5, 0.21), (0.044, 0.065, 0.025),
+                 "Paint_Dark", 0.01)
+    return root, (1.45, 1.0, 0.75)
+
+
+def build_tool():
+    root = empty("BuildTool")
+    body = empty("Tool_Body", root)
+    cube(body, "Tool_Grip", (0.0, 0.02, -0.18), (0.15, 0.22, 0.28),
+         "Paint_Dark", 0.035, (math.radians(-9), 0.0, 0.0))
+    cube(body, "Grip_Rubber_Pad", (0.0, 0.015, -0.2), (0.158, 0.12, 0.2),
+         "Rubber", 0.028, (math.radians(-9), 0.0, 0.0))
+    cube(body, "Tool_Shell", (0.0, 0.18, 0.045), (0.3, 0.42, 0.23),
+         "Paint_Orange", 0.065)
+    cube(body, "Tool_Armor_Plate", (0.0, 0.17, 0.17), (0.22, 0.31, 0.035),
+         "Paint_Dark", 0.025)
+    cube(body, "Tool_Screen_Bezel", (0.0, -0.045, 0.11), (0.18, 0.035, 0.14),
+         "Paint_Dark", 0.018)
+    screen = empty("ToolScreen", body, (0.0, -0.066, 0.11))
+    cube(screen, "Screen_Surface", (0.0, 0.0, 0.0), (0.14, 0.008, 0.105),
+         "Glass", 0.005)
+    cube(body, "Tool_Screen_Status", (0.105, -0.051, 0.16),
+         (0.025, 0.018, 0.025), "Emissive_Status", 0.006)
+    cube(body, "Tool_Trigger", (0.0, 0.0, -0.035), (0.075, 0.12, 0.06),
+         "Steel", 0.018, (math.radians(-18), 0.0, 0.0))
+    cylinder(body, "Emitter_Housing", (0.0, 0.43, 0.045), 0.12, 0.16,
+             "Paint_Dark", 20, 0.018, (-math.pi / 2, 0.0, 0.0))
+    torus(body, "Emitter_Rim", (0.0, 0.51, 0.045), 0.105, 0.025,
+          "Steel", (math.pi / 2, 0.0, 0.0))
+    cylinder(body, "EmitterTip", (0.0, 0.525, 0.045), 0.075, 0.045,
+             "Emissive_Status", 20, 0.006, (-math.pi / 2, 0.0, 0.0))
+    for side in (-1.0, 1.0):
+        cube(body, "Shell_Rail", (side * 0.145, 0.19, 0.03),
+             (0.035, 0.3, 0.15), "Steel", 0.012)
+        for y in (0.08, 0.21, 0.34):
+            bolt(body, "Tool_Bolt", (side * 0.165, y, 0.09),
+                 "Hazard", 0.018, "X")
+    cube(body, "Battery_Pack", (0.0, -0.08, -0.12), (0.22, 0.16, 0.1),
+         "Paint_Dark", 0.025)
+    for x in (-0.065, 0.0, 0.065):
+        cube(body, "Battery_Rib", (x, -0.08, -0.065), (0.025, 0.1, 0.015),
+             "Steel", 0.005)
+    return root, (0.5, 0.8, 0.7)
+
+
 BUILDERS = {
     "miner_mk1": build_miner,
     "smelter": build_smelter,
@@ -820,6 +906,8 @@ BUILDERS = {
     "grass_clump_01": lambda: build_grass(0),
     "grass_clump_02": lambda: build_grass(1),
     "grass_clump_03": lambda: build_grass(2),
+    "hands": build_hands,
+    "build_tool": build_tool,
 }
 
 
@@ -1037,7 +1125,7 @@ def build_asset(kind, builder):
             join_group(group, group.name + "_Mesh")
     objects = list(bpy.context.scene.objects)
     triangles = model_triangles(objects)
-    if not (kind.startswith("tree_") or kind.startswith("grass_")) and not 2000 <= triangles <= 15000:
+    if not (kind.startswith("tree_") or kind.startswith("grass_") or kind in ("hands", "build_tool")) and not 2000 <= triangles <= 15000:
         raise RuntimeError("%s has %d triangles; expected 2,000–15,000" % (kind, triangles))
     TRI_COUNTS[kind] = triangles
     glb_path = MODEL_DIR / (kind + ".glb")
@@ -1062,12 +1150,32 @@ def build_asset(kind, builder):
     ))
 
 
-for name, build in BUILDERS.items():
-    print("Building", name, flush=True)
-    build_asset(name, build)
+def build_requested_assets():
+    global PREVIEW_DIR
+    arguments = sys.argv[sys.argv.index("--") + 1:] if "--" in sys.argv else []
+    requested = None
+    for index, argument in enumerate(arguments):
+        if argument == "--only" and index + 1 < len(arguments):
+            requested = set(arguments[index + 1].split(","))
+        elif argument.startswith("--only="):
+            requested = set(argument.split("=", 1)[1].split(","))
+        if argument == "--preview-dir" and index + 1 < len(arguments):
+            PREVIEW_DIR = Path(arguments[index + 1])
+        elif argument.startswith("--preview-dir="):
+            PREVIEW_DIR = Path(argument.split("=", 1)[1])
+    PREVIEW_DIR.mkdir(parents=True, exist_ok=True)
+    for name, build in BUILDERS.items():
+        if requested is not None and name not in requested:
+            continue
+        print("Building", name, flush=True)
+        build_asset(name, build)
 
-tri_path = MODEL_DIR / "tri_counts.json"
-tri_path.write_text(
-    "{\n" + ",\n".join('  "%s": %d' % (key, value) for key, value in TRI_COUNTS.items()) + "\n}\n"
-)
-print("Wrote", tri_path)
+    tri_path = MODEL_DIR / "tri_counts.json"
+    counts = json.loads(tri_path.read_text()) if tri_path.exists() else {}
+    counts.update(TRI_COUNTS)
+    tri_path.write_text(json.dumps(counts, indent=2, sort_keys=True) + "\n")
+    print("Wrote", tri_path)
+
+
+if __name__ == "__main__":
+    build_requested_assets()
