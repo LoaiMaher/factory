@@ -73,6 +73,37 @@ func front_port_for(entity_id: int) -> Vector2i:
 func back_port_for(entity_id: int) -> Vector2i:
 	return _back_port(entities[entity_id]) if entities.has(entity_id) else Vector2i.ZERO
 
+func input_port_cells(entity_id: int) -> Array[Vector2i]:
+	if not entities.has(entity_id):
+		return []
+	var entity: FactoryEntity = entities[entity_id]
+	if entity.kind == "assembler":
+		return _input_ports(entity)
+	if entity.kind != "spire":
+		return [_back_port(entity)]
+	var offsets: Array[Vector2i] = []
+	match entity.rotation:
+		0:
+			offsets = [Vector2i(1, 6), Vector2i(4, 6)]
+			if spire_stage >= 1:
+				offsets.append_array([Vector2i(2, 6), Vector2i(3, 6)])
+		1:
+			offsets = [Vector2i(6, 1), Vector2i(6, 4)]
+			if spire_stage >= 1:
+				offsets.append_array([Vector2i(6, 2), Vector2i(6, 3)])
+		2:
+			offsets = [Vector2i(1, -1), Vector2i(4, -1)]
+			if spire_stage >= 1:
+				offsets.append_array([Vector2i(2, -1), Vector2i(3, -1)])
+		3:
+			offsets = [Vector2i(-1, 1), Vector2i(-1, 4)]
+			if spire_stage >= 1:
+				offsets.append_array([Vector2i(-1, 2), Vector2i(-1, 3)])
+	var cells: Array[Vector2i] = []
+	for offset: Vector2i in offsets:
+		cells.append(entity.cell + offset)
+	return cells
+
 func port_cells(kind: String, cell: Vector2i, rotation: int = 0) -> Dictionary:
 	var front: Vector2i = _front_port_at(kind, cell, rotation)
 	var back: Vector2i = _back_port_at(kind, cell, rotation)

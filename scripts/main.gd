@@ -274,7 +274,7 @@ func _build_click() -> void:
 			path = build_system.belt_path_to_belt(build_system.belt_start, target_entity.cell, target_entity.rotation)
 		else:
 			cell = _belt_endpoint_cell(hit, false)
-			var end_rotation: int = target_entity.rotation if target_entity != null and cell == sim.back_port_for(target_entity.id) else -1
+			var end_rotation: int = _belt_rotation_into_entity(target_entity) if target_entity != null else -1
 			path = build_system.belt_path(build_system.belt_start, cell, end_rotation)
 		var cost: Dictionary = building_definitions[build_system.selected]["cost"]
 		var total: int = path.size()
@@ -300,8 +300,25 @@ func _build_click() -> void:
 func _belt_endpoint_cell(hit: Dictionary, is_start: bool) -> Vector2i:
 	var entity: FactoryEntity = _entity_from_hit(hit)
 	if entity != null:
-		return sim.front_port_for(entity.id) if is_start else sim.back_port_for(entity.id)
+		if is_start:
+			return sim.front_port_for(entity.id)
+		var input_cells: Array[Vector2i] = sim.input_port_cells(entity.id)
+		if input_cells.is_empty():
+			return sim.back_port_for(entity.id)
+		var hit_cell: Vector2i = terrain.cell_from_world(hit["position"])
+		var nearest_cell: Vector2i = input_cells[0]
+		var nearest_distance: float = INF
+		for input_cell: Vector2i in input_cells:
+			var delta: Vector2i = input_cell - hit_cell
+			var distance: float = Vector2(delta.x, delta.y).length_squared()
+			if distance < nearest_distance:
+				nearest_cell = input_cell
+				nearest_distance = distance
+		return nearest_cell
 	return terrain.cell_from_world(hit["position"])
+
+func _belt_rotation_into_entity(entity: FactoryEntity) -> int:
+	return posmod(entity.rotation + 2, 4) if entity.kind == "spire" else entity.rotation
 
 func _entity_from_hit(hit: Dictionary) -> FactoryEntity:
 	var object: Node = hit.get("collider") as Node
@@ -409,7 +426,7 @@ func _update_belt_preview(hit: Dictionary) -> void:
 		path = build_system.belt_path_to_belt(build_system.belt_start, target_entity.cell, target_entity.rotation)
 	else:
 		var end_cell: Vector2i = _belt_endpoint_cell(hit, false)
-		var end_rotation: int = target_entity.rotation if target_entity != null and end_cell == sim.back_port_for(target_entity.id) else -1
+		var end_rotation: int = _belt_rotation_into_entity(target_entity) if target_entity != null else -1
 		path = build_system.belt_path(build_system.belt_start, end_cell, end_rotation)
 	var kind: String = build_system.selected
 	var cost: Dictionary = building_definitions[kind]["cost"]

@@ -136,6 +136,48 @@ func _test_splitter_and_merger() -> void:
 	_check("belt path side-merges one cell before an existing belt", side_merge_path.back()["cell"] == Vector2i(3, 0)
 		and int(side_merge_path.back()["rotation"]) == 1, str(side_merge_path.back()))
 
+	var assembler_sim: FactorySim = FactorySim.new()
+	var routed_assembler_id: int = assembler_sim.add_entity("assembler", Vector2i(20, 20), 0, {"recipe": "hull_panel"})
+	var assembler_input_cells: Array[Vector2i] = assembler_sim.input_port_cells(routed_assembler_id)
+	var chosen_assembler_input: Vector2i = assembler_input_cells[0]
+	var assembler_start: Vector2i = chosen_assembler_input - Vector2i(0, 3)
+	var assembler_path: Array[Dictionary] = path_builder.belt_path(assembler_start, chosen_assembler_input, 0)
+	var assembler_path_placed: bool = path_builder.place_path(assembler_sim, assembler_path, "belt_mk1")
+	var first_assembler_belt: FactoryEntity = assembler_sim.entity_at(assembler_start)
+	var assembler_input_accepted: bool = false
+	if assembler_path_placed and first_assembler_belt != null:
+		var assembler_source_cell: Vector2i = assembler_start - path_builder._forward(int(assembler_path[0]["rotation"]))
+		assembler_input_accepted = assembler_sim.try_insert(first_assembler_belt.id, "iron_plate", assembler_source_cell)
+	_run_for(assembler_sim, 10.0)
+	_check("belt delivers into the chosen assembler input", assembler_input_accepted
+		and int(assembler_sim.entities[routed_assembler_id].input_buffer.get("iron_plate", 0)) == 1,
+		str(assembler_sim.entities[routed_assembler_id].input_buffer))
+
+	var spire_sim: FactorySim = FactorySim.new()
+	var routed_spire_id: int = spire_sim.add_entity("spire", Vector2i(40, 40), 0)
+	var spire_input_cells: Array[Vector2i] = spire_sim.input_port_cells(routed_spire_id)
+	_check("Spire stage 0 exposes its accepted input ports", spire_input_cells.size() == 2
+		and spire_input_cells.has(Vector2i(41, 46)) and spire_input_cells.has(Vector2i(44, 46)), str(spire_input_cells))
+	spire_sim.spire_stage = 1
+	var stage_one_spire_ports: Array[Vector2i] = spire_sim.input_port_cells(routed_spire_id)
+	_check("Spire stage 1 adds cable input ports", stage_one_spire_ports.size() == 4
+		and stage_one_spire_ports.has(Vector2i(42, 46)) and stage_one_spire_ports.has(Vector2i(43, 46)),
+		str(stage_one_spire_ports))
+	spire_sim.spire_stage = 0
+	var chosen_spire_input: Vector2i = spire_input_cells[0]
+	var spire_start: Vector2i = chosen_spire_input + Vector2i(0, 3)
+	var spire_path: Array[Dictionary] = path_builder.belt_path(spire_start, chosen_spire_input, 2)
+	var spire_path_placed: bool = path_builder.place_path(spire_sim, spire_path, "belt_mk1")
+	var first_spire_belt: FactoryEntity = spire_sim.entity_at(spire_start)
+	var spire_input_accepted: bool = false
+	if spire_path_placed and first_spire_belt != null:
+		var spire_source_cell: Vector2i = spire_start - path_builder._forward(int(spire_path[0]["rotation"]))
+		spire_input_accepted = spire_sim.try_insert(first_spire_belt.id, "hull_panel", spire_source_cell)
+	_run_for(spire_sim, 10.0)
+	_check("belt delivers through a Spire input port", spire_input_accepted
+		and spire_sim.entities[routed_spire_id].last_delivery_time.has("hull_panel"),
+		str(spire_sim.entities[routed_spire_id].last_delivery_time))
+
 	var merger_id: int = sim.add_entity("merger", Vector2i(10, 0))
 	var merger_sink: int = sim.add_entity("sink", Vector2i(10, 1))
 	var iron_inserted: int = 0
