@@ -774,29 +774,31 @@ def build_belt_pole():
     return root, (0.9, 0.9, 1.5)
 
 
-def _ore_wedge(parent, name, angle, radius, thickness, rng, slab_count):
+def _ore_wedge(parent, name, angle, thickness, rng, slab_count):
     step = math.tau / slab_count
-    half = step * 0.5 - 0.1 / radius
     inner = 0.18 + rng.random() * 0.08
+    tilt = math.radians(23.0 + rng.uniform(-4.0, 4.0))
+    base_height = -0.04
+    outer_height = rng.uniform(0.72, 0.78)
+    radius = inner + (outer_height - base_height) / math.tan(tilt)
+    half = step * 0.5 - 0.1 / radius
     boundary = [(inner, angle - half)]
     for index in range(9):
         fraction = (index + 1.0) / 10.0
         theta = angle - half + 2.0 * half * fraction
         theta += rng.uniform(-0.006, 0.006)
-        boundary.append((radius * rng.uniform(0.94, 1.06), theta))
+        boundary.append((radius * rng.uniform(0.96, 1.04), theta))
     boundary.append((inner, angle + half))
     top = []
     bottom = []
-    tilt = math.radians(rng.uniform(32.0, 36.0))
-    base_height = -0.72
     for radial, theta in boundary:
-        rough = rng.uniform(-0.07, 0.07)
+        rough = rng.uniform(-0.035, 0.035)
         height = base_height + max(0.0, radial - inner) * math.tan(tilt) + rough
         top.append((math.cos(theta) * radial, math.sin(theta) * radial, height))
         bottom.append((math.cos(theta) * radial, math.sin(theta) * radial, height - thickness))
     center_r = rng.uniform(0.72, 1.15)
     center = (math.cos(angle) * center_r, math.sin(angle) * center_r,
-              base_height + max(0.0, center_r - inner) * math.tan(tilt) + rng.uniform(-0.04, 0.04))
+              base_height + max(0.0, center_r - inner) * math.tan(tilt) + rng.uniform(-0.035, 0.035))
     vertices = top + bottom + [center, (center[0], center[1], center[2] - thickness)]
     top_center = len(vertices) - 2
     bottom_center = len(vertices) - 1
@@ -825,19 +827,17 @@ def _ore_wedge(parent, name, angle, radius, thickness, rng, slab_count):
 def _ore_node_variant(root, name, slab_count, seed):
     rng = random.Random(seed)
     variant = empty(name, root)
-    radius_range = {8: (2.78, 2.88), 9: (2.98, 3.08), 10: (3.05, 3.18)}[slab_count]
-    radius = rng.uniform(*radius_range)
     for index in range(slab_count):
         angle = math.tau * index / slab_count + rng.uniform(-0.008, 0.008)
-        _ore_wedge(variant, "Ore_Slab_%02d" % index, angle, radius,
-                   rng.uniform(0.5, 0.9), rng, slab_count)
+        _ore_wedge(variant, "Ore_Slab_%02d" % index, angle,
+                   rng.uniform(0.4, 0.6), rng, slab_count)
     for index in range(11):
         angle = rng.uniform(0.0, math.tau)
         radial = rng.uniform(0.08, 0.68)
         bpy.ops.mesh.primitive_ico_sphere_add(subdivisions=1, radius=rng.uniform(0.16, 0.38))
         rubble = bpy.context.object
         rubble.name = "Ore_Core_Rubble"
-        rubble.location = (math.cos(angle) * radial, math.sin(angle) * radial, -0.12)
+        rubble.location = (math.cos(angle) * radial, math.sin(angle) * radial, 0.08)
         rubble.scale = (rng.uniform(0.75, 1.3), rng.uniform(0.72, 1.18), rng.uniform(0.45, 0.95))
         bpy.ops.object.transform_apply(location=False, rotation=False, scale=True)
         attach(rubble, variant, rubble.location.copy())
@@ -850,7 +850,7 @@ def build_ore_node():
     _ore_node_variant(root, "OreNode_A", 8, 4127)
     _ore_node_variant(root, "OreNode_B", 9, 7831)
     _ore_node_variant(root, "OreNode_C", 10, 22039)
-    return root, (7.0, 7.0, 1.2)
+    return root, (5.6, 5.6, 1.6)
 
 
 def build_hub():
