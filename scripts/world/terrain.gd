@@ -100,10 +100,11 @@ func _build_ground() -> void:
 				var p10: Vector3 = Vector3(x0 + step, height_samples[z_index * map_width + x_index + 1], z0)
 				var p01: Vector3 = Vector3(x0, height_samples[(z_index + 1) * map_width + x_index], z0 + step)
 				var p11: Vector3 = Vector3(x0 + step, height_samples[(z_index + 1) * map_width + x_index + 1], z0 + step)
-				_add_terrain_triangle(surface, p00, p01, p10)
-				_add_terrain_triangle(surface, p10, p01, p11)
-		surface.generate_normals()
+				_add_terrain_triangle(surface, p00, p10, p01)
+				_add_terrain_triangle(surface, p10, p11, p01)
 		var mesh: ArrayMesh = surface.commit()
+		var ground_normals: PackedVector3Array = mesh.surface_get_arrays(0)[Mesh.ARRAY_NORMAL]
+		assert(not ground_normals.is_empty() and ground_normals[0].y > 0.0)
 		var material: StandardMaterial3D = StandardMaterial3D.new()
 		material.vertex_color_use_as_albedo = true
 		material.roughness = 0.92
@@ -167,7 +168,10 @@ func _build_boundaries() -> void:
 
 func _add_terrain_triangle(surface: SurfaceTool, a: Vector3, b: Vector3, c: Vector3) -> void:
 	var center: Vector3 = (a + b + c) / 3.0
-	var slope: float = (b - a).cross(c - a).normalized().y
+	var normal: Vector3 = (b - a).cross(c - a).normalized()
+	if normal.y < 0.0:
+		normal = -normal
+	var slope: float = normal.y
 	var variation: float = noise.get_noise_2d(center.x + 320.0, center.z - 180.0) * 0.5 + 0.5
 	var grass_color: Color = Color("607847").lerp(Color("92a462"), variation)
 	var rock_color: Color = Color("625a4b").lerp(Color("93846d"), variation)
@@ -188,7 +192,8 @@ func _add_terrain_triangle(surface: SurfaceTool, a: Vector3, b: Vector3, c: Vect
 	for point: Vector3 in [a, b, c]:
 		var vertex_variation: float = noise.get_noise_2d(point.x + 320.0, point.z - 180.0)
 		var height_tint: float = clampf((point.y - 28.0) / 80.0, 0.0, 1.0) * 0.1
-		surface.set_color(color * (0.96 + vertex_variation * 0.08 + height_tint))
+		surface.set_normal(normal)
+		surface.set_color(color * 0.62 * (0.96 + vertex_variation * 0.08 + height_tint))
 		surface.add_vertex(point)
 
 func _build_nodes() -> void:
