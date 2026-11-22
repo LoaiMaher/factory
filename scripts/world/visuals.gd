@@ -57,7 +57,7 @@ func refresh() -> void:
 		if entity.kind == "spire":
 			_update_spire(visual, sim.spire_stage)
 		if entity.kind.begins_with("belt_"):
-			var belt_surface: MeshInstance3D = visual.get_node_or_null("BeltSurface") as MeshInstance3D
+			var belt_surface: MeshInstance3D = visual.find_child("BeltSurface", true, false) as MeshInstance3D
 			if belt_surface != null and belt_surface.material_override is ShaderMaterial:
 				var belt_shader: ShaderMaterial = belt_surface.material_override
 				belt_shader.set_shader_parameter("belt_speed", 0.9 if not entity.belt_items.is_empty() else 0.0)
@@ -79,79 +79,32 @@ func _make_entity_visual(entity: FactoryEntity) -> Node3D:
 	var root: Node3D = Node3D.new()
 	root.name = "Entity_%d_%s" % [entity.id, entity.kind]
 	root.set_meta("entity_id", entity.id)
+	var size: Vector2i = building_definitions.get(entity.kind, {}).get("size", Vector2i.ONE)
+	var body_position: Vector3 = Vector3(float(size.x - 1), 0.0, float(size.y - 1))
 	if entity.kind.begins_with("belt_"):
-		var body: MeshInstance3D = MeshInstance3D.new()
-		var belt_dimensions: Vector3 = Vector3(1.7, 0.18, 1.5)
-		body.mesh = _box_mesh("belt_body", belt_dimensions)
-		body.position.y = 0.18
-		body.name = "BeltSurface"
-		var belt_material: ShaderMaterial = ShaderMaterial.new()
-		belt_material.shader = load("res://shaders/belt_surface.gdshader") as Shader
-		belt_material.set_shader_parameter("belt_speed", 0.0)
-		body.material_override = belt_material
-		root.add_child(body)
-		_add_collider(root, belt_dimensions, body.position)
-		for side: float in [-0.57, 0.57]:
-			var rail: MeshInstance3D = MeshInstance3D.new()
-			rail.mesh = _box_mesh("belt_rail", Vector3(1.6, 0.32, 0.08))
-			rail.position = Vector3(0.0, 0.34, side)
-			rail.material_override = _material("rail", Color("879492"))
-			root.add_child(rail)
-		for index: int in range(2):
-			var cue: Node3D = _make_arrow("belt_chevron", Color("c3a451"))
-			cue.scale = Vector3(0.64, 0.42, 0.64)
-			cue.position = Vector3(0.0, 0.31, -0.35 + float(index) * 0.66)
-			root.add_child(cue)
-		for end: float in [-0.62, 0.62]:
-			var roller: MeshInstance3D = MeshInstance3D.new()
-			roller.mesh = _cylinder_mesh("belt_roller", 0.13, 1.35)
-			roller.position = Vector3(0.0, 0.26, end)
-			roller.rotation.z = PI / 2.0
-			roller.material_override = _material("belt_roller", Color("5d6863"), 0.54, 0.72)
-			root.add_child(roller)
-		for z: float in [-0.48, 0.48]:
-			for x: float in [-0.55, 0.55]:
-				var support: MeshInstance3D = MeshInstance3D.new()
-				support.mesh = _box_mesh("belt_support", Vector3(0.12, 0.48, 0.12))
-				support.position = Vector3(x, -0.08, z)
-				support.material_override = _material("belt_support", Color("59625f"), 0.48, 0.78)
-				root.add_child(support)
+		machine_models.build(entity.kind, root, size, Vector3.ZERO)
+		_add_collider(root, Vector3(1.7, 0.18, 1.5), Vector3(0.0, 0.18, 0.0))
 	else:
-		var body: MeshInstance3D = MeshInstance3D.new()
-		var box: BoxMesh = BoxMesh.new()
-		var size: Vector2i = building_definitions.get(entity.kind, {}).get("size", Vector2i.ONE)
-		box.size = Vector3(float(size.x) * 1.75, 2.5, float(size.y) * 1.75)
-		body.mesh = _box_mesh("building_%s" % entity.kind, box.size)
-		body.position = Vector3((float(size.x) - 1.0) * 1.0, 1.25, (float(size.y) - 1.0) * 1.0)
-		body.material_override = _material(entity.kind, _color_for(entity.kind), 0.28, 0.78)
-		root.add_child(body)
-		_add_collider(root, box.size, body.position)
-		var plinth: MeshInstance3D = MeshInstance3D.new()
-		plinth.mesh = _box_mesh("plinth_%s" % entity.kind, Vector3(box.size.x + 0.3, 1.0, box.size.z + 0.3))
-		plinth.position = Vector3(body.position.x, -0.5, body.position.z)
-		plinth.material_override = _material("plinth", Color("555b56"))
-		root.add_child(plinth)
-		var roof: MeshInstance3D = MeshInstance3D.new()
-		var top: BoxMesh = BoxMesh.new()
-		top.size = Vector3(box.size.x * 0.72, 0.22, box.size.z * 0.72)
-		roof.mesh = top
-		roof.position = body.position + Vector3(0.0, 1.36, 0.0)
-		roof.material_override = _material("trim", Color("53656a"))
-		root.add_child(roof)
-		machine_models.build(entity.kind, root, size, body.position)
+		var collider_size: Vector3 = Vector3(float(size.x) * 1.75, 2.5, float(size.y) * 1.75)
+		var collider_position: Vector3 = body_position + Vector3(0.0, 1.25, 0.0)
+		_add_collider(root, collider_size, collider_position)
+		machine_models.build(entity.kind, root, size, body_position)
 		_add_port_markers(root, entity)
 		var status: Label3D = Label3D.new()
 		status.name = "Status"
 		status.text = "●"
-		status.position = body.position + Vector3(0.0, 2.2, 0.0)
-		status.font_size = 44
-		status.pixel_size = 0.012
+		var height: float = {"miner_mk1": 6.5, "smelter": 5.0, "constructor": 3.8,
+			"assembler": 4.2, "geo_tap": 4.2, "power_pole": 6.3, "storage": 3.4,
+			"splitter": 1.9, "merger": 1.9, "spire": 17.0}.get(entity.kind, 3.0)
+		status.position = body_position + Vector3(0.0, height + 0.35, 0.0)
+		status.font_size = 22
+		status.pixel_size = 0.01
 		status.billboard = BaseMaterial3D.BILLBOARD_ENABLED
 		root.add_child(status)
 		if entity.kind == "spire":
 			var assembly: SpireVisual = SpireVisual.new()
 			assembly.name = "ShipSections"
-			assembly.position = body.position
+			assembly.position = body_position
 			root.add_child(assembly)
 	return root
 

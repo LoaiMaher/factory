@@ -5,52 +5,148 @@ var mesh_cache: Dictionary = {}
 var material_cache: Dictionary = {}
 
 func build(kind: String, root: Node3D, size: Vector2i, body_position: Vector3) -> void:
-	match kind:
-		"miner_mk1":
-			_build_miner(root, size)
-		"smelter":
-			_build_smelter(root, body_position)
-		"constructor":
-			_build_constructor(root, body_position)
-		"assembler":
-			_build_assembler(root, body_position)
-		"geo_tap":
-			_build_geo_tap(root, body_position)
-		"power_pole":
-			_build_power_pole(root, body_position)
-		"storage":
-			_build_storage(root, body_position)
-		"splitter", "merger":
-			_build_junction(root, kind, body_position)
-		"spire":
-			_build_spire(root, body_position)
+	var asset_name: String = "ascent_spire" if kind == "spire" else kind
+	if kind.begins_with("belt_"):
+		asset_name = "belt"
+	var packed: PackedScene = load("res://assets/models/%s.glb" % asset_name) as PackedScene
+	if packed == null:
+		push_error("Missing Blender model: " + asset_name)
+		return
+	var model: Node3D = packed.instantiate() as Node3D
+	model.name = "BlenderModel"
+	model.position = body_position
+	root.add_child(model)
+	apply_pbr_materials(model)
+	if kind == "smelter":
+		_add_particles(model, "SmelterSmoke", Vector3(0.85, 4.8, -0.65))
+	elif kind == "geo_tap":
+		_add_particles(model, "GeoSteam", Vector3(0.0, 4.0, 0.0))
+	if kind.begins_with("belt_"):
+		var belt_surface: MeshInstance3D = model.find_child("Belt_Mesh", true, false) as MeshInstance3D
+		if belt_surface != null:
+			belt_surface.name = "BeltSurface"
+			var belt_material: ShaderMaterial = ShaderMaterial.new()
+			belt_material.shader = load("res://shaders/belt_surface.gdshader") as Shader
+			belt_material.set_shader_parameter("belt_speed", 0.0)
+			belt_surface.material_override = belt_material
 
 func animate(root: Node3D, entity: FactoryEntity) -> void:
 	var running: bool = entity.status == "Running"
-	var drill: Node3D = root.get_node_or_null("DrillHead") as Node3D
+	var drill: Node3D = root.find_child("Drill", true, false) as Node3D
 	if drill != null:
 		drill.rotation.y = Time.get_ticks_msec() * 0.002 if running else 0.0
-	var piston: Node3D = root.get_node_or_null("MinerPiston") as Node3D
+	var piston: Node3D = root.find_child("Piston", true, false) as Node3D
 	if piston != null:
-		piston.position.y = 3.15 + (sin(Time.get_ticks_msec() * 0.006) * 0.24 if running else 0.0)
-	var press: Node3D = root.get_node_or_null("ConstructorPress") as Node3D
+		piston.position.y = 4.15 + (sin(Time.get_ticks_msec() * 0.006) * 0.24 if running else 0.0)
+	var press: Node3D = root.find_child("Press", true, false) as Node3D
 	if press != null:
-		press.position.y = 2.3 + (absf(sin(Time.get_ticks_msec() * 0.004)) * 0.7 if running else 0.0)
-	for arm_name: String in ["AssemblerArmA", "AssemblerArmB"]:
-		var arm: Node3D = root.get_node_or_null(arm_name) as Node3D
+		press.position.y = 2.5 - (absf(sin(Time.get_ticks_msec() * 0.004)) * 0.7 if running else 0.0)
+	for arm_name: String in ["Arm_A", "Arm_B"]:
+		var arm: Node3D = root.find_child(arm_name, true, false) as Node3D
 		if arm != null:
-			arm.rotation.y = sin(Time.get_ticks_msec() * 0.0018 + (0.0 if arm_name == "AssemblerArmA" else PI)) * 0.55 if running else 0.0
-	var turbine: Node3D = root.get_node_or_null("GeoTurbine") as Node3D
+			arm.rotation.y = sin(Time.get_ticks_msec() * 0.0018 + (0.0 if arm_name == "Arm_A" else PI)) * 0.55 if running else 0.0
+	var turbine: Node3D = root.find_child("Turbine", true, false) as Node3D
 	if turbine != null:
-		turbine.rotation.z = Time.get_ticks_msec() * 0.003 if running else 0.0
+		turbine.rotation.y = Time.get_ticks_msec() * 0.003 if running else 0.0
 	for particle_name: String in ["SmelterSmoke", "GeoSteam"]:
-		var particles: CPUParticles3D = root.get_node_or_null(particle_name) as CPUParticles3D
+		var particles: CPUParticles3D = root.find_child(particle_name, true, false) as CPUParticles3D
 		if particles != null:
 			particles.emitting = running
-	var mouth: MeshInstance3D = root.get_node_or_null("FurnaceMouth") as MeshInstance3D
-	if mouth != null:
-		mouth.material_override = _material("furnace_glow" if running else "furnace_dark",
-			Color("e16b28") if running else Color("2c302d"), 0.1, 0.88, running)
+	var glow: Node3D = root.find_child("Furnace_Glow", true, false) as Node3D
+	if glow != null:
+		for child: Node in glow.get_children():
+			if child is MeshInstance3D:
+				(child as MeshInstance3D).material_override = _emission_material(
+					Color("ff6320") if running else Color("33342f"), running)
+	var status_light: Node3D = root.find_child("StatusLight", true, false) as Node3D
+	if status_light != null:
+		for child: Node in status_light.get_children():
+			if child is MeshInstance3D:
+				var tint: Color = Color("4ddd75") if running else Color("d58a35") if entity.status != "Stopped" else Color("434943")
+				(child as MeshInstance3D).material_override = _emission_material(tint, running or entity.status != "Stopped")
+
+func apply_pbr_materials(model: Node) -> void:
+	for node: Node in model.find_children("*", "MeshInstance3D", true, false):
+		var mesh_instance: MeshInstance3D = node as MeshInstance3D
+		if mesh_instance.mesh == null:
+			continue
+		for surface: int in range(mesh_instance.mesh.get_surface_count()):
+			var source: Material = mesh_instance.mesh.surface_get_material(surface)
+			if source == null:
+				continue
+			var key: String = source.resource_name
+			if key.is_empty():
+				continue
+			var replacement: Material = _pbr_material(key)
+			if replacement != null:
+				mesh_instance.set_surface_override_material(surface, replacement)
+
+func _pbr_material(key: String) -> Material:
+	if material_cache.has(key):
+		return material_cache[key]
+	var paint_tints: Dictionary = {
+		"Paint_Orange": Color("d56b2b"), "Paint_Dark": Color("272f2c"),
+		"Steel": Color("929d98"), "Concrete": Color("77766b"),
+		"Glass": Color("75aeb2"), "Rubber": Color("252826"),
+		"Foliage": Color("49643b"), "Bark": Color("594532"),
+		"Ore_Iron": Color("a75a3d"), "Ore_Copper": Color("5f9c76"),
+		"Ore_Limestone": Color("bcb48a")
+	}
+	if key == "Paint_Orange" or key == "Paint_Dark":
+		var paint: ShaderMaterial = ShaderMaterial.new()
+		paint.shader = load("res://shaders/machine_paint.gdshader") as Shader
+		paint.set_shader_parameter("paint_tint", paint_tints[key])
+		paint.set_shader_parameter("plate_albedo", load("res://assets/textures/metal_plate_diff_1k.jpg"))
+		paint.set_shader_parameter("plate_normal", load("res://assets/textures/metal_plate_nor_gl_1k.jpg"))
+		paint.set_shader_parameter("plate_roughness", load("res://assets/textures/metal_plate_rough_1k.jpg"))
+		material_cache[key] = paint
+		return paint
+	if key == "Hazard":
+		var hazard: ShaderMaterial = ShaderMaterial.new()
+		hazard.shader = load("res://shaders/hazard_stripe.gdshader") as Shader
+		material_cache[key] = hazard
+		return hazard
+	var material: StandardMaterial3D = StandardMaterial3D.new()
+	material.albedo_color = paint_tints.get(key, Color("777c72"))
+	material.roughness = 0.78
+	material.metallic = 0.58 if key == "Steel" else 0.08
+	if key == "Glass":
+		material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+		material.albedo_color.a = 0.62
+	if key == "Emissive_Furnace" or key == "Emissive_Status":
+		material = _emission_material(Color("ff6320") if key == "Emissive_Furnace" else Color("4ddd75"), true)
+	material_cache[key] = material
+	return material
+
+func _emission_material(color: Color, enabled: bool) -> StandardMaterial3D:
+	var material: StandardMaterial3D = StandardMaterial3D.new()
+	material.albedo_color = color if enabled else color.darkened(0.65)
+	material.roughness = 0.28
+	material.emission_enabled = enabled
+	material.emission = color
+	material.emission_energy_multiplier = 1.8 if enabled else 0.0
+	return material
+
+func _add_particles(parent: Node3D, node_name: String, offset: Vector3) -> void:
+	var particles: CPUParticles3D = CPUParticles3D.new()
+	particles.name = node_name
+	particles.position = offset
+	particles.amount = 18
+	particles.lifetime = 2.2
+	particles.direction = Vector3(0.0, 1.0, 0.0)
+	particles.spread = 14.0
+	particles.initial_velocity_min = 0.35
+	particles.initial_velocity_max = 0.95
+	particles.gravity = Vector3(0.0, 0.18, 0.0)
+	var puff: SphereMesh = SphereMesh.new()
+	puff.radius = 0.12
+	puff.height = 0.24
+	particles.mesh = puff
+	var smoke: StandardMaterial3D = StandardMaterial3D.new()
+	smoke.albedo_color = Color("82827a")
+	smoke.roughness = 1.0
+	particles.material_override = smoke
+	parent.add_child(particles)
 
 func _build_miner(root: Node3D, size: Vector2i) -> void:
 	var center: Vector3 = Vector3(float(size.x - 1), 0.0, float(size.y - 1))

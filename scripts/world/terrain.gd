@@ -7,7 +7,7 @@ const CHUNKS_PER_AXIS: int = 8
 const CELLS_PER_CHUNK: int = 64
 const CHUNK_SIZE: float = 128.0
 const BACKDROP_HALF_EXTENT: float = 1536.0
-const BACKDROP_STEP: float = 64.0
+const BACKDROP_STEP: float = 32.0
 const LAKE_CENTER: Vector2 = Vector2(-205.0, 190.0)
 
 var noise: FastNoiseLite = FastNoiseLite.new()
@@ -28,6 +28,7 @@ var spire_position: Vector3 = Vector3(0.0, 0.0, -28.0)
 var landing_position: Vector3 = Vector3(0.0, 0.0, 12.0)
 var building_definitions: Dictionary = BuildingDefs.all()
 var terrain_material: ShaderMaterial
+var machine_models: MachineModels = MachineModels.new()
 
 func _ready() -> void:
 	_configure_noise()
@@ -394,15 +395,16 @@ func _create_environment() -> void:
 	var sky_resource: Sky = Sky.new()
 	sky_resource.sky_material = sky_material
 	environment.sky = sky_resource
-	environment.background_energy_multiplier = 0.62
-	environment.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
-	environment.ambient_light_color = Color("89979a")
-	environment.ambient_light_energy = 1.1
+	environment.background_energy_multiplier = 0.76
+	environment.ambient_light_source = Environment.AMBIENT_SOURCE_SKY if use_forward_plus else Environment.AMBIENT_SOURCE_COLOR
+	environment.ambient_light_color = Color("a8b9af")
+	environment.ambient_light_energy = 1.45
 	environment.tonemap_mode = Environment.TONE_MAPPER_ACES
+	environment.tonemap_exposure = 1.05
 	environment.fog_enabled = true
-	environment.fog_light_color = Color("9caeb7")
-	environment.fog_sky_affect = 0.5
-	environment.fog_density = 0.00016
+	environment.fog_light_color = Color("b7c8d2")
+	environment.fog_sky_affect = 0.42
+	environment.fog_density = 0.0001
 	environment.ssao_enabled = use_forward_plus
 	environment.ssao_radius = 1.6
 	environment.ssao_intensity = 1.15
@@ -414,7 +416,7 @@ func _create_environment() -> void:
 	environment.glow_intensity = 0.32
 	environment.glow_bloom = 0.05
 	environment.volumetric_fog_enabled = use_forward_plus
-	environment.volumetric_fog_density = 0.00065
+	environment.volumetric_fog_density = 0.00038
 	environment.volumetric_fog_albedo = Color("a7bbc3")
 	world_environment.environment = environment
 	add_child(world_environment)
@@ -422,7 +424,7 @@ func _create_environment() -> void:
 	sun.name = "LateMorningSun"
 	sun.rotation_degrees = Vector3(-38.0, -34.0, 0.0)
 	sun.light_color = Color("ffe2c4")
-	sun.light_energy = 0.85
+	sun.light_energy = 1.12
 	sun.shadow_enabled = use_forward_plus
 	sun.shadow_blur = 1.2
 	sun.directional_shadow_mode = DirectionalLight3D.SHADOW_PARALLEL_4_SPLITS
@@ -468,6 +470,7 @@ func _build_nodes() -> void:
 		nodes.append(definition)
 		if not bool(definition.get("hidden", false)):
 			_make_node_visual(definition)
+	_update_ore_overlay()
 
 func _make_node_visual(definition: Dictionary) -> void:
 	if DisplayServer.get_name() == "headless":
@@ -478,32 +481,18 @@ func _make_node_visual(definition: Dictionary) -> void:
 	root.name = "%s_%s" % [definition["item"], definition["purity"]]
 	root.set_meta("resource_node", definition)
 	var tint: Color = Color("9b5945") if definition["item"] == "iron_ore" else Color("4f8b83") if definition["item"] == "copper_ore" else Color("c6bea5")
-	var patch: MeshInstance3D = MeshInstance3D.new()
-	var patch_mesh: CylinderMesh = CylinderMesh.new()
-	patch_mesh.top_radius = 2.8
-	patch_mesh.bottom_radius = 2.8
-	patch_mesh.height = 0.12
-	patch_mesh.radial_segments = 32
-	patch.mesh = patch_mesh
-	patch.position.y = 0.06
-	var patch_material: StandardMaterial3D = StandardMaterial3D.new()
-	patch_material.albedo_texture = load("res://assets/textures/rocky_terrain_02_diff_1k.jpg")
-	patch_material.albedo_color = tint
-	patch_material.normal_enabled = true
-	patch_material.normal_texture = load("res://assets/textures/rocky_terrain_02_nor_gl_1k.jpg")
-	patch_material.roughness = 0.92
-	patch_material.uv1_scale = Vector3(2.6, 1.0, 2.6)
-	patch.material_override = patch_material
-	root.add_child(patch)
-	for index: int in range(6):
+	for index: int in range(12):
 		var chunk: MeshInstance3D = MeshInstance3D.new()
 		var chunk_mesh: SphereMesh = SphereMesh.new()
-		chunk_mesh.radius = 0.12
-		chunk_mesh.height = 0.22
+		chunk_mesh.radius = 0.14
+		chunk_mesh.height = 0.24
+		chunk_mesh.radial_segments = 7
+		chunk_mesh.rings = 4
 		chunk.mesh = chunk_mesh
-		var angle: float = TAU * float(index) / 6.0
-		chunk.position = Vector3(cos(angle) * 1.45, 0.16, sin(angle) * 1.45)
-		chunk.scale = Vector3(1.2, 0.9 + float(index % 2) * 0.4, 0.9)
+		var angle: float = TAU * float(index) / 12.0
+		var radial: float = 0.45 + float(index % 3) * 0.18
+		chunk.position = Vector3(cos(angle) * radial, 0.08, sin(angle) * radial)
+		chunk.scale = Vector3(1.1, 0.85 + float(index % 2) * 0.35, 0.9)
 		var chunk_material: StandardMaterial3D = StandardMaterial3D.new()
 		chunk_material.albedo_color = tint.lightened(0.18 if index % 2 == 0 else 0.0)
 		chunk_material.roughness = 0.94
@@ -520,17 +509,45 @@ func _make_node_visual(definition: Dictionary) -> void:
 	var label: Label3D = Label3D.new()
 	label.text = "%s · %s" % [Items.item_name(str(definition["item"])).replace(" Ore", ""), str(definition["purity"]).capitalize()]
 	label.position = Vector3(0.0, 0.72, 0.0)
-	label.font_size = 56
-	label.pixel_size = 0.014
+	label.font_size = 30
+	label.pixel_size = 0.009
 	label.billboard = BaseMaterial3D.BILLBOARD_ENABLED
 	label.no_depth_test = false
-	label.outline_size = 9
+	label.outline_size = 5
 	label.outline_modulate = Color("202520")
-	label.visibility_range_end = 45.0
-	label.visibility_range_end_margin = 6.0
+	label.visibility_range_end = 12.0
+	label.visibility_range_end_margin = 3.0
 	label.visibility_range_fade_mode = GeometryInstance3D.VISIBILITY_RANGE_FADE_SELF
 	root.add_child(label)
 	add_child(root)
+
+func _update_ore_overlay() -> void:
+	if terrain_material == null:
+		return
+	var image: Image = Image.create(1024, 1024, false, Image.FORMAT_RGBA8)
+	image.fill(Color(0.0, 0.0, 0.0, 0.0))
+	for site: Dictionary in nodes:
+		if bool(site.get("hidden", false)):
+			continue
+		var point: Vector3 = site["position"]
+		var center_x: int = roundi(point.x + WORLD_HALF_EXTENT)
+		var center_y: int = roundi(point.z + WORLD_HALF_EXTENT)
+		var ore_color: Color = Color("936044") if site["item"] == "iron_ore" else Color("4a8579") if site["item"] == "copper_ore" else Color("b9b29b")
+		var radius: int = 7
+		for y: int in range(maxi(0, center_y - radius), mini(1024, center_y + radius + 1)):
+			for x: int in range(maxi(0, center_x - radius), mini(1024, center_x + radius + 1)):
+				var delta: Vector2 = Vector2(float(x - center_x), float(y - center_y))
+				var distance: float = delta.length()
+				if distance > float(radius):
+					continue
+				var soft_edge: float = 1.0 - _smoothstep(4.0, float(radius), distance)
+				var crack: float = 0.68 + 0.32 * absf(sin(delta.x * 0.72 + sin(delta.y * 0.53) * 2.1))
+				var alpha: float = soft_edge * crack * 0.78
+				var previous: Color = image.get_pixel(x, y)
+				image.set_pixel(x, y, Color(ore_color.r, ore_color.g, ore_color.b, maxf(previous.a, alpha)))
+	var texture: ImageTexture = ImageTexture.create_from_image(image)
+	texture.resource_name = "Ore_Site_Overlay"
+	terrain_material.set_shader_parameter("ore_overlay", texture)
 
 func _build_boulders() -> void:
 	var rng: RandomNumberGenerator = RandomNumberGenerator.new()
@@ -793,13 +810,13 @@ func _build_vents() -> void:
 		var vent_label: Label3D = Label3D.new()
 		vent_label.text = "Geothermal"
 		vent_label.position = Vector3(0.0, 3.0, 0.0)
-		vent_label.font_size = 48
-		vent_label.pixel_size = 0.012
+		vent_label.font_size = 30
+		vent_label.pixel_size = 0.009
 		vent_label.no_depth_test = false
-		vent_label.outline_size = 8
+		vent_label.outline_size = 5
 		vent_label.outline_modulate = Color("202520")
-		vent_label.visibility_range_end = 45.0
-		vent_label.visibility_range_end_margin = 6.0
+		vent_label.visibility_range_end = 12.0
+		vent_label.visibility_range_end_margin = 3.0
 		vent_label.visibility_range_fade_mode = GeometryInstance3D.VISIBILITY_RANGE_FADE_SELF
 		stack.add_child(vent_label)
 		add_child(stack)
@@ -809,71 +826,24 @@ func _build_landing_site() -> void:
 	spire_position.y = height_at(spire_position.x, spire_position.z)
 	if DisplayServer.get_name() == "headless":
 		return
-	var pod: MeshInstance3D = MeshInstance3D.new()
-	var pod_mesh: CapsuleMesh = CapsuleMesh.new()
-	pod_mesh.radius = 1.4
-	pod_mesh.height = 5.4
-	pod.mesh = pod_mesh
-	pod.position = landing_position + Vector3(-5.0, 1.5, 0.0)
-	pod.rotation.z = PI / 2.0
-	var pod_material: StandardMaterial3D = StandardMaterial3D.new()
-	pod_material.albedo_color = Color("737b73")
-	pod_material.metallic = 0.28
-	pod_material.roughness = 0.84
-	pod.material_override = pod_material
+	var pod_scene: PackedScene = load("res://assets/models/drop_pod.glb") as PackedScene
+	var pod: Node3D = pod_scene.instantiate() as Node3D
+	pod.name = "DropPod"
+	pod.position = landing_position + Vector3(-5.0, 0.0, 0.0)
+	machine_models.apply_pbr_materials(pod)
 	add_child(pod)
-	for band_x: float in [-6.9, -3.1]:
-		var band: MeshInstance3D = MeshInstance3D.new()
-		var band_mesh: CylinderMesh = CylinderMesh.new()
-		band_mesh.top_radius = 1.45
-		band_mesh.bottom_radius = 1.45
-		band_mesh.height = 0.24
-		band.mesh = band_mesh
-		band.position = landing_position + Vector3(band_x, 1.55, 0.0)
-		band.rotation.z = PI / 2.0
-		var band_material: StandardMaterial3D = StandardMaterial3D.new()
-		band_material.albedo_color = Color("c19543")
-		band_material.metallic = 0.35
-		band_material.roughness = 0.72
-		band.material_override = band_material
-		add_child(band)
-	var hub: MeshInstance3D = MeshInstance3D.new()
-	var hub_mesh: BoxMesh = BoxMesh.new()
-	hub_mesh.size = Vector3(4.0, 2.8, 3.0)
-	hub.mesh = hub_mesh
-	hub.position = landing_position + Vector3(4.0, 1.4, 0.0)
-	var hub_material: StandardMaterial3D = StandardMaterial3D.new()
-	hub_material.albedo_color = Color("687f84")
-	hub_material.metallic = 0.22
-	hub_material.roughness = 0.82
-	hub.material_override = hub_material
+	var hub_scene: PackedScene = load("res://assets/models/hub.glb") as PackedScene
+	var hub: Node3D = hub_scene.instantiate() as Node3D
 	hub.name = "HUB"
+	hub.position = landing_position + Vector3(4.0, 0.0, 0.0)
+	machine_models.apply_pbr_materials(hub)
 	hub.set_meta("interactable", "hub")
 	add_child(hub)
 	var hub_body: StaticBody3D = StaticBody3D.new()
 	var hub_collision: CollisionShape3D = CollisionShape3D.new()
 	var hub_box: BoxShape3D = BoxShape3D.new()
-	hub_box.size = hub_mesh.size
+	hub_box.size = Vector3(4.0, 3.5, 3.0)
 	hub_collision.shape = hub_box
+	hub_collision.position.y = 1.75
 	hub_body.add_child(hub_collision)
 	hub.add_child(hub_body)
-	var screen: MeshInstance3D = MeshInstance3D.new()
-	var screen_mesh: BoxMesh = BoxMesh.new()
-	screen_mesh.size = Vector3(2.15, 1.05, 0.08)
-	screen.mesh = screen_mesh
-	screen.position = hub.position + Vector3(0.0, 0.15, 1.56)
-	var screen_material: StandardMaterial3D = StandardMaterial3D.new()
-	screen_material.albedo_color = Color("35636a")
-	screen_material.emission_enabled = true
-	screen_material.emission = Color("31515a") * 0.25
-	screen_material.roughness = 0.65
-	screen.material_override = screen_material
-	add_child(screen)
-	var terminal_label: Label3D = Label3D.new()
-	terminal_label.text = "HUB"
-	terminal_label.position = hub.position + Vector3(0.0, 0.16, 1.63)
-	terminal_label.font_size = 42
-	terminal_label.pixel_size = 0.008
-	terminal_label.modulate = Color("ced8c9")
-	terminal_label.no_depth_test = false
-	add_child(terminal_label)

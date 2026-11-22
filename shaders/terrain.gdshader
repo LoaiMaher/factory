@@ -13,6 +13,7 @@ uniform sampler2D rock_roughness : repeat_enable, filter_linear_mipmap;
 uniform sampler2D sand_albedo : source_color, repeat_enable, filter_linear_mipmap;
 uniform sampler2D sand_normal : hint_normal, repeat_enable, filter_linear_mipmap;
 uniform sampler2D sand_roughness : repeat_enable, filter_linear_mipmap;
+uniform sampler2D ore_overlay : source_color, filter_linear, repeat_disable;
 uniform float texture_scale = 0.12;
 
 varying vec3 world_position;
@@ -75,10 +76,12 @@ void fragment() {
 	vec3 rock_y = texture(rock_albedo, world_position.xz * tiling).rgb;
 	vec3 rock_z = texture(rock_albedo, world_position.xy * tiling).rgb;
 	vec3 rock_color = rock_x * triplanar_weight.x + rock_y * triplanar_weight.y + rock_z * triplanar_weight.z;
+	rock_color *= mix(vec3(0.84, 0.82, 0.77), vec3(1.0, 0.98, 0.92),
+		smoothstep(100.0, 185.0, world_position.y));
 
 	float slope = 1.0 - clamp(normal.y, 0.0, 1.0);
 	float rock_weight = clamp(max(terrain_masks.b,
-		smoothstep(0.17, 0.62, slope) * 0.92 + smoothstep(112.0, 185.0, world_position.y) * 0.42), 0.0, 1.0);
+		smoothstep(0.13, 0.34, slope) * 0.97 + smoothstep(112.0, 185.0, world_position.y) * 0.42), 0.0, 1.0);
 	float forest_weight = clamp(terrain_masks.r * (0.72 + variation * 0.42), 0.0, 0.92) * (1.0 - rock_weight);
 	float sand_weight = clamp(terrain_masks.g * (0.86 + variation * 0.18), 0.0, 0.9) * (1.0 - rock_weight);
 	float grass_weight = max(0.06, 1.0 - rock_weight - forest_weight - sand_weight);
@@ -86,6 +89,8 @@ void fragment() {
 	vec4 weights = vec4(grass_weight, forest_weight, rock_weight, sand_weight) / weight_total;
 
 	ALBEDO = grass_color * weights.x + forest_color * weights.y + rock_color * weights.z + sand_color * weights.w;
+	vec4 ore_patch = texture(ore_overlay, (world_position.xz + vec2(512.0)) / 1024.0);
+	ALBEDO = mix(ALBEDO, ore_patch.rgb, ore_patch.a);
 	float grass_rough = texture(grass_roughness, ground_uv).r;
 	float forest_rough = texture(forest_roughness, forest_uv).r;
 	float rock_rough = texture(rock_roughness, world_position.xz * tiling).r;

@@ -13,6 +13,7 @@ uniform sampler2D rock_roughness : repeat_enable, filter_linear_mipmap;
 uniform sampler2D sand_albedo : source_color, repeat_enable, filter_linear_mipmap;
 uniform sampler2D sand_normal : hint_normal, repeat_enable, filter_linear_mipmap;
 uniform sampler2D sand_roughness : repeat_enable, filter_linear_mipmap;
+uniform sampler2D ore_overlay : source_color, filter_linear, repeat_disable;
 
 varying vec3 world_position;
 varying vec3 world_normal;
@@ -37,7 +38,7 @@ void fragment() {
 	vec2 sand_uv = world_position.xz * (tiling * 0.94) - vec2(4.3, 19.7);
 	float slope = 1.0 - clamp(normal.y, 0.0, 1.0);
 	float rock_weight = clamp(max(terrain_masks.b,
-		smoothstep(0.17, 0.62, slope) * 0.92 + smoothstep(112.0, 185.0, world_position.y) * 0.42), 0.0, 1.0);
+		smoothstep(0.13, 0.34, slope) * 0.97 + smoothstep(112.0, 185.0, world_position.y) * 0.42), 0.0, 1.0);
 	float forest_weight = clamp(terrain_masks.r * (0.72 + variation * 0.42), 0.0, 0.92) * (1.0 - rock_weight);
 	float sand_weight = clamp(terrain_masks.g * (0.86 + variation * 0.18), 0.0, 0.9) * (1.0 - rock_weight);
 	float grass_weight = max(0.06, 1.0 - rock_weight - forest_weight - sand_weight);
@@ -63,9 +64,14 @@ void fragment() {
 		vec3 rock_color = texture(rock_albedo, world_position.zy * tiling).rgb * triplanar_weight.x;
 		rock_color += texture(rock_albedo, world_position.xz * tiling).rgb * triplanar_weight.y;
 		rock_color += texture(rock_albedo, world_position.xy * tiling).rgb * triplanar_weight.z;
+		rock_color *= mix(vec3(0.84, 0.82, 0.77), vec3(1.0, 0.98, 0.92),
+			smoothstep(100.0, 185.0, world_position.y));
 		albedo += rock_color * weights.z;
 		roughness += texture(rock_roughness, world_position.xz * tiling).r * weights.z;
-		mapped_normal += (texture(rock_normal, world_position.xz * tiling).rgb * 2.0 - 1.0) * weights.z;
+		vec3 rock_normal_map = texture(rock_normal, world_position.zy * tiling).rgb * triplanar_weight.x;
+		rock_normal_map += texture(rock_normal, world_position.xz * tiling).rgb * triplanar_weight.y;
+		rock_normal_map += texture(rock_normal, world_position.xy * tiling).rgb * triplanar_weight.z;
+		mapped_normal += (rock_normal_map * 2.0 - 1.0) * weights.z;
 	}
 	if (weights.w > 0.01) {
 		albedo += texture(sand_albedo, sand_uv).rgb * weights.w;
@@ -74,6 +80,8 @@ void fragment() {
 	}
 
 	ALBEDO = albedo;
+	vec4 ore_patch = texture(ore_overlay, (world_position.xz + vec2(512.0)) / 1024.0);
+	ALBEDO = mix(ALBEDO, ore_patch.rgb, ore_patch.a);
 	ROUGHNESS = roughness;
 	NORMAL_MAP = normalize(mapped_normal) * 0.5 + 0.5;
 	NORMAL_MAP_DEPTH = 0.38;
