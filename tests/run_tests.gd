@@ -18,6 +18,7 @@ func _run_all() -> void:
 	_test_production_and_port_routing()
 	_test_recipe_less_smelter_repro()
 	_test_recipe_defaults_and_input_autoselect()
+	_test_mismatched_input_does_not_halt_production()
 	_test_full_chain_power_and_round_trip()
 	_test_save_migration_and_refunds()
 	_test_diagnostics()
@@ -462,6 +463,37 @@ func _test_recipe_defaults_and_input_autoselect() -> void:
 		and legacy_restored.entities[saved_smelter].recipe_id == "iron_ingot",
 		str(legacy_restored.entities.get(saved_smelter).recipe_id
 			if legacy_restored.entities.has(saved_smelter) else "missing"))
+	_finish_group()
+
+func _test_mismatched_input_does_not_halt_production() -> void:
+	var sim: FactorySim = FactorySim.new()
+	sim.power.bypass = true
+	var storage: int = sim.add_entity("storage", Vector3(0.0, 0.0, -8.0))
+	var smelter: int = sim.add_entity("smelter", Vector3.ZERO, 0.0, {"recipe": "iron_ingot"})
+	var belt_id: int = int(_connect(sim, "belt_mk1", storage, "out0", smelter, "in0").get("id", -1))
+	sim.entities[smelter].input_buffer["iron_ore"] = 2
+	var belt: FactoryEntity = sim.entities[belt_id]
+	belt.belt_items = [{
+		"item": "copper_ore",
+		"s": float(belt.extra["length"]),
+		"born_at": -1.0
+	}]
+	sim.tick(4.1)
+	var mismatch: String = "Input Copper Ore doesn't match recipe Iron Ingot"
+	var smelter_entity: FactoryEntity = sim.entities[smelter]
+	_check("locked mismatch backs up while buffered iron still produces",
+		int(smelter_entity.output_buffer.get("iron_ingot", 0)) == 1
+		and smelter_entity.status == mismatch
+		and sim.diagnostics(smelter).has(mismatch),
+		str([smelter_entity.input_buffer, smelter_entity.output_buffer,
+			smelter_entity.status, sim.diagnostics(smelter)]))
+	sim.remove_entity_with_refund(belt_id)
+	sim.tick(0.05)
+	_check("removing the rejecting belt clears the transient mismatch",
+		not smelter_entity.extra.has("input_mismatch")
+		and not sim.diagnostics(smelter).has(mismatch)
+		and not smelter_entity.status.contains("doesn't match"),
+		str([smelter_entity.extra, smelter_entity.status, sim.diagnostics(smelter)]))
 	_finish_group()
 
 func _belt_items_match(expected: Array, actual: Array) -> bool:

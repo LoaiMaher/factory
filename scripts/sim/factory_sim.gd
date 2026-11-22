@@ -242,7 +242,6 @@ func try_insert(entity_id: int, item_id: String, port_id: String) -> bool:
 			return false
 		entity.recipe_id = compatible_recipe
 		entity.progress = 0.0
-	entity.extra.erase("input_mismatch")
 	var recipe: Dictionary = recipe_definitions[entity.recipe_id]
 	var maximum: int = maxi(10, int(recipe["inputs"].get(item_id, 0)) * 2)
 	if int(entity.input_buffer.get(item_id, 0)) >= maximum:
@@ -262,6 +261,9 @@ func tick(dt: float) -> void:
 		return
 	time += dt
 	power.update_demand(entities)
+	for entity: FactoryEntity in entities.values():
+		if _is_machine(entity.kind):
+			entity.extra.erase("input_mismatch")
 	_update_belts(dt)
 	_update_machines(dt)
 	_update_spires(dt)
@@ -498,6 +500,9 @@ func _update_machines(dt: float) -> void:
 			entity.status = "Running" if vents.has(vent_id) else "Stopped"
 		elif _is_machine(entity.kind):
 			_update_machine(entity, dt)
+			var mismatch_item: String = str(entity.extra.get("input_mismatch", ""))
+			if not mismatch_item.is_empty():
+				entity.status = _input_recipe_mismatch(entity, mismatch_item)
 		elif entity.kind == "splitter":
 			_update_splitter(entity)
 		elif entity.kind == "merger":
@@ -526,10 +531,6 @@ func _update_miner(entity: FactoryEntity, dt: float) -> void:
 
 func _update_machine(entity: FactoryEntity, dt: float) -> void:
 	_push_outputs(entity)
-	var mismatch_item: String = str(entity.extra.get("input_mismatch", ""))
-	if not mismatch_item.is_empty():
-		entity.status = _input_recipe_mismatch(entity, mismatch_item)
-		return
 	if not recipe_definitions.has(entity.recipe_id):
 		entity.status = "No recipe"
 		return
