@@ -13,7 +13,9 @@ var machine_models: MachineModels = MachineModels.new()
 var foliage: FactoryFoliage
 var herd: BorebackHerd
 var hud: FactoryHUD
+var viewmodel: FactoryViewmodel
 var build_system: FactoryBuildSystem = FactoryBuildSystem.new()
+var hotbar_model: HotbarModel = HotbarModel.new()
 var placement: FactoryPlacement = FactoryPlacement.new()
 var belt_start: Dictionary = {}
 var save_system: FactorySaveSystem = FactorySaveSystem.new()
@@ -74,15 +76,21 @@ func _ready() -> void:
 	herd.setup(terrain)
 	add_child(herd)
 	hud = FactoryHUD.new()
-	hud.setup(sim, player)
+	hud.setup(sim, player, hotbar_model, machine_models, visuals)
 	add_child(hud)
 	hud.building_selected.connect(_select_building)
+	hud.hotbar_selected.connect(_select_hotbar)
+	hud.hotbar_changed.connect(_on_hotbar_changed)
 	hud.panel_closed.connect(_on_panel_closed)
 	hud.save_requested.connect(_save_game)
 	hud.load_requested.connect(_load_game)
 	hud.tier_requested.connect(_buy_tier)
 	hud.craft_requested.connect(_hand_craft)
 	hud.quit_requested.connect(_quit_game)
+	viewmodel = FactoryViewmodel.new()
+	viewmodel.name = "Viewmodel"
+	viewmodel.setup(player, hud, visuals, machine_models, hotbar_model, build_system)
+	add_child(viewmodel)
 	var spire_position := Vector3(0.0, terrain.height_at(0.0, -34.0), -34.0)
 	spire_entity_id = sim.add_entity("spire", spire_position)
 	_create_preview()
@@ -110,6 +118,9 @@ func _ready() -> void:
 			break
 		if argument == "--capture-machine-set":
 			call_deferred("_capture_machine_set")
+			break
+		if argument == "--capture-v7":
+			call_deferred("_capture_v7_shots")
 			break
 		if argument.begins_with("--capture-"):
 			call_deferred("_capture_screenshot", argument.trim_prefix("--capture-"))
@@ -148,6 +159,8 @@ func _process(delta: float) -> void:
 				return
 			var item_id: String = str(result["item"])
 			player.inventory[item_id] = int(player.inventory.get(item_id, 0)) + 1
+			hud.refresh_hotbar()
+			viewmodel.play_mining_swing()
 			hand_mine_elapsed -= 0.6
 			hud.show_toast("Hand-mined 1 %s · %d left." % [Items.item_name(item_id), int(result["remaining"])], 1.0)
 			if bool(result["depleted"]):
@@ -233,10 +246,15 @@ func _unhandled_input(event: InputEvent) -> void:
 		elif key == KEY_F9:
 			_load_game()
 			get_viewport().set_input_as_handled()
-		elif key == KEY_0 or key == KEY_Q:
-			build_system.choose("")
+		elif key == KEY_Q:
+			_clear_hotbar_selection()
+			get_viewport().set_input_as_handled()
+		elif key == KEY_0:
+			_select_hotbar(9)
+			get_viewport().set_input_as_handled()
 		elif key >= KEY_1 and key <= KEY_9:
 			_select_hotbar(int(key) - int(KEY_1))
+			get_viewport().set_input_as_handled()
 	elif event is InputEventMouseButton and event.pressed and not hud.panel_is_open() and not hud.build_menu.visible:
 		if event.button_index == MOUSE_BUTTON_WHEEL_UP or event.button_index == MOUSE_BUTTON_WHEEL_DOWN:
 			if event.ctrl_pressed:
@@ -257,23 +275,74 @@ func _configure_actions() -> void:
 		InputMap.action_add_event("interact", interact_event)
 
 func _select_hotbar(index: int) -> void:
-	var choices: Array[String] = _available_buildings()
-	if index >= 0 and index < choices.size():
-		_select_building(choices[index])
+	if hud.has_assignment_target() and (hud.panel_is_open() or hud.build_menu.visible):
+		var was_selected: bool = hotbar_model.selected_index == index
+		if hud.assign_hovered_to_slot(index):
+			var slot: Dictionary = hotbar_model.slot_at(index)
+			if was_selected and hotbar_model.is_locked(index, unlocked_tiers):
+				var tier: int = int(building_definitions.get(str(slot.get("id", "")), {}).get("tier", 0))
+				hud.show_toast("Unlocks at Tier %d" % tier)
+			else:
+				hud.show_toast("Assigned %s to slot %s." % [str(slot.get("id", "")).replace("_", " "),
+					"0" if index == 9 else str(index + 1)])
+		return
+	if hud.panel_is_open() or hud.build_menu.visible:
+		return
+	var result: Dictionary = hotbar_model.select_slot(index, unlocked_tiers)
+	if not bool(result.get("ok", false)):
+		hud.show_toast(str(result.get("reason", "Hotbar slot unavailable")))
+		return
+	_apply_hotbar_selection()
 
 func _cycle_hotbar(step: int) -> void:
-	var choices: Array[String] = _available_buildings()
-	if choices.is_empty():
+	var result: Dictionary = hotbar_model.cycle(step, unlocked_tiers)
+	if not bool(result.get("ok", false)):
+		hud.show_toast(str(result.get("reason", "No unlocked hotbar slots")))
 		return
-	var index: int = choices.find(build_system.selected)
-	_select_building(choices[posmod(index + step, choices.size())])
+	_apply_hotbar_selection()
 
 func _available_buildings() -> Array[String]:
 	var all: Array[String] = []
 	for id: String in building_definitions:
-		if int(building_definitions[id]["tier"]) <= unlocked_tiers and id not in ["spire", "belt_pole"]:
+		if id != "spire":
 			all.append(id)
 	return all
+
+func _apply_hotbar_selection(show_toast: bool = true) -> void:
+	var action: Dictionary = hotbar_model.apply_to_build_system(build_system)
+	if viewmodel != null:
+		viewmodel.set_action(action)
+	placement.preview_initialized = false
+	belt_start.clear()
+	if action.get("type", "") == "building":
+		if player.panel_open and not hud.panel_is_open():
+			player.set_panel_open(false)
+		if show_toast:
+			hud.show_toast("Selected %s · R rotates · click places" % str(action["id"]).replace("_", " "), 3.0)
+	elif action.get("type", "") == "item" and show_toast:
+		hud.show_toast("Holding %s." % Items.item_name(str(action["id"])), 2.0)
+	elif show_toast:
+		hud.show_toast("Empty hands.", 1.5)
+	hud.refresh_hotbar()
+
+func _clear_hotbar_selection() -> void:
+	if hud.panel_is_open() or hud.build_menu.visible:
+		return
+	hotbar_model.selected_index = -1
+	_apply_hotbar_selection()
+
+func _on_hotbar_changed(index: int) -> void:
+	if hotbar_model.selected_index == index:
+		if hotbar_model.is_locked(index, unlocked_tiers):
+			var slot: Dictionary = hotbar_model.slot_at(index)
+			var tier: int = int(building_definitions.get(str(slot.get("id", "")), {}).get("tier", 0))
+			hotbar_model.selected_index = -1
+			hud.show_toast("Unlocks at Tier %d" % tier)
+			_apply_hotbar_selection(false)
+		else:
+			_apply_hotbar_selection(false)
+	else:
+		hud.refresh_hotbar()
 
 func _building_size(kind: String, rotation: int = 0) -> Vector2i:
 	var size_m: Vector3 = BuildingDefs.size_of(kind)
@@ -281,13 +350,24 @@ func _building_size(kind: String, rotation: int = 0) -> Vector2i:
 	return size if posmod(rotation, 2) == 0 else Vector2i(size.y, size.x)
 
 func _select_building(building_id: String) -> void:
-	build_system.choose(building_id)
-	placement.preview_initialized = false
-	if BELT_BUILDINGS.has(building_id):
-		belt_start.clear()
+	var tier: int = int(building_definitions.get(building_id, {}).get("tier", 0))
+	if tier > unlocked_tiers:
+		hud.show_toast("Unlocks at Tier %d" % tier)
+		hud.close_build_menu()
+		if player.panel_open and not hud.panel_is_open():
+			player.set_panel_open(false)
+		return
+	var result: Dictionary = hotbar_model.select_or_assign("building", building_id, unlocked_tiers)
+	if not bool(result.get("ok", false)):
+		hud.show_toast(str(result.get("reason", "Unable to select building")))
+		hud.close_build_menu()
+		if player.panel_open and not hud.panel_is_open():
+			player.set_panel_open(false)
+		return
+	_apply_hotbar_selection()
 	if player.panel_open and not hud.panel_is_open():
 		player.set_panel_open(false)
-	hud.show_toast("Selected %s · R rotates · click places" % building_id.replace("_", " "), 3.0)
+	hud.close_build_menu()
 
 func _toggle_build_menu() -> void:
 	if hud.build_menu.visible:
@@ -759,7 +839,7 @@ func _save_game() -> void:
 		"boulders": terrain.ore_boulders.to_dict(),
 		"foliage": foliage.state.to_dict()
 	}
-	if save_system.save_game(sim, player, unlocked_tiers, world_state):
+	if save_system.save_game(sim, player, unlocked_tiers, world_state, hotbar_model.to_dict()):
 		hud.show_toast("Saved to user://save.json")
 	else:
 		hud.show_toast("Save failed.")
@@ -781,6 +861,10 @@ func _load_saved_game(show_toast: bool) -> bool:
 	player.position = SafePlayerPosition.adjust(restore_position,
 		terrain.height_at(restore_position.x, restore_position.z), FactoryTerrain.WORLD_HALF_EXTENT)
 	unlocked_tiers = int(loaded["unlocked_tiers"])
+	hotbar_model.load_dict(loaded.get("hotbar", {}))
+	if hotbar_model.selected_index >= 0 and hotbar_model.is_locked(hotbar_model.selected_index, unlocked_tiers):
+		hotbar_model.selected_index = -1
+	_apply_hotbar_selection(false)
 	for item_id: String in loaded.get("belt_refund", {}):
 		player.inventory[item_id] = int(player.inventory.get(item_id, 0)) + int(loaded["belt_refund"][item_id])
 	if int(loaded.get("migrated_from", 0)) > 0:
@@ -878,6 +962,77 @@ func _capture_all() -> void:
 	for mode: String in ["spawn", "overview", "forestlake", "mountains", "line", "factory", "orepatch",
 			"boulder-before", "boulder-mid", "boulder-after", "panel"]:
 		await _capture_screenshot(mode)
+	get_tree().quit()
+
+func _capture_v7_shots() -> void:
+	hud.show_toast("", 0.0)
+	if hud.help_panel.visible:
+		hud.toggle_help()
+	player.set_physics_process(false)
+	for _frame: int in range(120):
+		if hud.icon_cache.prepared:
+			break
+		await get_tree().process_frame
+	player.position = Vector3(0.0, terrain.height_at(0.0, 38.0) + 0.1, 38.0)
+	player.rotation.y = 0.0
+	player.pitch = 0.0
+	player.camera.rotation.x = 0.0
+	player.velocity = Vector3.ZERO
+	capture_preview_override = false
+	hotbar_model.selected_index = -1
+	_apply_hotbar_selection(false)
+	await get_tree().create_timer(0.5).timeout
+	_write_capture("empty-hands")
+
+	hotbar_model.select_slot(1, unlocked_tiers)
+	_apply_hotbar_selection(false)
+	await get_tree().create_timer(0.55).timeout
+	_write_capture("selected-hotbar")
+	hotbar_model.assign(7, "item", "iron_ore")
+	player.inventory["iron_ore"] = 40
+	hotbar_model.selected_index = -1
+	hotbar_model.select_slot(7, unlocked_tiers)
+	_apply_hotbar_selection(false)
+	await get_tree().create_timer(0.45).timeout
+	_write_capture("iron-ore-held")
+
+	hotbar_model.assign(8, "item", "iron_plate")
+	player.inventory["iron_plate"] = 80
+	hotbar_model.selected_index = -1
+	hotbar_model.select_slot(8, unlocked_tiers)
+	_apply_hotbar_selection(false)
+	await get_tree().create_timer(0.45).timeout
+	_write_capture("iron-plate-held")
+
+	hotbar_model.selected_index = -1
+	hotbar_model.select_slot(1, unlocked_tiers)
+	_apply_hotbar_selection(false)
+	var ghost_position: Vector3 = Vector3(0.0, terrain.height_at(0.0, 30.0), 30.0)
+	capture_preview_override = true
+	_set_placement_preview("smelter", ghost_position)
+	await get_tree().create_timer(0.45).timeout
+	_write_capture("build-tool-smelter-ghost")
+
+	var boulder_position: Vector3 = terrain.boulder_definitions[0]["position"]
+	capture_preview_override = false
+	hotbar_model.selected_index = -1
+	_apply_hotbar_selection(false)
+	_set_capture_view(boulder_position + Vector3(0.0, 0.9, 0.0),
+		boulder_position + Vector3(0.0, 2.0, 2.8))
+	await get_tree().create_timer(0.2).timeout
+	viewmodel.play_mining_swing()
+	await get_tree().create_timer(0.18).timeout
+	_write_capture("boulder-mining-swing")
+
+	player.position = Vector3(0.0, terrain.height_at(0.0, 38.0) + 0.1, 38.0)
+	player.rotation.y = 0.0
+	player.pitch = 0.0
+	player.camera.rotation.x = 0.0
+	hud.open_inventory()
+	hud._set_assignment_target("item", "iron_ore")
+	await get_tree().create_timer(0.45).timeout
+	_write_capture("inventory-hover-assign")
+	hud.close_panel()
 	get_tree().quit()
 
 func _capture_machine_set() -> void:
@@ -1066,7 +1221,7 @@ func _capture_screenshot(mode: String) -> void:
 func _write_capture(mode: String) -> void:
 	var capture_directory: String = OS.get_environment("FACTORY_CAPTURE_DIR")
 	if capture_directory.is_empty():
-		capture_directory = "/home/ubuntu/specs/shots/v6"
+		capture_directory = "/home/ubuntu/specs/shots/v7"
 	DirAccess.make_dir_recursive_absolute(capture_directory)
 	var filename_mode: String = mode.trim_prefix("v5-") if mode.begins_with("v5-") else mode.trim_prefix("machine-") if mode.begins_with("machine-") else mode
 	var filename: String = "%s/%s.png" % [capture_directory, filename_mode]

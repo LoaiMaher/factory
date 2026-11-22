@@ -8,6 +8,8 @@ signal load_requested
 signal tier_requested(tier_index: int)
 signal craft_requested(recipe_id: String)
 signal quit_requested
+signal hotbar_selected(index: int)
+signal hotbar_changed(index: int)
 
 var sim: FactorySim
 var building_definitions: Dictionary = BuildingDefs.all()
@@ -25,7 +27,13 @@ var panel_body: VBoxContainer
 var build_menu: PanelContainer
 var build_grid: GridContainer
 var help_panel: PanelContainer
-var hotbar_label: Label
+var hotbar: FactoryHotbar
+var hotbar_model: HotbarModel
+var icon_cache: FactoryIconCache
+var icon_machine_models: MachineModels
+var icon_visuals: FactoryVisuals
+var assignment_target: Dictionary = {}
+var assignment_hint: Label
 var entity_status_label: RichTextLabel
 var diagnostic_labels: Array[Label] = []
 var inventory_open: bool = false
@@ -93,11 +101,19 @@ func _ready() -> void:
 	_create_panel()
 	_create_build_menu()
 	_create_help_panel()
+	_create_hotbar()
 	_update_hotbar()
+	call_deferred("_prepare_hotbar_icons")
 
-func setup(factory_sim: FactorySim, factory_player: FactoryPlayer) -> void:
+func setup(factory_sim: FactorySim, factory_player: FactoryPlayer,
+		factory_hotbar: HotbarModel = null, models: MachineModels = null,
+		factory_visuals: FactoryVisuals = null) -> void:
 	sim = factory_sim
 	player = factory_player
+	hotbar_model = factory_hotbar if factory_hotbar != null else HotbarModel.new()
+	icon_cache = FactoryIconCache.new()
+	icon_machine_models = models
+	icon_visuals = factory_visuals
 
 func _process(delta: float) -> void:
 	toast_time = maxf(0.0, toast_time - delta)
@@ -134,6 +150,9 @@ func _process(delta: float) -> void:
 		if help_elapsed >= 20.0:
 			help_panel.visible = false
 			help_elapsed = 0.0
+	if hotbar != null:
+		hotbar.set_interactive(active_panel or build_menu.visible)
+		_update_hotbar()
 
 func show_toast(message: String, duration: float = 4.0) -> void:
 	toast_label.text = message
@@ -205,9 +224,20 @@ func open_inventory() -> void:
 	selected_entity_id = -1
 	_set_panel("Inventory & hand crafting")
 	panel_body.add_child(_label("Starter cargo and delivered items", 15))
-	if player != null:
-		for item_id: String in player.inventory:
-			panel_body.add_child(_label("%s  ×  %d" % [Items.item_name(item_id), int(player.inventory[item_id])], 16))
+	assignment_hint = _label("Hover an item, press 1–0 to assign · Right-click a slot to clear", 13)
+	panel_body.add_child(assignment_hint)
+	var items: Array[String] = []
+	for item_id: String in Items.all():
+		items.append(item_id)
+	items.sort_custom(func(first: String, second: String) -> bool:
+		return Items.item_name(first) < Items.item_name(second))
+	for item_id: String in items:
+		var item_button: Button = Button.new()
+		item_button.text = "%s  ×  %d" % [Items.item_name(item_id), int(player.inventory.get(item_id, 0))]
+		item_button.alignment = HORIZONTAL_ALIGNMENT_LEFT
+		item_button.mouse_entered.connect(_set_assignment_target.bind("item", item_id))
+		item_button.mouse_exited.connect(_clear_assignment_target.bind("item", item_id))
+		panel_body.add_child(item_button)
 	for recipe_id: String in recipe_definitions:
 		var recipe_button: Button = Button.new()
 		recipe_button.text = "Craft %s" % recipe_id.replace("_", " ")
@@ -264,16 +294,24 @@ func show_build_menu(available: Array[String]) -> void:
 	for child: Node in build_grid.get_children():
 		child.queue_free()
 	for building_id: String in available:
+		if not building_definitions.has(building_id):
+			continue
 		var definition: Dictionary = building_definitions[building_id]
 		var button: Button = Button.new()
-		button.text = "%s\n%s" % [building_id.replace("_", " ").capitalize(), str(definition["cost"])]
+		var label: String = building_id.replace("_", " ").capitalize()
+		if int(definition.get("tier", 0)) > unlocked_tiers:
+			label += "\nLOCKED · Tier %d" % int(definition["tier"])
+		button.text = "%s\n%s" % [label, _cost_text(definition.get("cost", {}))]
 		button.custom_minimum_size = Vector2(145.0, 64.0)
+		button.mouse_entered.connect(_set_assignment_target.bind("building", building_id))
+		button.mouse_exited.connect(_clear_assignment_target.bind("building", building_id))
 		button.pressed.connect(_select_building.bind(building_id))
 		build_grid.add_child(button)
 	build_menu.visible = true
 
 func close_build_menu() -> void:
 	build_menu.visible = false
+	assignment_target.clear()
 
 func toggle_help() -> void:
 	help_panel.visible = not help_panel.visible
@@ -285,6 +323,7 @@ func close_panel() -> void:
 	active_panel = false
 	inventory_open = false
 	panel.visible = false
+	assignment_target.clear()
 	player.set_panel_open(false)
 	panel_closed.emit()
 
@@ -294,6 +333,22 @@ func panel_is_open() -> bool:
 func refresh_entity_panel() -> void:
 	if active_panel and selected_entity_id >= 0:
 		open_entity(selected_entity_id)
+
+func has_assignment_target() -> bool:
+	return not assignment_target.is_empty()
+
+func assign_hovered_to_slot(index: int) -> bool:
+	if hotbar_model == null or assignment_target.is_empty():
+		return false
+	if not hotbar_model.assign(index, str(assignment_target.get("type", "")),
+			str(assignment_target.get("id", ""))):
+		return false
+	hotbar_changed.emit(index)
+	_update_hotbar()
+	return true
+
+func refresh_hotbar() -> void:
+	_update_hotbar()
 
 func _create_panel() -> void:
 	panel = PanelContainer.new()
@@ -319,7 +374,7 @@ func _create_build_menu() -> void:
 	root.add_child(build_menu)
 	var wrapper: VBoxContainer = VBoxContainer.new()
 	build_menu.add_child(wrapper)
-	var title: Label = _label("Build menu  ·  click to select", 20)
+	var title: Label = _label("Build menu · click to select · hover and press 1–0 to assign", 18)
 	wrapper.add_child(title)
 	var scroll: ScrollContainer = ScrollContainer.new()
 	scroll.custom_minimum_size = Vector2(500.0, 360.0)
@@ -340,27 +395,52 @@ func _create_help_panel() -> void:
 	guide.add_child(_label("PLANETARY FIELD GUIDE", 19))
 	guide.add_child(_label("WASD move · Shift sprint · Space jump · Mouse look\nE interact / mine · B build · R rotate · F dismantle · X dismantle mode\nTab inventory and craft · F5 save · F9 load · H toggle this guide", 15))
 
+func _create_hotbar() -> void:
+	hotbar = FactoryHotbar.new()
+	hotbar.name = "Hotbar"
+	hotbar.configure(hotbar_model, icon_cache)
+	hotbar.slot_selected.connect(hotbar_selected.emit)
+	hotbar.slot_cleared.connect(_clear_hotbar_slot)
+	root.add_child(hotbar)
+
+func _prepare_hotbar_icons() -> void:
+	if icon_cache == null or icon_machine_models == null or icon_visuals == null:
+		return
+	await icon_cache.prepare(self, icon_machine_models, icon_visuals)
+	_update_hotbar()
+
 func _update_hotbar() -> void:
-	if hotbar_label == null:
-		hotbar_label = Label.new()
-		hotbar_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		hotbar_label.add_theme_font_size_override("font_size", 14)
-		hotbar_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-		hotbar_label.set_anchors_preset(Control.PRESET_BOTTOM_WIDE)
-		hotbar_label.position.y = -25.0
-		hotbar_label.size.y = 24.0
-		root.add_child(hotbar_label)
-	var shortcuts: Array[String] = []
-	var index: int = 1
-	for building_id: String in building_definitions:
-		if int(building_definitions[building_id]["tier"]) <= unlocked_tiers and building_id != "spire" and index <= 9:
-			shortcuts.append("%d %s" % [index, building_id.replace("_", " ").capitalize()])
-			index += 1
-	hotbar_label.text = "%s     B Build   Tab Inventory   R Rotate" % "   ".join(shortcuts)
+	if hotbar != null:
+		hotbar.refresh(hotbar_model, player.inventory if player != null else {}, unlocked_tiers)
+
+func _clear_hotbar_slot(index: int) -> void:
+	if hotbar_model != null and hotbar_model.clear_slot(index):
+		hotbar_changed.emit(index)
+		_update_hotbar()
+
+func _set_assignment_target(slot_type: String, id: String) -> void:
+	assignment_target = {"type": slot_type, "id": id}
+	if assignment_hint != null:
+		var item_name: String = Items.item_name(id) if slot_type == "item" else id.replace("_", " ").capitalize()
+		assignment_hint.text = "Assign %s: press 1–0 · Right-click a slot to clear" % item_name
+
+func _clear_assignment_target(slot_type: String, id: String) -> void:
+	if assignment_target.get("type", "") == slot_type and assignment_target.get("id", "") == id:
+		assignment_target.clear()
+		if assignment_hint != null:
+			assignment_hint.text = "Hover an item, press 1–0 to assign · Right-click a slot to clear"
+
+func _cost_text(cost: Dictionary) -> String:
+	var parts: Array[String] = []
+	for item_id: String in cost:
+		parts.append("%d %s" % [int(cost[item_id]), Items.item_name(item_id)])
+	return "Free" if parts.is_empty() else ", ".join(parts)
 
 func _set_panel(title: String) -> void:
 	for child: Node in panel_body.get_children():
 		child.queue_free()
+	assignment_hint = null
+	assignment_target.clear()
 	entity_status_label = null
 	diagnostic_labels.clear()
 	var heading: Label = _label(title, 22)
