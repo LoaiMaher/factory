@@ -4,6 +4,10 @@ class_name FactoryMachinePanel
 signal items_collected(item_id: String, quantity: int)
 signal inventory_changed
 signal toast_requested(message: String)
+signal output_slot_requested(slot_index: int, item_id: String, quantity: int,
+		button_index: int, shift_pressed: bool)
+signal player_slot_input_requested(slot_index: int, button_index: int,
+		shift_pressed: bool)
 
 var sim: FactorySim
 var player: FactoryPlayer
@@ -16,11 +20,11 @@ var building_icon: TextureRect
 var machine_name: Label
 var status_panel: PanelContainer
 var status_label: Label
+var status_style: StyleBoxFlat
 var recipe_input_slots: Array[Dictionary] = []
 var recipe_output_slots: Array[Dictionary] = []
 var input_cards: Array[Dictionary] = []
-var output_slot: Button
-var output_item_label: Label
+var output_slots: Array[Dictionary] = []
 var progress_bar: ProgressBar
 var cycle_label: Label
 var production_label: Label
@@ -74,6 +78,10 @@ func _build(view: Dictionary) -> void:
 	identity.add_child(machine_name)
 	status_panel = PanelContainer.new()
 	status_panel.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
+	status_style = StyleBoxFlat.new()
+	status_style.set_border_width_all(1)
+	status_style.set_corner_radius_all(5)
+	status_panel.add_theme_stylebox_override("panel", status_style)
 	identity.add_child(status_panel)
 	status_label = _label("", 15)
 	status_panel.add_child(status_label)
@@ -81,24 +89,20 @@ func _build(view: Dictionary) -> void:
 	var recipe_row := HBoxContainer.new()
 	recipe_row.custom_minimum_size.y = 66.0
 	add_child(recipe_row)
-	var recipe_flows := VBoxContainer.new()
-	recipe_flows.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	recipe_row.add_child(recipe_flows)
-	var input_flow := HBoxContainer.new()
-	input_flow.add_theme_constant_override("separation", 6)
-	recipe_flows.add_child(input_flow)
-	var output_flow := HBoxContainer.new()
-	output_flow.add_theme_constant_override("separation", 6)
-	recipe_flows.add_child(output_flow)
-	var input_slot_count: int = maxi(1, int(view.get("input_slot_count", 0)))
-	var output_slot_count: int = maxi(1, int(view.get("output_slot_count", 1)))
+	var recipe_flow := HBoxContainer.new()
+	recipe_flow.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	recipe_flow.add_theme_constant_override("separation", 6)
+	recipe_row.add_child(recipe_flow)
+	var input_slot_count: int = int(view.get("input_slot_count", 0))
+	var output_slot_count: int = maxi(1, maxi(int(view.get("output_slot_count", 1)),
+		(view.get("outputs", []) as Array).size()))
 	for _index: int in range(input_slot_count):
-		recipe_input_slots.append(_make_rate_slot(input_flow))
+		recipe_input_slots.append(_make_rate_slot(recipe_flow))
 	var arrow := _label("→", 22)
 	arrow.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	input_flow.add_child(arrow)
+	recipe_flow.add_child(arrow)
 	for _index: int in range(output_slot_count):
-		recipe_output_slots.append(_make_rate_slot(output_flow))
+		recipe_output_slots.append(_make_rate_slot(recipe_flow))
 	recipe_selector = OptionButton.new()
 	recipe_selector.custom_minimum_size = Vector2(220.0, 38.0)
 	recipe_selector.item_selected.connect(_on_recipe_selected)
@@ -118,16 +122,16 @@ func _build(view: Dictionary) -> void:
 	for _index: int in range(input_slot_count):
 		input_cards.append(_make_input_card(slot_row))
 	var output_column := VBoxContainer.new()
-	output_column.custom_minimum_size = Vector2(100.0, 126.0)
+	output_column.custom_minimum_size.x = mini(output_slot_count, 2) * 72.0
 	slot_row.add_child(output_column)
-	output_item_label = _label("Output", 12)
-	output_column.add_child(output_item_label)
-	output_slot = Button.new()
-	output_slot.custom_minimum_size = Vector2(92.0, 78.0)
-	output_slot.expand_icon = true
-	output_slot.add_theme_constant_override("icon_max_width", 56)
-	output_slot.pressed.connect(_take_output)
-	output_column.add_child(output_slot)
+	output_column.add_child(_label("Output", 12))
+	var output_slot_row := GridContainer.new()
+	output_slot_row.columns = 2
+	output_slot_row.add_theme_constant_override("h_separation", 4)
+	output_slot_row.add_theme_constant_override("v_separation", 4)
+	output_column.add_child(output_slot_row)
+	for index: int in range(output_slot_count):
+		output_slots.append(_make_output_slot(output_slot_row, index))
 	var take_button := Button.new()
 	take_button.text = "Take"
 	take_button.pressed.connect(_take_output)
@@ -148,7 +152,6 @@ func _build(view: Dictionary) -> void:
 	why_label.clip_text = true
 	why_label.autowrap_mode = TextServer.AUTOWRAP_OFF
 	why_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	production_column.add_child(why_label)
 
 	var inventory_column := VBoxContainer.new()
 	inventory_column.custom_minimum_size.x = 496.0
@@ -160,6 +163,7 @@ func _build(view: Dictionary) -> void:
 	inventory_column.add_child(inventory_grid)
 	if player != null:
 		inventory_grid.configure(player.inventory, icon_cache)
+	add_child(why_label)
 
 func _load_recipe_options(view: Dictionary) -> void:
 	recipe_selector.clear()
@@ -184,12 +188,8 @@ func _update_header(view: Dictionary) -> void:
 			tint = Color("e15d51")
 		"idle":
 			tint = Color("9da6a3")
-	var style := StyleBoxFlat.new()
-	style.bg_color = tint.darkened(0.72)
-	style.border_color = tint
-	style.set_border_width_all(1)
-	style.set_corner_radius_all(5)
-	status_panel.add_theme_stylebox_override("panel", style)
+	status_style.bg_color = tint.darkened(0.72)
+	status_style.border_color = tint
 
 func _update_recipe(view: Dictionary) -> void:
 	var inputs: Array = view.get("inputs", [])
@@ -241,24 +241,24 @@ func _update_slots(view: Dictionary) -> void:
 			int(item.get("count", 0)), int(item.get("maximum", 0))]
 		(card["rate"] as Label).text = "needs %.0f/min, getting %.0f/min" % [
 			float(item.get("needs_per_min", 0.0)), float(item.get("getting_per_min", 0.0))]
-	var output_buffer: Dictionary = view.get("output_buffer", {})
-	var output_item: String = ""
-	for item_variant: Variant in output_buffer:
-		if int(output_buffer[item_variant]) > 0:
-			output_item = str(item_variant)
-			break
-	if output_item.is_empty():
-		var outputs: Array = view.get("outputs", [])
-		if not outputs.is_empty():
-			output_item = str(outputs[0].get("item_id", ""))
-	var output_count: int = int(output_buffer.get(output_item, 0))
-	output_item_label.text = Items.item_name(output_item) if not output_item.is_empty() else "Output"
-	output_slot.icon = icon_cache.get_icon("item", output_item) \
-		if icon_cache != null and not output_item.is_empty() else null
-	output_slot.text = "×%d" % output_count if output_count > 0 else ""
-	output_slot.tooltip_text = "%s · %d" % [
-		Items.item_name(output_item), output_count] if not output_item.is_empty() else "No output"
-	output_slot.disabled = output_count <= 0
+	var outputs: Array = view.get("outputs", [])
+	for index: int in range(output_slots.size()):
+		var slot: Dictionary = output_slots[index]
+		var button: Button = slot["button"]
+		var visible: bool = index < outputs.size()
+		button.visible = visible or index == 0
+		var output_item: Dictionary = outputs[index] if visible else {}
+		var item_id: String = str(output_item.get("item_id", ""))
+		var count: int = int(output_item.get("count", 0))
+		slot["item_id"] = item_id
+		slot["count"] = count
+		button.icon = icon_cache.get_icon("item", item_id) \
+			if icon_cache != null and not item_id.is_empty() else null
+		button.text = "×%d" % count if count > 0 else ""
+		button.tooltip_text = "%s · %d" % [Items.item_name(item_id), count] \
+			if not item_id.is_empty() else "No output"
+		button.disabled = item_id.is_empty() or count <= 0
+		output_slots[index] = slot
 
 func _update_progress_and_rates(view: Dictionary) -> void:
 	var cycle_seconds: float = float(view.get("cycle_seconds", 0.0))
@@ -284,8 +284,8 @@ func _update_power_and_diagnostics(view: Dictionary) -> void:
 		power_label.text = "Draw %.1f / %.1f MW · %s" % [
 			float(view.get("power_draw_mw", 0.0)), float(view.get("power_need_mw", 0.0)),
 			str(view.get("power_state", ""))]
-	why_label.text = str(view.get("why", ""))
-	why_label.tooltip_text = why_label.text
+	why_label.text = "Why: %s" % str(view.get("why", ""))
+	why_label.tooltip_text = str(view.get("why", ""))
 
 func _make_rate_slot(parent: HBoxContainer) -> Dictionary:
 	var container := VBoxContainer.new()
@@ -305,7 +305,7 @@ func _make_rate_slot(parent: HBoxContainer) -> Dictionary:
 
 func _make_input_card(parent: HBoxContainer) -> Dictionary:
 	var card := PanelContainer.new()
-	card.custom_minimum_size = Vector2(150.0, 126.0)
+	card.custom_minimum_size = Vector2(160.0, 126.0)
 	var content := VBoxContainer.new()
 	content.add_theme_constant_override("separation", 2)
 	card.add_child(content)
@@ -330,8 +330,30 @@ func _make_input_card(parent: HBoxContainer) -> Dictionary:
 	return {"panel": card, "icon": icon, "name": name_label,
 		"count": count_label, "rate": rate_label}
 
+func _make_output_slot(parent: GridContainer, slot_index: int) -> Dictionary:
+	var button := Button.new()
+	button.custom_minimum_size = Vector2(68.0, 76.0)
+	button.expand_icon = true
+	button.add_theme_constant_override("icon_max_width", 50)
+	button.gui_input.connect(_on_output_slot_input.bind(slot_index))
+	parent.add_child(button)
+	return {"button": button, "item_id": "", "count": 0}
+
+func _on_output_slot_input(event: InputEvent, slot_index: int) -> void:
+	if not event is InputEventMouseButton or not event.pressed \
+			or event.button_index not in [MOUSE_BUTTON_LEFT, MOUSE_BUTTON_RIGHT]:
+		return
+	if slot_index < 0 or slot_index >= output_slots.size():
+		return
+	var slot: Dictionary = output_slots[slot_index]
+	output_slot_requested.emit(slot_index, str(slot.get("item_id", "")),
+		int(slot.get("count", 0)), int(event.button_index), event.shift_pressed)
+	(slot["button"] as Button).accept_event()
+
 func _on_inventory_slot_input(slot_index: int, button_index: int, shift_pressed: bool) -> void:
-	if not shift_pressed or button_index != MOUSE_BUTTON_LEFT or player == null or sim == null:
+	if not shift_pressed or button_index != MOUSE_BUTTON_LEFT \
+			or player == null or sim == null:
+		player_slot_input_requested.emit(slot_index, button_index, shift_pressed)
 		return
 	if creative_mode_active:
 		toast_requested.emit("Creative items can't be inserted into machines")
@@ -346,13 +368,17 @@ func _on_inventory_slot_input(slot_index: int, button_index: int, shift_pressed:
 	var moved: int = sim.insert_input_items(entity_id, item_id, quantity)
 	if moved <= 0:
 		return
-	player.inventory.remove(item_id, moved)
+	player.inventory.take_slot(slot_index, moved)
 	inventory_grid.configure(player.inventory, icon_cache)
 	inventory_changed.emit()
 	refresh()
 
 func set_creative_mode(active: bool) -> void:
 	creative_mode_active = active
+
+func refresh_inventory() -> void:
+	if player != null and inventory_grid != null:
+		inventory_grid.configure(player.inventory, icon_cache)
 
 func _take_output() -> void:
 	if player == null or sim == null:

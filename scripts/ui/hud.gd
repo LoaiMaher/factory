@@ -61,6 +61,7 @@ var storage_contents_snapshot: Dictionary = {}
 var storage_slot_stacks: Array[Dictionary] = []
 var inventory_category_filter: String = "all"
 var inventory_grid: FactoryInventoryPanel
+var craft_list: VBoxContainer
 var storage_grid: FactoryInventoryPanel
 var machine_panel: FactoryMachinePanel
 var machine_refresh_elapsed: float = 0.0
@@ -299,6 +300,8 @@ func _open_machine_panel(entity_id: int) -> void:
 	machine_panel.items_collected.connect(world_item_collected.emit)
 	machine_panel.inventory_changed.connect(refresh_hotbar)
 	machine_panel.toast_requested.connect(show_toast)
+	machine_panel.output_slot_requested.connect(_on_machine_output_slot_requested)
+	machine_panel.player_slot_input_requested.connect(_on_player_slot_input)
 	if not machine_panel.configure(sim, player, icon_cache, entity_id):
 		machine_panel.free()
 		machine_panel = null
@@ -350,31 +353,37 @@ func open_inventory() -> void:
 	inventory_grid.configure(player.inventory, icon_cache, inventory_category_filter)
 	var craft_column := VBoxContainer.new()
 	craft_column.custom_minimum_size.x = 440.0
+	craft_column.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	craft_column.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	content.add_child(craft_column)
 	craft_column.add_child(_label("Hand crafting", 19))
+	var craft_scroll := ScrollContainer.new()
+	craft_scroll.custom_minimum_size = Vector2(440.0, 560.0)
+	craft_scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	craft_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	craft_column.add_child(craft_scroll)
+	craft_list = VBoxContainer.new()
+	craft_list.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	craft_list.add_theme_constant_override("separation", 3)
+	craft_scroll.add_child(craft_list)
 	var items: Array[String] = []
 	for item_id: String in Items.all():
 		items.append(item_id)
 	items.sort()
 	if creative_mode_active:
-		craft_column.add_child(_label("Creative items · click for one full stack", 14))
+		craft_list.add_child(_label("Creative items · click for one full stack", 14))
 	for item_id: String in items:
 		if creative_mode_active:
 			var item_button := Button.new()
 			item_button.text = Items.item_name(item_id)
 			item_button.icon = icon_cache.get_icon("item", item_id) if icon_cache != null else null
-			item_button.pressed.connect(creative_item_requested.emit.bind(item_id))
-			craft_column.add_child(item_button)
+			item_button.custom_minimum_size.y = 34.0
+			item_button.add_theme_constant_override("icon_max_width", 24)
+			item_button.pressed.connect(_request_creative_item.bind(item_id))
+			craft_list.add_child(item_button)
 	for recipe_id: String in recipe_definitions:
 		var recipe: Dictionary = recipe_definitions[recipe_id]
-		var output_id: String = str(recipe["outputs"].keys()[0])
-		var output_count: int = int(recipe["outputs"][output_id])
-		var recipe_button := Button.new()
-		recipe_button.text = "Craft %s × %d" % [Items.item_name(output_id), output_count]
-		recipe_button.icon = icon_cache.get_icon("item", output_id) if icon_cache != null else null
-		recipe_button.tooltip_text = "%s → %s" % [str(recipe["inputs"]), Items.description(output_id)]
-		recipe_button.pressed.connect(_request_craft.bind(recipe_id))
-		craft_column.add_child(recipe_button)
+		craft_list.add_child(_make_craft_recipe_row(recipe_id, recipe))
 	var close := Button.new()
 	close.text = "Close  [Tab / Esc]"
 	close.pressed.connect(close_panel)
@@ -402,6 +411,37 @@ func _on_inventory_slot_hovered(slot_index: int, entered: bool) -> void:
 		_set_assignment_target("item", item_id)
 	else:
 		_clear_assignment_target("item", item_id)
+
+func _on_machine_output_slot_requested(slot_index: int, item_id: String,
+		displayed_count: int, button_index: int, shift_pressed: bool) -> void:
+	if sim == null or player == null or machine_panel == null \
+			or item_id.is_empty() or displayed_count <= 0 \
+			or not sim.entities.has(selected_entity_id):
+		return
+	if shift_pressed:
+		var transfer_count: int = player.inventory.fit_count(item_id, displayed_count)
+		var moved: int = sim.take_output_items(selected_entity_id, item_id, transfer_count)
+		if moved > 0:
+			player.inventory.add(item_id, moved)
+			world_item_collected.emit(item_id, moved)
+			machine_panel.inventory_grid.configure(player.inventory, icon_cache)
+			machine_panel.inventory_changed.emit()
+		machine_panel.refresh()
+		return
+	if not cursor_stack.is_empty():
+		return
+	var stack_limit: int = Items.stack_size(item_id)
+	var take_count: int = displayed_count
+	if button_index == MOUSE_BUTTON_RIGHT:
+		take_count = ceili(float(displayed_count) / 2.0)
+	take_count = mini(take_count, stack_limit)
+	var taken: int = sim.take_output_items(selected_entity_id, item_id, take_count)
+	if taken <= 0:
+		return
+	cursor_stack = {"item_id": item_id, "count": taken}
+	_set_cursor_origin("machine", slot_index, selected_entity_id, item_id)
+	_update_cursor_stack_visual()
+	machine_panel.refresh()
 
 func _on_player_slot_input(slot_index: int, button_index: int, shift_pressed: bool) -> void:
 	if slot_index >= player.inventory.slots.size():
@@ -436,7 +476,7 @@ func _on_player_slot_input(slot_index: int, button_index: int, shift_pressed: bo
 		var moved_count: int = held_count
 		if not cursor_stack.is_empty() and str(cursor_stack.get("item_id", "")) == held_item_id:
 			moved_count -= int(cursor_stack.get("count", 0))
-		if cursor_origin_type == "storage" and moved_count > 0:
+		if cursor_origin_type in ["storage", "machine"] and moved_count > 0:
 			world_item_collected.emit(held_item_id, moved_count)
 		if not cursor_stack.is_empty():
 			if str(cursor_stack.get("item_id", "")) != held_item_id:
@@ -445,6 +485,8 @@ func _on_player_slot_input(slot_index: int, button_index: int, shift_pressed: bo
 		else:
 			_clear_cursor_origin()
 	_refresh_open_inventory()
+	if machine_panel != null and is_instance_valid(machine_panel):
+		machine_panel.refresh_inventory()
 	refresh_hotbar()
 
 func _place_one_in_player_slot(slot_index: int) -> void:
@@ -458,7 +500,7 @@ func _place_one_in_player_slot(slot_index: int) -> void:
 		slot_index, {"item_id": item_id, "count": 1})
 	if remainder.is_empty():
 		cursor_stack["count"] = int(cursor_stack["count"]) - 1
-		if cursor_origin_type == "storage":
+		if cursor_origin_type in ["storage", "machine"]:
 			world_item_collected.emit(item_id, 1)
 		if int(cursor_stack["count"]) <= 0:
 			cursor_stack.clear()
@@ -467,6 +509,8 @@ func _place_one_in_player_slot(slot_index: int) -> void:
 func _refresh_open_inventory() -> void:
 	if inventory_grid != null and is_instance_valid(inventory_grid):
 		inventory_grid.configure(player.inventory, icon_cache, inventory_category_filter)
+	if inventory_open:
+		_refresh_crafting_affordability()
 	if storage_open:
 		_refresh_storage_grid()
 
@@ -662,6 +706,13 @@ func _return_cursor_stack() -> void:
 			var remainder: int = player.inventory.add(item_id, quantity)
 			player.inventory.add_restored(item_id, remainder)
 			world_item_collected.emit(item_id, quantity)
+	elif cursor_origin_type == "machine":
+		var item_id: String = str(pending.get("item_id", ""))
+		var quantity: int = int(pending.get("count", 0))
+		var remainder: int = player.inventory.add(item_id, quantity)
+		if remainder > 0:
+			player.inventory.add_restored(item_id, remainder)
+		world_item_collected.emit(item_id, quantity)
 	elif cursor_origin_type == "player" and cursor_origin_slot >= 0:
 		pending = player.inventory.place_into(cursor_origin_slot, pending)
 		if not pending.is_empty():
@@ -676,6 +727,8 @@ func _return_cursor_stack() -> void:
 	_clear_cursor_origin()
 	if storage_open:
 		_refresh_storage_grid()
+	if machine_panel != null and is_instance_valid(machine_panel):
+		machine_panel.refresh_inventory()
 	refresh_hotbar()
 
 func discard_cursor_stack() -> void:
@@ -1079,6 +1132,10 @@ func set_creative_mode(active: bool) -> void:
 	if creative_mode_label != null:
 		creative_mode_label.visible = active
 	_update_hotbar()
+	if inventory_open:
+		_refresh_open_inventory()
+	if machine_panel != null:
+		machine_panel.refresh_inventory()
 
 func _clear_hotbar_slot(index: int) -> void:
 	if hotbar_model != null and hotbar_model.clear_slot(index):
@@ -1231,3 +1288,93 @@ func _select_building(building_id: String) -> void:
 
 func _request_craft(recipe_id: String) -> void:
 	craft_requested.emit(recipe_id)
+	_refresh_open_inventory()
+	refresh_hotbar()
+
+func _request_creative_item(item_id: String) -> void:
+	creative_item_requested.emit(item_id)
+	_refresh_open_inventory()
+	refresh_hotbar()
+
+func _make_craft_recipe_row(recipe_id: String, recipe: Dictionary) -> Button:
+	var output_id: String = str(recipe["outputs"].keys()[0])
+	var output_count: int = int(recipe["outputs"][output_id])
+	var recipe_button := Button.new()
+	recipe_button.custom_minimum_size.y = 56.0
+	recipe_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	recipe_button.set_meta("recipe_inputs", recipe.get("inputs", {}).duplicate(true))
+	recipe_button.tooltip_text = "%s → %s" % [
+		str(recipe.get("inputs", {})), Items.description(output_id)]
+	recipe_button.pressed.connect(_request_craft.bind(recipe_id))
+	var row := HBoxContainer.new()
+	row.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	row.offset_left = 6.0
+	row.offset_top = 3.0
+	row.offset_right = -6.0
+	row.offset_bottom = -3.0
+	row.add_theme_constant_override("separation", 8)
+	row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	recipe_button.add_child(row)
+	var output_icon := TextureRect.new()
+	output_icon.custom_minimum_size = Vector2(44.0, 44.0)
+	output_icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	output_icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	output_icon.texture = icon_cache.get_icon("item", output_id) \
+		if icon_cache != null else null
+	output_icon.tooltip_text = Items.item_name(output_id)
+	output_icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	row.add_child(output_icon)
+	var details := VBoxContainer.new()
+	details.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	details.add_child(_label("%s × %d" % [
+		Items.item_name(output_id), output_count], 14))
+	var input_row := HBoxContainer.new()
+	input_row.add_theme_constant_override("separation", 5)
+	details.add_child(input_row)
+	row.add_child(details)
+	var affordable: bool = creative_mode_active \
+		or player.inventory.can_afford(recipe.get("inputs", {}))
+	var input_color: Color = Color("d8dfd7") if affordable else Color("df7169")
+	var input_icons: Array[TextureRect] = []
+	var input_amounts: Array[Label] = []
+	for input_variant: Variant in recipe.get("inputs", {}):
+		var item_id: String = str(input_variant)
+		var input_stack := HBoxContainer.new()
+		input_stack.add_theme_constant_override("separation", 2)
+		input_stack.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		var input_icon := TextureRect.new()
+		input_icon.custom_minimum_size = Vector2(20.0, 20.0)
+		input_icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		input_icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+		input_icon.texture = icon_cache.get_icon("item", item_id) \
+			if icon_cache != null else null
+		input_icon.modulate = input_color
+		input_icon.tooltip_text = Items.item_name(item_id)
+		input_icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		input_icons.append(input_icon)
+		input_stack.add_child(input_icon)
+		var amount := _label("×%d" % int(recipe["inputs"][input_variant]), 11)
+		amount.add_theme_color_override("font_color", input_color)
+		input_amounts.append(amount)
+		input_stack.add_child(amount)
+		input_row.add_child(input_stack)
+	recipe_button.set_meta("input_icons", input_icons)
+	recipe_button.set_meta("input_amounts", input_amounts)
+	return recipe_button
+
+func _refresh_crafting_affordability() -> void:
+	if craft_list == null or not is_instance_valid(craft_list) or player == null:
+		return
+	for child: Node in craft_list.get_children():
+		if not child is Button or not child.has_meta("recipe_inputs"):
+			continue
+		var recipe_button: Button = child as Button
+		var recipe_inputs: Dictionary = recipe_button.get_meta("recipe_inputs", {})
+		var color: Color = Color("d8dfd7") \
+			if creative_mode_active or player.inventory.can_afford(recipe_inputs) \
+			else Color("df7169")
+		var input_icons: Array = recipe_button.get_meta("input_icons", [])
+		var input_amounts: Array = recipe_button.get_meta("input_amounts", [])
+		for index: int in range(mini(input_icons.size(), input_amounts.size())):
+			(input_icons[index] as TextureRect).modulate = color
+			(input_amounts[index] as Label).add_theme_color_override("font_color", color)

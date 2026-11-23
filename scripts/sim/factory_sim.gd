@@ -385,11 +385,15 @@ func machine_view(entity_id: int) -> Dictionary:
 	var input_items: Array[Dictionary] = []
 	var output_items: Array[Dictionary] = []
 	var max_input_slots: int = recipe_inputs.size()
-	var max_output_slots: int = recipe_outputs.size()
+	var possible_output_ids: Dictionary = {}
+	for item_variant: Variant in recipe_outputs:
+		possible_output_ids[str(item_variant)] = true
 	for recipe_id: String in Recipes.for_machine(entity.kind):
 		var other_recipe: Dictionary = recipe_definitions.get(recipe_id, {})
 		max_input_slots = maxi(max_input_slots, other_recipe.get("inputs", {}).size())
-		max_output_slots = maxi(max_output_slots, other_recipe.get("outputs", {}).size())
+		for item_variant: Variant in other_recipe.get("outputs", {}):
+			possible_output_ids[str(item_variant)] = true
+	var max_output_slots: int = possible_output_ids.size()
 	var maximum_rate: float = 0.0
 	for item_variant: Variant in recipe_inputs:
 		var item_id: String = str(item_variant)
@@ -464,8 +468,11 @@ func machine_view(entity_id: int) -> Dictionary:
 	elif status_text == "No recipe":
 		display_status = "No recipe"
 	var why_lines: Array[String] = diagnostics(entity_id)
-	var progress_ratio: float = clampf(entity.progress / cycle_seconds, 0.0, 1.0) \
-		if cycle_seconds > 0.0 else 0.0
+	var progress_ratio: float = 0.0
+	if entity.kind == "miner_mk1":
+		progress_ratio = clampf(entity.progress, 0.0, 1.0)
+	elif cycle_seconds > 0.0:
+		progress_ratio = clampf(entity.progress / cycle_seconds, 0.0, 1.0)
 	var power_state: String = "Free power (dev bypass)" if power.bypass else \
 		("No connected network" if network_id < 0 else
 			"Network %d · %.1f / %.1f MW" % [network_id, supply, demand])
