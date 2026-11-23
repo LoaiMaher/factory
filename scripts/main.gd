@@ -1016,6 +1016,8 @@ func _save_game() -> void:
 			hud.show_toast("Save skipped · couldn't back up the existing save.", 6.0)
 			return
 		save_backup_pending = false
+	if hud != null:
+		hud._return_cursor_stack()
 	var world_state: Dictionary = {
 		"boulders": terrain.ore_boulders.to_dict(),
 		"foliage": foliage.state.to_dict()

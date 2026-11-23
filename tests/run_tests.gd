@@ -45,6 +45,7 @@ func _run_all() -> void:
 	_test_inventory_model()
 	_test_inventory_gameplay()
 	_test_inventory_save_migration()
+	_test_cursor_stack_save()
 	print("RESULT: %d/%d test groups passed" % [passed_groups, groups])
 	quit(1 if failures > 0 else 0)
 
@@ -344,6 +345,46 @@ func _test_inventory_save_migration() -> void:
 	DirAccess.remove_absolute(ProjectSettings.globalize_path(save_system.save_path))
 	player.free()
 	restored_player.free()
+	_finish_group()
+
+func _test_cursor_stack_save() -> void:
+	var main_script: Script = load("res://scripts/main.gd") as Script
+	var app: Node = main_script.new() as Node
+	var sim: FactorySim = app.get("sim") as FactorySim
+	var player := FactoryPlayer.new()
+	get_root().add_child(player)
+	player.inventory = FrontierInventory.from_totals({"iron_ore": 10})
+	var hud := FactoryHUD.new()
+	hud.setup(sim, player)
+	get_root().add_child(hud)
+	hud.cursor_stack = player.inventory.take_slot(0, 10)
+	hud._set_cursor_origin("player", 0, -1, "iron_ore")
+	var terrain := FactoryTerrain.new()
+	terrain._configure_noise()
+	terrain._build_boulders()
+	var foliage := FactoryFoliage.new()
+	var save_system := FactorySaveSystem.new()
+	save_system.save_path = "user://cursor_stack_save_test.json"
+	app.set("player", player)
+	app.set("hud", hud)
+	app.set("terrain", terrain)
+	app.set("foliage", foliage)
+	app.set("save_system", save_system)
+	app.call("_save_game")
+	var restored_player := FactoryPlayer.new()
+	get_root().add_child(restored_player)
+	var loaded: Dictionary = save_system.load_game(sim, restored_player)
+	_check("saving while holding a cursor stack restores it before serialization",
+		not loaded.is_empty() and hud.cursor_stack.is_empty()
+		and restored_player.inventory.count("iron_ore") == 10,
+		str([hud.cursor_stack, restored_player.inventory.totals()]))
+	DirAccess.remove_absolute(ProjectSettings.globalize_path(save_system.save_path))
+	restored_player.free()
+	hud.free()
+	player.free()
+	terrain.free()
+	foliage.free()
+	app.free()
 	_finish_group()
 
 func _test_placement_and_ports() -> void:
