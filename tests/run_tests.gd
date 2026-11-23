@@ -51,6 +51,7 @@ func _run_all() -> void:
 	_test_storage_origin_return_gain()
 	_test_refund_preview()
 	_test_storage_grid_mapping_refresh()
+	_test_storage_stack_withdrawals()
 	print("RESULT: %d/%d test groups passed" % [passed_groups, groups])
 	quit(1 if failures > 0 else 0)
 
@@ -521,14 +522,18 @@ func _test_storage_grid_mapping_refresh() -> void:
 	hud.setup(sim, player)
 	get_root().add_child(hud)
 	hud.open_entity(storage_id)
-	var initial_slot_item: String = hud.storage_slot_items[0]
+	var initial_slot_item: String = str(hud.storage_slot_stacks[0].get("item_id", ""))
 	sim.tick(0.05)
 	hud._process(0.016)
 	var rendered_slot_id: int = hud.storage_grid.get_child(0).get_instance_id()
 	hud._refresh_storage_grid()
 	var nodes_preserved: bool = hud.storage_grid.get_child(0).get_instance_id() == rendered_slot_id
-	var copper_slot: int = hud.storage_slot_items.find("copper_ore")
-	var displayed_item: String = hud.storage_slot_items[copper_slot] \
+	var copper_slot: int = -1
+	for index: int in range(hud.storage_slot_stacks.size()):
+		if str(hud.storage_slot_stacks[index].get("item_id", "")) == "copper_ore":
+			copper_slot = index
+			break
+	var displayed_item: String = str(hud.storage_slot_stacks[copper_slot].get("item_id", "")) \
 		if copper_slot >= 0 else ""
 	hud._on_storage_slot_input(copper_slot, MOUSE_BUTTON_LEFT, false)
 	_check("storage contents refresh keeps nodes stable and clicks withdraw the displayed belt item",
@@ -537,8 +542,48 @@ func _test_storage_grid_mapping_refresh() -> void:
 		and nodes_preserved and displayed_item == "copper_ore"
 		and initial_slot_item == "iron_ore"
 		and hud.cursor_stack.get("item_id", "") == "copper_ore",
-		str([belt_result, hud.storage_slot_items, hud.cursor_stack,
+		str([belt_result, hud.storage_slot_stacks, hud.cursor_stack,
 			sim.entities[storage_id].input_buffer, nodes_preserved]))
+	hud.free()
+	player.free()
+	_finish_group()
+
+func _test_storage_stack_withdrawals() -> void:
+	var sim := FactorySim.new()
+	var storage_id: int = sim.add_entity("storage", Vector3.ZERO)
+	sim.entities[storage_id].input_buffer["iron_ore"] = 100
+	var player := FactoryPlayer.new()
+	get_root().add_child(player)
+	var hud := FactoryHUD.new()
+	hud.setup(sim, player)
+	get_root().add_child(hud)
+	hud.open_entity(storage_id)
+
+	var displayed_36: bool = int(hud.storage_slot_stacks[1].get("count", 0)) == 36
+	hud._on_storage_slot_input(1, MOUSE_BUTTON_LEFT, false)
+	var left_count: int = int(hud.cursor_stack.get("count", 0))
+	var left_total: int = int(sim.entities[storage_id].input_buffer.get("iron_ore", 0))
+	var left_capped: bool = left_count <= Items.stack_size("iron_ore")
+	hud._return_cursor_stack()
+
+	hud._on_storage_slot_input(0, MOUSE_BUTTON_RIGHT, false)
+	var right_count: int = int(hud.cursor_stack.get("count", 0))
+	var right_total: int = int(sim.entities[storage_id].input_buffer.get("iron_ore", 0))
+	var right_capped: bool = right_count <= Items.stack_size("iron_ore")
+	hud._return_cursor_stack()
+
+	var shift_slot_count: int = int(hud.storage_slot_stacks[1].get("count", 0))
+	hud._on_storage_slot_input(1, MOUSE_BUTTON_LEFT, true)
+	var shift_inventory_count: int = player.inventory.count("iron_ore")
+	var shift_storage_count: int = int(sim.entities[storage_id].input_buffer.get("iron_ore", 0))
+	_check("storage withdrawals use only the clicked rendered stack and cap cursor stacks",
+		displayed_36 and left_count == 36 and left_total == 64 and left_capped
+		and right_count == 32 and right_total == 68 and right_capped
+		and shift_slot_count == 36 and shift_inventory_count == 36
+		and shift_storage_count == 64 and hud.cursor_stack.is_empty(),
+		str([displayed_36, left_count, left_total, left_capped,
+			right_count, right_total, right_capped, shift_slot_count,
+			shift_inventory_count, shift_storage_count]))
 	hud.free()
 	player.free()
 	_finish_group()

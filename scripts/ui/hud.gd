@@ -58,7 +58,7 @@ var loading_graphics_settings: bool = false
 var storage_open: bool = false
 var storage_snapshot_valid: bool = false
 var storage_contents_snapshot: Dictionary = {}
-var storage_slot_items: Array[String] = []
+var storage_slot_stacks: Array[Dictionary] = []
 var inventory_category_filter: String = "all"
 var inventory_grid: FactoryInventoryPanel
 var storage_grid: FactoryInventoryPanel
@@ -384,32 +384,31 @@ func _on_player_slot_input(slot_index: int, button_index: int, shift_pressed: bo
 		return
 	if slot_index >= player.inventory.capacity and not cursor_stack.is_empty():
 		return
-	if button_index == MOUSE_BUTTON_RIGHT:
-		if cursor_stack.is_empty():
-			cursor_stack = player.inventory.split(slot_index)
+	if cursor_stack.is_empty():
+		if quantity > 0:
+			var stack_limit: int = Items.stack_size(item_id)
+			var take_count: int = mini(quantity, stack_limit)
+			if button_index == MOUSE_BUTTON_RIGHT:
+				take_count = mini(ceili(float(quantity) / 2.0), stack_limit)
+			cursor_stack = player.inventory.take_slot(slot_index, take_count)
 			_set_cursor_origin("player", slot_index, -1, item_id)
-		else:
-			_place_one_in_player_slot(slot_index)
+	elif button_index == MOUSE_BUTTON_RIGHT:
+		_place_one_in_player_slot(slot_index)
 	else:
-		if cursor_stack.is_empty():
-			if quantity > 0:
-				cursor_stack = player.inventory.take_slot(slot_index, quantity)
-				_set_cursor_origin("player", slot_index, -1, item_id)
+		var held_item_id: String = str(cursor_stack.get("item_id", ""))
+		var held_count: int = int(cursor_stack.get("count", 0))
+		cursor_stack = player.inventory.place_into(slot_index, cursor_stack)
+		var moved_count: int = held_count
+		if not cursor_stack.is_empty() and str(cursor_stack.get("item_id", "")) == held_item_id:
+			moved_count -= int(cursor_stack.get("count", 0))
+		if cursor_origin_type == "storage" and moved_count > 0:
+			world_item_collected.emit(held_item_id, moved_count)
+		if not cursor_stack.is_empty():
+			if str(cursor_stack.get("item_id", "")) != held_item_id:
+				_set_cursor_origin("player", slot_index, -1,
+					str(cursor_stack.get("item_id", "")))
 		else:
-			var held_item_id: String = str(cursor_stack.get("item_id", ""))
-			var held_count: int = int(cursor_stack.get("count", 0))
-			cursor_stack = player.inventory.place_into(slot_index, cursor_stack)
-			var moved_count: int = held_count
-			if not cursor_stack.is_empty() and str(cursor_stack.get("item_id", "")) == held_item_id:
-				moved_count -= int(cursor_stack.get("count", 0))
-			if cursor_origin_type == "storage" and moved_count > 0:
-				world_item_collected.emit(held_item_id, moved_count)
-			if not cursor_stack.is_empty():
-				if str(cursor_stack.get("item_id", "")) != held_item_id:
-					_set_cursor_origin("player", slot_index, -1,
-						str(cursor_stack.get("item_id", "")))
-			else:
-				_clear_cursor_origin()
+			_clear_cursor_origin()
 	_refresh_open_inventory()
 	refresh_hotbar()
 
@@ -503,21 +502,22 @@ func _refresh_storage_grid() -> void:
 	storage_contents_snapshot = contents
 	storage_snapshot_valid = true
 	var storage_inventory: FrontierInventory = FrontierInventory.from_totals(contents)
-	storage_slot_items.clear()
+	storage_slot_stacks.clear()
 	for index: int in range(maxi(FrontierInventory.DEFAULT_CAPACITY, storage_inventory.slots.size())):
 		var slot: Dictionary = storage_inventory.slots[index] \
 			if index < storage_inventory.slots.size() else {}
-		storage_slot_items.append(str(slot.get("item_id", "")))
+		storage_slot_stacks.append(slot.duplicate(true))
 	storage_grid.configure(storage_inventory, icon_cache)
 
 func _on_storage_slot_input(slot_index: int, button_index: int, shift_pressed: bool) -> void:
 	if not sim.entities.has(selected_entity_id):
 		return
 	var storage: FactoryEntity = sim.entities[selected_entity_id]
-	if slot_index < 0 or slot_index >= storage_slot_items.size():
+	if slot_index < 0 or slot_index >= storage_slot_stacks.size():
 		return
-	var item_id: String = storage_slot_items[slot_index]
-	var quantity: int = int(storage.input_buffer.get(item_id, 0))
+	var rendered_stack: Dictionary = storage_slot_stacks[slot_index]
+	var item_id: String = str(rendered_stack.get("item_id", ""))
+	var quantity: int = int(rendered_stack.get("count", 0))
 	var storage_inventory: FrontierInventory = FrontierInventory.from_totals(storage.input_buffer)
 	if slot_index >= storage_inventory.slots.size():
 		return
@@ -532,8 +532,10 @@ func _on_storage_slot_input(slot_index: int, button_index: int, shift_pressed: b
 	elif cursor_stack.is_empty():
 		if item_id.is_empty() or quantity <= 0:
 			return
-		var amount: int = ceili(float(quantity) / 2.0) if button_index == MOUSE_BUTTON_RIGHT \
-			else mini(quantity, Items.stack_size(item_id))
+		var stack_limit: int = Items.stack_size(item_id)
+		var amount: int = ceili(float(quantity) / 2.0) \
+			if button_index == MOUSE_BUTTON_RIGHT else quantity
+		amount = mini(amount, stack_limit)
 		var moved: int = sim.take_storage_item(selected_entity_id, item_id, amount)
 		if moved > 0:
 			cursor_stack = {"item_id": item_id, "count": moved}
@@ -637,6 +639,8 @@ func _return_cursor_stack() -> void:
 		player.inventory.add_restored(item_id, remainder)
 	cursor_stack.clear()
 	_clear_cursor_origin()
+	if storage_open:
+		_refresh_storage_grid()
 	refresh_hotbar()
 
 func discard_cursor_stack() -> void:
