@@ -687,10 +687,15 @@ func _test_machine_view_and_transfers() -> void:
 		{"recipe": "iron_ingot"})
 	var inserted: int = insert_sim.insert_input_items(insert_id, "iron_ore", 12)
 	var wrong_item: int = insert_sim.insert_input_items(insert_id, "copper_ore", 1)
+	var input_capacity: int = insert_sim.input_capacity(insert_id, "iron_ore")
+	var input_capacity_view: Dictionary = insert_sim.machine_view(insert_id)
+	var input_slots: Array = input_capacity_view.get("inputs", [])
 	_check("insert_input_items respects buffer maximum and rejects wrong items",
 		inserted == 10 and wrong_item == 0
+		and input_capacity == 10
+		and int(input_slots[0].get("maximum", 0)) == input_capacity
 		and int(insert_sim.entities[insert_id].input_buffer.get("iron_ore", 0)) == 10,
-		str([inserted, wrong_item, insert_sim.entities[insert_id].input_buffer]))
+		str([inserted, wrong_item, input_capacity, input_capacity_view]))
 
 	var output_sim := FactorySim.new()
 	var output_id: int = output_sim.add_entity("smelter", Vector3.ZERO)
@@ -705,6 +710,27 @@ func _test_machine_view_and_transfers() -> void:
 		and int(output_sim.entities[output_id].output_buffer.get("iron_ingot", 0)) == 6,
 		str([fits, taken, receiving_inventory.totals(),
 			output_sim.entities[output_id].output_buffer]))
+
+	var output_fill_sim := FactorySim.new()
+	var output_fill_id: int = output_fill_sim.add_entity("smelter", Vector3.ZERO,
+		0.0, {"recipe": "iron_ingot"})
+	output_fill_sim.power.bypass = true
+	var output_capacity: int = output_fill_sim.output_capacity(output_fill_id, "iron_ingot")
+	var produced_cycles: int = 0
+	for _cycle: int in range(output_capacity + 1):
+		produced_cycles += output_fill_sim.insert_input_items(output_fill_id, "iron_ore", 1)
+		output_fill_sim.tick(2.0)
+	var filled_view: Dictionary = output_fill_sim.machine_view(output_fill_id)
+	var filled_outputs: Array = filled_view.get("outputs", [])
+	var filled_count: int = int(output_fill_sim.entities[output_fill_id]
+		.output_buffer.get("iron_ingot", 0))
+	_check("machine output production stops at the capacity reported by machine_view",
+		produced_cycles == output_capacity + 1
+		and filled_count == output_capacity
+		and int(filled_outputs[0].get("maximum", 0)) == output_capacity
+		and int(filled_outputs[0].get("count", 0)) == output_capacity
+		and filled_view.get("state", "") == "output_full",
+		str([produced_cycles, output_capacity, filled_view]))
 
 	var miner_sim := FactorySim.new()
 	miner_sim.register_node(7, "iron_ore", "pure", Vector3(20.0, 0.0, 10.0), 120.0)

@@ -246,7 +246,7 @@ func try_insert(entity_id: int, item_id: String, port_id: String) -> bool:
 		entity.recipe_id = compatible_recipe
 		entity.progress = 0.0
 	var recipe: Dictionary = recipe_definitions[entity.recipe_id]
-	var maximum: int = maxi(10, int(recipe["inputs"].get(item_id, 0)) * 2)
+	var maximum: int = input_capacity(entity_id, item_id)
 	if int(entity.input_buffer.get(item_id, 0)) >= maximum:
 		return false
 	entity.input_buffer[item_id] = int(entity.input_buffer.get(item_id, 0)) + 1
@@ -280,6 +280,35 @@ func insert_input_items(entity_id: int, item_id: String, quantity: int) -> int:
 	if not _is_machine(str(entities[entity_id].kind)):
 		return 0
 	return insert_input(entity_id, item_id, quantity)
+
+func input_capacity(entity_id: int, item_id: String) -> int:
+	if item_id.is_empty() or not entities.has(entity_id):
+		return 0
+	var entity: FactoryEntity = entities[entity_id]
+	if not _is_machine(entity.kind):
+		return 0
+	var recipe: Dictionary = recipe_definitions.get(entity.recipe_id, {})
+	var inputs: Dictionary = recipe.get("inputs", {})
+	if not inputs.has(item_id):
+		return 0
+	return maxi(10, int(inputs[item_id]) * 2)
+
+func output_capacity(entity_id: int, item_id: String) -> int:
+	if item_id.is_empty() or not entities.has(entity_id):
+		return 0
+	var entity: FactoryEntity = entities[entity_id]
+	if not _is_machine(entity.kind) and entity.kind != "miner_mk1":
+		return 0
+	if entity.kind == "miner_mk1":
+		var node_id: int = int(entity.extra.get("node_id", -1))
+		var node: Dictionary = nodes.get(node_id, {})
+		if str(node.get("item", "")) != item_id \
+				and not entity.output_buffer.has(item_id):
+			return 0
+	elif not entity.output_buffer.has(item_id) \
+			and not recipe_definitions.get(entity.recipe_id, {}).get("outputs", {}).has(item_id):
+		return 0
+	return 20
 
 func take_storage(entity_id: int) -> Dictionary:
 	if not entities.has(entity_id) or entities[entity_id].kind != "storage":
@@ -401,7 +430,7 @@ func machine_view(entity_id: int) -> Dictionary:
 		input_items.append({
 			"item_id": item_id,
 			"count": int(entity.input_buffer.get(item_id, 0)),
-			"maximum": maxi(10, recipe_count * 2),
+			"maximum": input_capacity(entity_id, item_id),
 			"needs_per_min": float(recipe_count) * 60.0 / maxf(cycle_seconds, 0.001),
 			"getting_per_min": entity.rate(item_id, time)
 		})
@@ -416,7 +445,7 @@ func machine_view(entity_id: int) -> Dictionary:
 		output_items.append({
 			"item_id": item_id,
 			"count": int(entity.output_buffer.get(item_id, 0)),
-			"maximum": 20,
+			"maximum": output_capacity(entity_id, item_id),
 			"per_min": float(recipe_count) * 60.0 / maxf(cycle_seconds, 0.001)
 		})
 		maximum_rate += float(recipe_count) * 60.0 / maxf(cycle_seconds, 0.001)
@@ -433,7 +462,7 @@ func machine_view(entity_id: int) -> Dictionary:
 			output_items.append({
 				"item_id": deposit_item,
 				"count": int(entity.output_buffer.get(deposit_item, 0)),
-				"maximum": 20,
+				"maximum": output_capacity(entity_id, deposit_item),
 				"per_min": maximum_rate
 			})
 	var current_rate: float = 0.0
@@ -781,7 +810,8 @@ func _update_machine(entity: FactoryEntity, dt: float) -> void:
 			entity.status = "Missing input: %s" % Items.item_name(item_id)
 			return
 	for item_id: String in recipe["outputs"]:
-		if int(entity.output_buffer.get(item_id, 0)) + int(recipe["outputs"][item_id]) > 20:
+		if int(entity.output_buffer.get(item_id, 0)) + int(recipe["outputs"][item_id]) \
+				> output_capacity(entity.id, item_id):
 			entity.status = "Output full"
 			return
 	var sat: float = power.satisfaction(entity.id, entities)
