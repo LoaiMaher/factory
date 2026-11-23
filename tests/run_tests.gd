@@ -42,8 +42,309 @@ func _run_all() -> void:
 	_test_benchmark_stats_and_cli()
 	_test_benchmark_route_clearance()
 	_test_benchmark_no_save()
+	_test_inventory_model()
+	_test_inventory_gameplay()
+	_test_inventory_save_migration()
 	print("RESULT: %d/%d test groups passed" % [passed_groups, groups])
 	quit(1 if failures > 0 else 0)
+
+func _test_inventory_model() -> void:
+	var inventory := FrontierInventory.new(3)
+	var leftover: int = inventory.add("iron_ore", 130)
+	_check("inventory fills default 64-item stacks before empty slots",
+		leftover == 0 and inventory.count("iron_ore") == 130
+		and inventory.slots[0]["count"] == 64 and inventory.slots[1]["count"] == 64
+		and inventory.slots[2]["count"] == 2, str(inventory.to_data()))
+	var custom_stack := FrontierInventory.new(2)
+	leftover = custom_stack.add("rotor", 40)
+	_check("item metadata supports a custom stack cap",
+		Items.stack_size("iron_ore") == 64 and Items.stack_size("rotor") == 32
+		and leftover == 0 and custom_stack.slots[0]["count"] == 32
+		and custom_stack.slots[1]["count"] == 8, str(custom_stack.to_data()))
+	var capped_merge := FrontierInventory.new()
+	capped_merge.from_data([
+		{"item_id": "iron_ore", "count": 60},
+		{"item_id": "iron_ore", "count": 10}
+	])
+	var cap_merge_ok: bool = capped_merge.move(0, 1)
+	_check("move merges only up to the item stack cap",
+		cap_merge_ok and capped_merge.slots[0]["count"] == 6
+		and capped_merge.slots[1]["count"] == 64, str(capped_merge.to_data()))
+	var full := FrontierInventory.new(1)
+	leftover = full.add("iron_ore", 70)
+	var rejected_add: int = full.add("copper_ore", 1)
+	_check("full inventory returns leftovers without adding to overflow",
+		leftover == 6 and rejected_add == 1 and full.count("iron_ore") == 64
+		and full.count("copper_ore") == 0, str(full.to_data()))
+	var full_inventory_rejects_add: bool = not full.can_fit({"iron_ore": 1})
+	full.remove("iron_ore", 1)
+	var can_fit_item: bool = full.can_fit({"iron_ore": 1})
+	_check("remove is all-or-nothing",
+		not full.remove("iron_ore", 65) and full.count("iron_ore") == 63
+		and full_inventory_rejects_add and can_fit_item
+		and full.can_afford({"iron_ore": 63}),
+		str(full.to_data()))
+	_check("item metadata provides recipe-role categories and descriptions",
+		Items.category("iron_ore") == "raw" and Items.category("iron_ingot") == "processed"
+		and Items.category("iron_plate") == "component"
+		and not Items.description("iron_plate").is_empty(), Items.description("iron_plate"))
+
+	var moves := FrontierInventory.new()
+	moves.from_data([
+		{"item_id": "iron_ore", "count": 10},
+		{"item_id": "iron_ore", "count": 12},
+		{"item_id": "copper_ore", "count": 4}
+	])
+	var merged: bool = moves.move(0, 1)
+	var merged_count: int = int(moves.slots[1].get("count", 0))
+	var swapped: bool = moves.move(1, 2)
+	_check("move merges matching stacks and swaps different items",
+		merged and merged_count == 22 and moves.slots[0].is_empty()
+		and swapped and moves.slots[1]["item_id"] == "copper_ore"
+		and moves.slots[2]["item_id"] == "iron_ore", str(moves.to_data()))
+
+	var split_inventory := FrontierInventory.new()
+	split_inventory.add("iron_ore", 9)
+	var lifted: Dictionary = split_inventory.split(0)
+	var remainder: Dictionary = split_inventory.place_into(1, lifted)
+	var placed_one: Dictionary = split_inventory.place_into(2, {
+		"item_id": "iron_ore", "count": 1
+	})
+	var taken_one: Dictionary = split_inventory.take_slot(2, 1)
+	_check("split lifts half rounded up and place_into accepts one",
+		lifted == {"item_id": "iron_ore", "count": 5}
+		and split_inventory.slots[0]["count"] == 4
+		and split_inventory.slots[1]["count"] == 5 and remainder.is_empty()
+		and placed_one.is_empty() and taken_one == {"item_id": "iron_ore", "count": 1}
+		and split_inventory.slots[2].is_empty(),
+		str(split_inventory.to_data()))
+	var place_inventory := FrontierInventory.new()
+	place_inventory.from_data([
+		{"item_id": "iron_ore", "count": 60},
+		{"item_id": "copper_ore", "count": 5}
+	])
+	var place_remainder: Dictionary = place_inventory.place_into(0, {
+		"item_id": "iron_ore", "count": 10
+	})
+	var place_swap: Dictionary = place_inventory.place_into(1, {
+		"item_id": "iron_ore", "count": 4
+	})
+	_check("place_into merges to cap and swaps different item stacks",
+		place_remainder == {"item_id": "iron_ore", "count": 6}
+		and place_inventory.slots[0]["count"] == 64
+		and place_swap == {"item_id": "copper_ore", "count": 5}
+		and place_inventory.slots[1] == {"item_id": "iron_ore", "count": 4},
+		str(place_inventory.to_data()))
+
+	var sortable := FrontierInventory.new()
+	sortable.from_data([
+		{"item_id": "rotor", "count": 1},
+		{"item_id": "iron_plate", "count": 1},
+		{"item_id": "iron_ingot", "count": 1},
+		{"item_id": "iron_ore", "count": 1},
+		{"item_id": "copper_ore", "count": 1}
+	])
+	sortable.sort()
+	var sorted_ids: Array[String] = []
+	for slot: Dictionary in sortable.slots:
+		if not slot.is_empty():
+			sorted_ids.append(str(slot["item_id"]))
+	var round_trip := FrontierInventory.new()
+	round_trip.from_data(sortable.to_data())
+	_check("sort groups category then ID and data round-trips",
+		sorted_ids == ["copper_ore", "iron_ore", "iron_ingot", "iron_plate", "rotor"]
+		and round_trip.totals() == sortable.totals()
+		and round_trip.to_data() == sortable.to_data(), str(sorted_ids))
+
+	var migrated := FrontierInventory.from_totals({
+		"iron_ore": 6400, "copper_ore": 64
+	}, 1)
+	var overflow_count: int = migrated.slots.size() - migrated.capacity
+	var overflow_add: int = migrated.add("iron_ore", 1)
+	var migrated_iron: int = migrated.count("iron_ore")
+	var overflow_remove: bool = migrated.remove("iron_ore", 1)
+	_check("totals migration preserves stable order and removal-only overflow",
+		migrated.slots[0]["item_id"] == "copper_ore" and overflow_count > 0
+		and migrated_iron == 6400 and migrated.count("iron_ore") == 6399
+		and overflow_add == 1 and overflow_remove,
+		str([migrated.slots.size(), migrated.totals()]))
+	_finish_group()
+
+func _test_inventory_gameplay() -> void:
+	var app: Node = (load("res://scripts/main.gd") as Script).new() as Node
+	var player := FactoryPlayer.new()
+	var fake_hud := FactoryHUD.new()
+	fake_hud.toast_label = Label.new()
+	app.set("player", player)
+	app.set("hud", fake_hud)
+	var terrain := FactoryTerrain.new()
+	terrain._configure_noise()
+	terrain._build_boulders()
+	app.set("terrain", terrain)
+	player.inventory = FrontierInventory.from_totals({"iron_plate": 64}, 1)
+	var boulder_id: String = "near_iron_00"
+	var boulder_before: int = terrain.ore_boulders.remaining_for(boulder_id)
+	var mining_result: Dictionary = app.call("_mine_boulder_into_inventory", boulder_id)
+	_check("full inventory blocks hand mining without depleting the boulder",
+		mining_result.is_empty() and terrain.ore_boulders.remaining_for(boulder_id) == boulder_before
+		and player.inventory.count("iron_plate") == 64
+		and fake_hud.toast_label.text == "Inventory full", str(mining_result))
+
+	var sim := FactorySim.new()
+	var storage_id: int = sim.add_entity("storage", Vector3.ZERO)
+	sim.entities[storage_id].extra["creative_built"] = true
+	sim.entities[storage_id].input_buffer["iron_ore"] = 1
+	var refund_player_inventory := FrontierInventory.from_totals({"iron_ore": 64}, 1)
+	player.inventory = refund_player_inventory
+	app.set("sim", sim)
+	var dismantle_fits: bool = app.call("_dismantle_refund_fits", storage_id)
+	_check("full inventory blocks dismantling before removing the entity",
+		not dismantle_fits and sim.entities.has(storage_id)
+		and fake_hud.toast_label.text == "Inventory full", str(sim.entities.keys()))
+
+	player.inventory = FrontierInventory.new(48)
+	var full_slots: Array[Dictionary] = []
+	full_slots.append({"item_id": "iron_ore", "count": 64})
+	for _index: int in range(47):
+		full_slots.append({"item_id": "iron_ore", "count": 64})
+	player.inventory.from_data(full_slots)
+	var before_craft: Array[Dictionary] = player.inventory.to_data()
+	var craft_ok: bool = app.call("_can_hand_craft_outputs", Recipes.all()["iron_ingot"])
+	_check("hand crafting refuses an output that cannot fit after inputs",
+		not craft_ok and player.inventory.to_data() == before_craft
+		and fake_hud.toast_label.text == "Inventory full", str(player.inventory.totals()))
+
+	var survival := FrontierInventory.from_totals({"iron_ore": 64 * 48}, 48)
+	var creative := CreativeMode.new()
+	creative.enter(survival, 2)
+	creative.record_world_gain("copper_ore", 3)
+	var restored: Dictionary = creative.exit()
+	var restored_inventory: FrontierInventory = restored["inventory"]
+	_check("Creative restores world gains to removal-only overflow",
+		restored_inventory.count("iron_ore") == 64 * 48
+		and restored_inventory.count("copper_ore") == 3
+		and restored_inventory.slots.size() > restored_inventory.capacity
+		and restored_inventory.remove("copper_ore", 1),
+		str(restored_inventory.to_data()))
+
+	var storage_sim := FactorySim.new()
+	var transfer_storage: int = storage_sim.add_entity("storage", Vector3.ZERO)
+	var stored: FactoryEntity = storage_sim.entities[transfer_storage]
+	stored.input_buffer["iron_ore"] = 1000
+	var receiver := FrontierInventory.from_totals({"iron_ore": 63}, 1)
+	var inserted_full: int = storage_sim.insert_storage_item(
+		transfer_storage, "copper_ore", 1)
+	var transfer_count: int = receiver.fit_count("iron_ore", 100)
+	var taken: int = storage_sim.take_storage_item(transfer_storage, "iron_ore", transfer_count)
+	receiver.add("iron_ore", taken)
+	var inserted: int = storage_sim.insert_storage_item(transfer_storage, "copper_ore", 10)
+	_check("storage transfer respects capacity and moves only what fits",
+		transfer_count == 1 and taken == 1 and receiver.count("iron_ore") == 64
+		and inserted_full == 0 and inserted == 1
+		and int(stored.input_buffer["iron_ore"]) == 999
+		and int(stored.input_buffer["copper_ore"]) == 1,
+		str([receiver.totals(), stored.input_buffer]))
+
+	var storage_ui_sim := FactorySim.new()
+	var storage_ui_id: int = storage_ui_sim.add_entity("storage", Vector3.ZERO)
+	var storage_ui_player := FactoryPlayer.new()
+	get_root().add_child(storage_ui_player)
+	storage_ui_player.inventory = FrontierInventory.from_totals({"iron_ore": 10, "copper_ore": 5})
+	var storage_ui_hud := FactoryHUD.new()
+	storage_ui_hud.setup(storage_ui_sim, storage_ui_player)
+	get_root().add_child(storage_ui_hud)
+	storage_ui_hud.selected_entity_id = storage_ui_id
+	storage_ui_hud.storage_open = true
+	storage_ui_hud.cursor_stack = storage_ui_player.inventory.take_slot(0, 5)
+	storage_ui_hud._set_cursor_origin("player", 0, -1, "copper_ore")
+	storage_ui_hud._on_storage_slot_input(0, MOUSE_BUTTON_LEFT, false)
+	var empty_slot_placed: bool = storage_ui_sim.entities[storage_ui_id].input_buffer \
+		== {"copper_ore": 5} and storage_ui_hud.cursor_stack.is_empty()
+	storage_ui_hud.cursor_stack = storage_ui_player.inventory.take_slot(1, 10)
+	storage_ui_hud._set_cursor_origin("player", 1, -1, "iron_ore")
+	storage_ui_hud._on_storage_slot_input(0, MOUSE_BUTTON_LEFT, false)
+	var swapped_into_storage: bool = storage_ui_sim.entities[storage_ui_id].input_buffer \
+		== {"iron_ore": 10} and storage_ui_hud.cursor_stack \
+			== {"item_id": "copper_ore", "count": 5}
+	var input_main: Node = (load("res://scripts/main.gd") as Script).new() as Node
+	input_main.set("hud", storage_ui_hud)
+	storage_ui_hud.open_entity(storage_ui_id)
+	var tab_event := InputEventKey.new()
+	tab_event.keycode = KEY_TAB
+	tab_event.pressed = true
+	input_main.call("_input", tab_event)
+	var tab_returned: bool = not storage_ui_hud.panel_is_open() \
+		and storage_ui_hud.cursor_stack.is_empty()
+	storage_ui_hud.open_entity(storage_ui_id)
+	storage_ui_hud._on_storage_slot_input(0, MOUSE_BUTTON_LEFT, false)
+	var escape_event := InputEventKey.new()
+	escape_event.keycode = KEY_ESCAPE
+	escape_event.pressed = true
+	input_main.call("_input", escape_event)
+	var escape_returned: bool = not storage_ui_hud.panel_is_open() \
+		and storage_ui_hud.cursor_stack.is_empty()
+	_check("storage grid accepts cursor stacks in empty slots and swaps safely",
+		empty_slot_placed and swapped_into_storage
+		and tab_returned and escape_returned
+		and storage_ui_sim.entities[storage_ui_id].input_buffer
+			== {"iron_ore": 10, "copper_ore": 5},
+			str([storage_ui_sim.entities[storage_ui_id].input_buffer, tab_returned,
+				escape_returned, storage_ui_hud.cursor_stack]))
+	input_main.free()
+	storage_ui_hud.free()
+	storage_ui_player.free()
+	fake_hud.toast_label.free()
+	fake_hud.free()
+	player.free()
+	terrain.free()
+	app.free()
+	_finish_group()
+
+func _test_inventory_save_migration() -> void:
+	var save_system := FactorySaveSystem.new()
+	save_system.save_path = "user://inventory_migration_test.json"
+	var sim := FactorySim.new()
+	var player := FactoryPlayer.new()
+	get_root().add_child(player)
+	player.inventory = FrontierInventory.from_totals({"iron_ore": 6400, "copper_ore": 64})
+	var saved: bool = save_system.save_game(sim, player, 0, {}, {})
+	var file := FileAccess.open(save_system.save_path, FileAccess.READ)
+	var save_data: Dictionary = {}
+	if file != null:
+		var parsed: Variant = JSON.parse_string(file.get_as_text())
+		file.close()
+		if parsed is Dictionary:
+			save_data = parsed
+	var has_slots: bool = save_data.get("player", {}).has("inventory_slots")
+	var legacy_totals: Dictionary = save_data.get("player", {}).get("inventory", {})
+	var expected_totals: Dictionary = player.inventory.totals()
+	var has_legacy_totals: bool = legacy_totals.size() == expected_totals.size()
+	for item_id: String in expected_totals:
+		has_legacy_totals = has_legacy_totals \
+			and int(legacy_totals.get(item_id, -1)) == int(expected_totals[item_id])
+	if save_data.has("player"):
+		save_data["player"].erase("inventory_slots")
+	var legacy_file := FileAccess.open(save_system.save_path, FileAccess.WRITE)
+	var legacy_written: bool = false
+	if legacy_file != null and save_data.has("player"):
+		legacy_file.store_string(JSON.stringify(save_data))
+		legacy_file.close()
+		legacy_written = true
+	var restored_player := FactoryPlayer.new()
+	get_root().add_child(restored_player)
+	var restored_sim := FactorySim.new()
+	var loaded: Dictionary = save_system.load_game(restored_sim, restored_player)
+	_check("legacy totals migrate in stable order and preserve overflow",
+		saved and legacy_written and has_slots and has_legacy_totals and not loaded.is_empty()
+		and restored_player.inventory.slots[0]["item_id"] == "copper_ore"
+		and restored_player.inventory.count("iron_ore") == 6400
+		and restored_player.inventory.slots.size() > restored_player.inventory.capacity,
+		str([has_slots, has_legacy_totals, legacy_totals, expected_totals,
+			restored_player.inventory.totals()]))
+	DirAccess.remove_absolute(ProjectSettings.globalize_path(save_system.save_path))
+	player.free()
+	restored_player.free()
+	_finish_group()
 
 func _test_placement_and_ports() -> void:
 	var sim: FactorySim = FactorySim.new()
@@ -717,7 +1018,7 @@ func _test_save_migration_and_refunds() -> void:
 	var player: FactoryPlayer = FactoryPlayer.new()
 	get_root().add_child(player)
 	player.set_panel_open(true)
-	player.inventory["cable"] = 17
+	player.inventory.set_count("cable", 17)
 	var world_state: Dictionary = {"boulders": {"iron_a": {"item": "iron_ore", "remaining": 4}},
 		"foliage": ["tree_00001", "rock_00002"]}
 	var hotbar: HotbarModel = HotbarModel.new()
@@ -738,8 +1039,8 @@ func _test_save_migration_and_refunds() -> void:
 		and restored.port_links.has("%d:out0" % source) and not restored.is_port_free(source, "out0"),
 		str(restored_belt.extra if restored_belt != null else {}))
 	_check("sparse forced IDs and player inventory survive save/load",
-		restored.entities.has(42) and restored.next_id > belt_id and restored_player.inventory.get("cable", 0) == 17,
-		str([restored.entities.keys(), restored.next_id, restored_player.inventory]))
+		restored.entities.has(42) and restored.next_id > belt_id and restored_player.inventory.count("cable") == 17,
+		str([restored.entities.keys(), restored.next_id, restored_player.inventory.totals()]))
 	var saved_world: Dictionary = loaded.get("world", {})
 	_check("boulder and removed-foliage state survive world save/load",
 		int(saved_world.get("boulders", {}).get("iron_a", {}).get("remaining", -1)) == 4
@@ -883,7 +1184,7 @@ func _test_save_migration_and_refunds() -> void:
 
 	var creative_builder: Node = (load("res://scripts/main.gd") as Script).new() as Node
 	var creative_build_mode: CreativeMode = creative_builder.get("creative_mode") as CreativeMode
-	creative_build_mode.enter({"wire": 3}, 0)
+	creative_build_mode.enter(FrontierInventory.from_totals({"wire": 3}), 0)
 	var creative_sim: FactorySim = FactorySim.new()
 	var creative_source_data: Dictionary = creative_builder.call("_creative_build_extra",
 		{"recipe": "iron_ingot"})
@@ -902,7 +1203,8 @@ func _test_save_migration_and_refunds() -> void:
 	creative_loaded_sim.from_dict(creative_saved)
 	var machine_flag_saved: bool = bool(creative_loaded_sim.entities[creative_source].extra.get("creative_built", false))
 	var belt_flag_saved: bool = bool(creative_loaded_sim.entities[creative_belt_id].extra.get("creative_built", false))
-	var survival_after_exit: Dictionary = creative_build_mode.exit().get("inventory", {})
+	var survival_after_exit: FrontierInventory = creative_build_mode.exit().get(
+		"inventory", FrontierInventory.new())
 	var buffered_items: Dictionary = {}
 	var creative_refund: Dictionary = creative_loaded_sim.remove_entity_with_refund(
 		creative_source, buffered_items)
@@ -910,9 +1212,10 @@ func _test_save_migration_and_refunds() -> void:
 	_check("Creative-built entity and belt persist flags, skip costs, and refund contents",
 		creative_belt_id > 0 and machine_flag_saved and belt_flag_saved
 		and not creative_refund.has("iron_plate") and not creative_refund.has("concrete")
-		and survival_after_exit == {"wire": 3, "iron_ore": 2, "copper_ore": 1}
+		and survival_after_exit.totals() == {"wire": 3, "iron_ore": 2, "copper_ore": 1}
 		and buffered_items == {"iron_ore": 2, "copper_ore": 1},
-		str([creative_refund, survival_after_exit, buffered_items, machine_flag_saved, belt_flag_saved]))
+		str([creative_refund, survival_after_exit.totals(), buffered_items,
+			machine_flag_saved, belt_flag_saved]))
 	creative_builder.free()
 
 	for path: String in [save_system.save_path, legacy_system.save_path]:
@@ -1284,9 +1587,11 @@ func _test_hotbar_model() -> void:
 		bool(wrapped.get("ok", false)) and model.selected_index == 9, str(wrapped))
 
 	_check("hotbar item assignment succeeds", model.assign(8, "item", "iron_ore"), str(model.slot_at(8)))
-	var inventory: Dictionary = {"iron_ore": 4, "iron_rod": 22, "wire": 24, "iron_plate": 5}
+	var inventory: FrontierInventory = FrontierInventory.from_totals({
+		"iron_ore": 4, "iron_rod": 22, "wire": 24, "iron_plate": 5
+	})
 	_check("item quantity follows inventory changes", model.quantity(8, inventory) == 4, str(model.quantity(8, inventory)))
-	inventory["iron_ore"] = 9
+	inventory.set_count("iron_ore", 9)
 	_check("item quantity updates after inventory changes", model.quantity(8, inventory) == 9, str(model.quantity(8, inventory)))
 	_check("building quantity is the minimum affordable count",
 		model.assign(2, "building", "smelter") and model.quantity(2, inventory) == 3, str(model.quantity(2, inventory)))
@@ -1344,41 +1649,41 @@ func _test_hotbar_model() -> void:
 	_finish_group()
 
 func _test_creative_mode() -> void:
-	var inventory: Dictionary = {"iron_plate": 7, "wire": 13}
-	var original_inventory: Dictionary = inventory.duplicate(true)
+	var inventory: FrontierInventory = FrontierInventory.from_totals({"iron_plate": 7, "wire": 13})
+	var original_inventory: Dictionary = inventory.totals()
 	var original_tiers: int = 1
 	var creative: CreativeMode = CreativeMode.new()
 	var entered: bool = creative.enter(inventory, original_tiers)
 	inventory.clear()
 	var smelter_cost: Dictionary = BuildingDefs.all()["smelter"]["cost"]
-	var can_place: bool = creative.can_afford(smelter_cost, inventory, 1)
-	creative.pay_cost(smelter_cost, inventory, 1)
+	var can_place: bool = creative.can_afford(smelter_cost, creative.inventory, 1)
+	creative.pay_cost(smelter_cost, creative.inventory, 1)
 	var sim: FactorySim = FactorySim.new()
 	var placed: int = sim.add_entity("smelter", Vector3.ZERO) if can_place else -1
 	var restored: Dictionary = creative.exit()
 	_check("creative placement with empty inventory restores survival inventory and tiers",
 		entered and placed > 0 and inventory.is_empty()
-		and restored.get("inventory", {}) == original_inventory
+		and restored.get("inventory", FrontierInventory.new()).totals() == original_inventory
 		and int(restored.get("unlocked_tiers", -1)) == original_tiers,
-		str([entered, placed, inventory, restored]))
-	var grant_inventory: Dictionary = {}
+		str([entered, placed, inventory.totals(), restored]))
+	var grant_inventory := FrontierInventory.new()
 	creative.enter(grant_inventory, 0)
-	var granted: bool = creative.grant_stack(grant_inventory, "iron_ore")
-	creative.add_refund({"iron_plate": 5}, grant_inventory)
-	_check("creative item clicks grant 100 and dismantling refunds are suppressed",
-		granted and int(grant_inventory.get("iron_ore", 0)) == 100
-		and int(grant_inventory.get("iron_plate", 0)) == 0
+	var granted: bool = creative.grant_stack("iron_ore")
+	creative.add_refund({"iron_plate": 5}, creative.inventory)
+	_check("creative item clicks grant one full stack and suppress construction refunds",
+		granted and creative.inventory.count("iron_ore") == 64
+		and creative.inventory.count("iron_plate") == 0
 		and creative.world_gains.is_empty(),
-		str(grant_inventory))
+		str(creative.inventory.totals()))
 	creative.exit()
 
 	var gain_player: FactoryPlayer = FactoryPlayer.new()
 	get_root().add_child(gain_player)
-	gain_player.inventory.clear()
-	gain_player.inventory.merge({"iron_plate": 7, "wire": 13}, true)
-	var gain_snapshot: Dictionary = gain_player.inventory.duplicate(true)
+	gain_player.inventory = FrontierInventory.from_totals({"iron_plate": 7, "wire": 13})
+	var gain_snapshot: Dictionary = gain_player.inventory.totals()
 	var gain_creative: CreativeMode = CreativeMode.new()
 	gain_creative.enter(gain_player.inventory, 1)
+	gain_player.inventory = gain_creative.inventory
 	var gain_sim: FactorySim = FactorySim.new()
 	var gain_storage_id: int = gain_sim.add_entity("storage", Vector3.ZERO)
 	gain_sim.entities[gain_storage_id].input_buffer = {"iron_ore": 5}
@@ -1393,26 +1698,26 @@ func _test_creative_mode() -> void:
 	gain_terrain._build_boulders()
 	var hand_mined: Dictionary = gain_terrain.mine_boulder("near_iron_00")
 	var hand_mined_item: String = str(hand_mined.get("item", ""))
-	gain_player.inventory[hand_mined_item] = int(gain_player.inventory.get(hand_mined_item, 0)) + 1
+	gain_player.inventory.add(hand_mined_item, 1)
 	gain_creative.record_world_gain(hand_mined_item, 1)
 	gain_terrain.free()
 	var gain_restored: Dictionary = gain_creative.exit()
 	var expected_gain_inventory: Dictionary = gain_snapshot.duplicate(true)
 	expected_gain_inventory[hand_mined_item] = int(expected_gain_inventory.get(hand_mined_item, 0)) + 6
 	_check("storage pickups and a hand-mined item survive Creative exit",
-		hand_mined_item == "iron_ore" and int(gain_player.inventory.get("iron_ore", 0)) == 6
-		and gain_restored.get("inventory", {}) == expected_gain_inventory
+		hand_mined_item == "iron_ore" and gain_player.inventory.count("iron_ore") == 6
+		and gain_restored.get("inventory", FrontierInventory.new()).totals() == expected_gain_inventory
 		and gain_creative.world_gains.is_empty(),
-		str([gain_player.inventory, gain_restored, gain_creative.world_gains]))
+		str([gain_player.inventory.totals(), gain_restored, gain_creative.world_gains]))
 	gain_hud.queue_free()
 	gain_player.queue_free()
 
 	var output_player: FactoryPlayer = FactoryPlayer.new()
 	get_root().add_child(output_player)
-	output_player.inventory.clear()
-	output_player.inventory["wire"] = 4
+	output_player.inventory = FrontierInventory.from_totals({"wire": 4})
 	var output_creative: CreativeMode = CreativeMode.new()
 	output_creative.enter(output_player.inventory, 0)
+	output_player.inventory = output_creative.inventory
 	var output_sim: FactorySim = FactorySim.new()
 	var output_machine: int = output_sim.add_entity("smelter", Vector3.ZERO, 0.0,
 		{"recipe": "iron_ingot"})
@@ -1425,13 +1730,13 @@ func _test_creative_mode() -> void:
 	output_hud._take_output()
 	var output_restored: Dictionary = output_creative.exit()
 	_check("machine output collection is retained when leaving Creative",
-		output_restored.get("inventory", {}) == {"wire": 4, "iron_ingot": 2},
+		output_restored.get("inventory", FrontierInventory.new()).totals() == {"wire": 4, "iron_ingot": 2},
 		str(output_restored))
 	output_hud.queue_free()
 	output_player.queue_free()
 
 	var salvage_mode: CreativeMode = CreativeMode.new()
-	var salvage_inventory: Dictionary = {"wire": 2}
+	var salvage_inventory: FrontierInventory = FrontierInventory.from_totals({"wire": 2})
 	salvage_mode.enter(salvage_inventory, 0)
 	var salvage_sim: FactorySim = FactorySim.new()
 	var salvage_storage: int = salvage_sim.add_entity("storage", Vector3.ZERO)
@@ -1441,11 +1746,11 @@ func _test_creative_mode() -> void:
 		salvage_storage, salvaged_items)
 	for item_id: String in salvaged_items:
 		salvage_mode.record_world_gain(item_id, int(salvaged_items[item_id]))
-	salvage_mode.add_refund(salvage_refund, salvage_inventory)
+	salvage_mode.add_refund(salvage_refund, salvage_mode.inventory)
 	var salvaged_state: Dictionary = salvage_mode.exit()
 	_check("dismantled machine contents are restored without Creative construction refunds",
 		salvaged_items == {"iron_ore": 2}
-		and salvaged_state.get("inventory", {}) == {"wire": 2, "iron_ore": 2},
+		and salvaged_state.get("inventory", FrontierInventory.new()).totals() == {"wire": 2, "iron_ore": 2},
 		str([salvaged_items, salvage_refund, salvaged_state]))
 
 	var save_system: FactorySaveSystem = FactorySaveSystem.new()
@@ -1453,10 +1758,10 @@ func _test_creative_mode() -> void:
 	var saved_sim: FactorySim = FactorySim.new()
 	var saved_player: FactoryPlayer = FactoryPlayer.new()
 	get_root().add_child(saved_player)
-	saved_player.inventory.clear()
-	saved_player.inventory.merge({"iron_plate": 100, "copper_ore": 100}, true)
-	var survival_snapshot: Dictionary = {"iron_plate": 21, "iron_rod": 9}
+	saved_player.inventory = FrontierInventory.from_totals({"iron_plate": 100, "copper_ore": 100})
+	var survival_snapshot: FrontierInventory = FrontierInventory.from_totals({"iron_plate": 21, "iron_rod": 9})
 	creative.enter(survival_snapshot, 2)
+	saved_player.inventory = creative.inventory
 	creative.record_world_gain("copper_ore", 2)
 	var save_ok: bool = save_system.save_game(saved_sim, saved_player, 2, {}, {},
 		saved_sim.power.bypass, creative.to_dict())
@@ -1467,13 +1772,16 @@ func _test_creative_mode() -> void:
 	var loaded_creative: CreativeMode = CreativeMode.new()
 	loaded_creative.load_dict(loaded.get("creative", {}))
 	var creative_was_active: bool = loaded_creative.active
-	var creative_snapshot: Dictionary = loaded_creative.survival_inventory.duplicate(true)
+	var loaded_snapshot := FrontierInventory.new()
+	loaded_snapshot.from_data(loaded_creative.survival_inventory)
+	var creative_snapshot: Dictionary = loaded_snapshot.totals()
 	var gains_snapshot: Dictionary = loaded_creative.world_gains.duplicate(true)
 	var restored_state: Dictionary = loaded_creative.exit()
-	var snapshot_saved: bool = creative_snapshot == survival_snapshot
-	var expected_loaded_inventory: Dictionary = survival_snapshot.duplicate(true)
+	var snapshot_saved: bool = creative_snapshot == survival_snapshot.totals()
+	var expected_loaded_inventory: Dictionary = survival_snapshot.totals()
 	expected_loaded_inventory["copper_ore"] = 2
-	var inventory_restored: bool = restored_state.get("inventory", {}) == expected_loaded_inventory
+	var inventory_restored: bool = restored_state.get(
+		"inventory", FrontierInventory.new()).totals() == expected_loaded_inventory
 	var tiers_restored: bool = int(restored_state.get("unlocked_tiers", -1)) == 2
 	_check("save/load retains Creative snapshot and collected world gains",
 		save_ok and creative_was_active and snapshot_saved
