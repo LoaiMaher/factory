@@ -170,6 +170,10 @@ func _ready() -> void:
 			terrain_build_ms, foliage_build_ms)
 		add_child(benchmark_runner)
 	var user_arguments: PackedStringArray = OS.get_cmdline_user_args()
+	if user_arguments.has("--capture-inventory") or user_arguments.has("--capture-storage"):
+		call_deferred("_capture_inventory_storage",
+			user_arguments.has("--capture-inventory"), user_arguments.has("--capture-storage"))
+		return
 	if user_arguments.has("--capture-perf-overlay") \
 			or user_arguments.has("--capture-settings-panel"):
 		call_deferred("_capture_graphics_panels",
@@ -235,14 +239,13 @@ func _process(delta: float) -> void:
 			hand_mining_swing_started = true
 			viewmodel.play_mining_swing()
 		if hand_mine_elapsed >= 0.6:
-			var result: Dictionary = terrain.mine_boulder(mining_boulder_id)
+			var result: Dictionary = _mine_boulder_into_inventory(mining_boulder_id)
 			if result.is_empty():
 				mining_boulder_id = ""
 				hand_mine_elapsed = 0.0
+				hand_mining_swing_started = false
 				return
 			var item_id: String = str(result["item"])
-			player.inventory[item_id] = int(player.inventory.get(item_id, 0)) + 1
-			creative_mode.record_world_gain(item_id, 1)
 			var impact_position: Vector3 = mining_hit_position
 			audio_manager.call("play_one_shot", "pick_hit", impact_position)
 			visuals.spawn_mining_dust(impact_position, player.camera.global_position)
@@ -295,7 +298,20 @@ func _update_aim_status(delta: float) -> void:
 func _input(event: InputEvent) -> void:
 	if benchmark_mode:
 		return
-	_handle_graphics_shortcut(event)
+	if _handle_graphics_shortcut(event):
+		return
+	if event is InputEventKey and event.pressed and not event.echo:
+		if event.keycode == KEY_TAB:
+			if hud.panel_is_open():
+				hud.close_panel()
+			else:
+				hud.open_inventory()
+			if is_inside_tree():
+				get_viewport().set_input_as_handled()
+		elif event.keycode == KEY_ESCAPE and hud.panel_is_open():
+			hud.close_panel()
+			if is_inside_tree():
+				get_viewport().set_input_as_handled()
 
 func _handle_graphics_shortcut(event: InputEvent) -> bool:
 	if not event is InputEventKey or not event.pressed or event.echo:
@@ -720,7 +736,7 @@ func _build_info(kind: String, status: String, cost: Dictionary, multiplier: int
 	for item_id: String in cost:
 		var amount: int = int(cost[item_id]) * multiplier
 		var part: String = "%d %s" % [amount, Items.item_name(item_id)]
-		if int(player.inventory.get(item_id, 0)) < amount:
+		if player.inventory.count(item_id) < amount:
 			part = "[color=#ff6258]%s[/color]" % part
 		parts.append(part)
 	return "%s · %s · %s" % [kind.replace("_", " ").capitalize(), status, ", ".join(parts)]
@@ -981,6 +997,8 @@ func _dismantle_aimed() -> void:
 	var entity_id: int = int(object.get_meta("entity_id"))
 	if not sim.entities.has(entity_id) or sim.entities[entity_id].kind == "spire":
 		return
+	if not creative_mode.active and not _dismantle_refund_fits(entity_id):
+		return
 	var world_items: Dictionary = {}
 	var refund: Dictionary = sim.remove_entity_with_refund(entity_id, world_items)
 	for item_id: String in world_items:
@@ -1031,6 +1049,7 @@ func _load_saved_game(show_toast: bool) -> bool:
 	unlocked_tiers = int(loaded["unlocked_tiers"])
 	creative_mode.load_dict(loaded.get("creative", {}))
 	if creative_mode.active:
+		creative_mode.inventory = player.inventory
 		unlocked_tiers = _highest_building_tier()
 	hud.set_creative_mode(creative_mode.active)
 	hotbar_model.load_dict(loaded.get("hotbar", {}))
@@ -1038,7 +1057,7 @@ func _load_saved_game(show_toast: bool) -> bool:
 		hotbar_model.selected_index = -1
 	_apply_hotbar_selection(false)
 	for item_id: String in loaded.get("belt_refund", {}):
-		player.inventory[item_id] = int(player.inventory.get(item_id, 0)) + int(loaded["belt_refund"][item_id])
+		player.inventory.add_restored(item_id, int(loaded["belt_refund"][item_id]))
 	if int(loaded.get("migrated_from", 0)) > 0:
 		for entity: FactoryEntity in sim.entities.values():
 			if entity.kind not in ["belt_mk1", "belt_mk2"]:
@@ -1085,31 +1104,67 @@ func _hand_craft(recipe_id: String) -> void:
 	var recipe: Dictionary = recipe_definitions[recipe_id]
 	if not creative_mode.active:
 		for item_id: String in recipe["inputs"]:
-			if int(player.inventory.get(item_id, 0)) < int(recipe["inputs"][item_id]):
+			if player.inventory.count(item_id) < int(recipe["inputs"][item_id]):
 				hud.show_toast("Missing %s." % Items.item_name(item_id))
 				return
 	await get_tree().create_timer(0.5).timeout
 	if not creative_mode.active:
 		for item_id: String in recipe["inputs"]:
-			if int(player.inventory.get(item_id, 0)) < int(recipe["inputs"][item_id]):
+			if player.inventory.count(item_id) < int(recipe["inputs"][item_id]):
 				hud.show_toast("Missing %s." % Items.item_name(item_id))
 				return
+	if not _can_hand_craft_outputs(recipe):
+		return
 	_pay_cost(recipe["inputs"], 1)
 	for item_id: String in recipe["outputs"]:
-		player.inventory[item_id] = int(player.inventory.get(item_id, 0)) + int(recipe["outputs"][item_id])
+		player.inventory.add(item_id, int(recipe["outputs"][item_id]))
 	hud.show_toast("Crafted %s." % Items.item_name(str(recipe["outputs"].keys()[0])))
 	hud.open_inventory()
 
+func _mine_boulder_into_inventory(boulder_id: String) -> Dictionary:
+	var item_id: String = terrain.ore_boulders.item_for(boulder_id)
+	if item_id.is_empty():
+		return {}
+	if not player.inventory.can_fit({item_id: 1}):
+		hud.show_toast("Inventory full")
+		return {}
+	var result: Dictionary = terrain.mine_boulder(boulder_id)
+	if result.is_empty():
+		return {}
+	player.inventory.add(item_id, 1)
+	creative_mode.record_world_gain(item_id, 1)
+	return result
+
+func _dismantle_refund_fits(entity_id: int) -> bool:
+	var preview_sim := FactorySim.new()
+	preview_sim.from_dict(sim.to_dict())
+	var preview_refund: Dictionary = preview_sim.remove_entity_with_refund(entity_id)
+	if player.inventory.can_fit(preview_refund):
+		return true
+	hud.show_toast("Inventory full")
+	return false
+
+func _can_hand_craft_outputs(recipe: Dictionary) -> bool:
+	var craft_inventory := FrontierInventory.new()
+	craft_inventory.from_data(player.inventory.to_data())
+	if not creative_mode.active:
+		for item_id: String in recipe["inputs"]:
+			craft_inventory.remove(item_id, int(recipe["inputs"][item_id]))
+	if craft_inventory.can_fit(recipe["outputs"]):
+		return true
+	hud.show_toast("Inventory full")
+	return false
+
 func _toggle_creative_mode() -> void:
+	hud._return_cursor_stack()
 	if creative_mode.active:
 		var restored: Dictionary = creative_mode.exit()
-		var restored_inventory: Dictionary = restored.get("inventory", {})
-		player.inventory.clear()
-		player.inventory.merge(restored_inventory, true)
+		player.inventory = restored.get("inventory", FrontierInventory.new())
 		unlocked_tiers = int(restored.get("unlocked_tiers", 0))
 		hud.show_toast("Survival mode · inventory and tiers restored.")
 	else:
 		creative_mode.enter(player.inventory, unlocked_tiers)
+		player.inventory = creative_mode.inventory
 		unlocked_tiers = _highest_building_tier()
 		hud.show_toast("Creative mode enabled · building and crafting are free.")
 	if hotbar_model.selected_index >= 0 and hotbar_model.is_locked(hotbar_model.selected_index, unlocked_tiers):
@@ -1119,12 +1174,15 @@ func _toggle_creative_mode() -> void:
 	hud.set_creative_mode(creative_mode.active)
 	if hud.inventory_open:
 		hud.open_inventory()
+	elif hud.storage_open:
+		hud.open_entity(hud.selected_entity_id)
 	hud.refresh_hotbar()
 
 func _grant_creative_item(item_id: String) -> void:
-	if not creative_mode.grant_stack(player.inventory, item_id):
+	if not creative_mode.grant_stack(item_id):
+		hud.show_toast("Creative inventory full")
 		return
-	hud.show_toast("Added 100 %s." % Items.item_name(item_id))
+	hud.show_toast("Added one stack of %s." % Items.item_name(item_id))
 	hud.refresh_hotbar()
 	if hud.inventory_open:
 		hud.open_inventory()
@@ -1165,6 +1223,59 @@ func _capture_graphics_panels(capture_perf_overlay: bool, capture_settings_panel
 		await get_tree().create_timer(0.5).timeout
 		await RenderingServer.frame_post_draw
 		_write_capture("settings-panel")
+	get_tree().quit()
+
+func _capture_inventory_storage(capture_inventory: bool, capture_storage: bool) -> void:
+	autosave_enabled = false
+	hud.show_toast("", 0.0)
+	if hud.help_panel.visible:
+		hud.toggle_help()
+	if not hud.icon_cache.prepared:
+		await hud.icon_cache.icons_ready
+	player.set_physics_process(false)
+	player.set_panel_open(false)
+	player.position = Vector3(0.0, terrain.height_at(0.0, 38.0) + 0.1, 38.0)
+	player.rotation.y = 0.0
+	player.pitch = 0.0
+	player.camera.rotation.x = 0.0
+	player.velocity = Vector3.ZERO
+	player.inventory = FrontierInventory.from_totals({
+		"iron_ore": 64,
+		"copper_ore": 23,
+		"iron_ingot": 64,
+		"iron_plate": 38,
+		"concrete": 12,
+		"wire": 7,
+		"rotor": 5,
+		"hull_panel": 2
+	})
+	for index: int in range(player.inventory.slots.size()):
+		if str(player.inventory.slots[index].get("item_id", "")) == "copper_ore":
+			var split_stack: Dictionary = player.inventory.split(index)
+			var empty_slot: int = player.inventory.capacity - 1
+			while empty_slot >= 0 and not player.inventory.slots[empty_slot].is_empty():
+				empty_slot -= 1
+			if empty_slot >= 0:
+				player.inventory.place_into(empty_slot, split_stack)
+			break
+	if capture_inventory:
+		hud.open_inventory()
+		await get_tree().create_timer(0.4).timeout
+		await RenderingServer.frame_post_draw
+		_write_capture("inventory")
+		hud.close_panel()
+	if capture_storage:
+		var storage_position := Vector3(8.0, terrain.height_at(8.0, 38.0), 38.0)
+		var storage_id: int = sim.add_entity("storage", storage_position)
+		if storage_id >= 0:
+			sim.entities[storage_id].input_buffer = {
+				"iron_ore": 143, "copper_ingot": 42, "screw": 90, "cable": 11
+			}
+			visuals.refresh()
+			hud.open_entity(storage_id)
+			await get_tree().create_timer(0.4).timeout
+			await RenderingServer.frame_post_draw
+			_write_capture("storage")
 	get_tree().quit()
 
 func _apply_graphics_settings() -> void:
@@ -1243,7 +1354,7 @@ func _capture_v7_shots() -> void:
 	await get_tree().create_timer(0.55).timeout
 	_write_capture("selected-hotbar")
 	hotbar_model.assign(7, "item", "iron_ore")
-	player.inventory["iron_ore"] = 40
+	player.inventory.set_count("iron_ore", 40)
 	hotbar_model.selected_index = -1
 	hotbar_model.select_slot(7, unlocked_tiers)
 	_apply_hotbar_selection(false)
@@ -1251,7 +1362,7 @@ func _capture_v7_shots() -> void:
 	_write_capture("iron-ore-held")
 
 	hotbar_model.assign(8, "item", "iron_plate")
-	player.inventory["iron_plate"] = 80
+	player.inventory.set_count("iron_plate", 80)
 	hotbar_model.selected_index = -1
 	hotbar_model.select_slot(8, unlocked_tiers)
 	_apply_hotbar_selection(false)
@@ -1355,7 +1466,7 @@ func _capture_v8_shots() -> void:
 	await get_tree().create_timer(0.25).timeout
 	_write_capture("empty-hands")
 	hotbar_model.assign(7, "item", "iron_ore")
-	player.inventory["iron_ore"] = 40
+	player.inventory.set_count("iron_ore", 40)
 	hotbar_model.select_slot(7, unlocked_tiers)
 	_apply_hotbar_selection(false)
 	await get_tree().create_timer(0.4).timeout
@@ -1412,7 +1523,7 @@ func _capture_v9_shots() -> void:
 	_write_capture("empty-hands")
 
 	hotbar_model.assign(7, "item", "iron_ore")
-	player.inventory["iron_ore"] = 40
+	player.inventory.set_count("iron_ore", 40)
 	hotbar_model.selected_index = -1
 	hotbar_model.select_slot(7, unlocked_tiers)
 	_apply_hotbar_selection(false)
@@ -1422,7 +1533,7 @@ func _capture_v9_shots() -> void:
 	_write_capture("held-ore")
 
 	hotbar_model.assign(8, "item", "iron_plate")
-	player.inventory["iron_plate"] = 40
+	player.inventory.set_count("iron_plate", 40)
 	hotbar_model.selected_index = -1
 	hotbar_model.select_slot(8, unlocked_tiers)
 	_apply_hotbar_selection(false)
@@ -1513,7 +1624,7 @@ func _capture_v14_shots() -> void:
 	viewmodel.set_mining_active(false)
 
 	_set_capture_view(field_camera + Vector3(0.0, -0.1, -8.0), field_camera)
-	var survival_inventory: Dictionary = player.inventory.duplicate(true)
+	var survival_inventory: Array[Dictionary] = player.inventory.to_data()
 	var survival_tiers: int = unlocked_tiers
 	_toggle_creative_mode()
 	hud.open_inventory()
@@ -1523,7 +1634,7 @@ func _capture_v14_shots() -> void:
 	_write_capture("creative-hud")
 
 	_toggle_creative_mode()
-	var restored_inventory: Dictionary = player.inventory.duplicate(true)
+	var restored_inventory: Array[Dictionary] = player.inventory.to_data()
 	var restored_tiers: int = unlocked_tiers
 	if restored_inventory != survival_inventory or restored_tiers != survival_tiers:
 		push_error("V14 survival snapshot was not restored exactly")
@@ -1669,10 +1780,10 @@ func _build_capture_v11_line() -> bool:
 		push_error("V11 capture has no visible iron deposit")
 		return false
 
-	player.inventory["iron_plate"] = 500
-	player.inventory["iron_rod"] = 500
-	player.inventory["wire"] = 500
-	player.inventory["concrete"] = 500
+	player.inventory.set_count("iron_plate", 500)
+	player.inventory.set_count("iron_rod", 500)
+	player.inventory.set_count("wire", 500)
+	player.inventory.set_count("concrete", 500)
 	var node_position: Vector3 = iron_node["position"]
 	v11_capture_line_target = Vector3(node_position.x,
 		terrain.height_at(node_position.x, node_position.z + 16.0), node_position.z + 16.0)
@@ -1743,8 +1854,8 @@ func _build_demo_factory() -> void:
 		sim.add_belt("belt_mk1", constructor, "out0", storage, "in0", _belt_curve(constructor_out, storage_in))
 		visuals.refresh()
 		hud.show_toast("Demo line: Miner → Smelter → Constructor → Storage", 5.0)
-		player.inventory["iron_plate"] = 500
-		player.inventory["concrete"] = 100
+		player.inventory.set_count("iron_plate", 500)
+		player.inventory.set_count("concrete", 100)
 
 func _capture_screenshot(mode: String) -> void:
 	if mode.begins_with("v5-"):
