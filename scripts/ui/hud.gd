@@ -1349,25 +1349,15 @@ func _request_creative_item(item_id: String) -> void:
 	_refresh_open_inventory()
 	refresh_hotbar()
 
-func _make_craft_recipe_row(recipe_id: String, recipe: Dictionary) -> Button:
+func _make_craft_recipe_row(recipe_id: String, recipe: Dictionary) -> HBoxContainer:
 	var output_id: String = str(recipe["outputs"].keys()[0])
 	var output_count: int = int(recipe["outputs"][output_id])
-	var recipe_button := Button.new()
-	recipe_button.custom_minimum_size.y = 56.0
-	recipe_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	recipe_button.set_meta("recipe_inputs", recipe.get("inputs", {}).duplicate(true))
-	recipe_button.tooltip_text = "%s → %s" % [
-		str(recipe.get("inputs", {})), Items.description(output_id)]
-	recipe_button.pressed.connect(_request_craft.bind(recipe_id))
 	var row := HBoxContainer.new()
-	row.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	row.offset_left = 6.0
-	row.offset_top = 3.0
-	row.offset_right = -6.0
-	row.offset_bottom = -3.0
+	row.custom_minimum_size.y = 56.0
+	row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	row.clip_contents = true
 	row.add_theme_constant_override("separation", 8)
 	row.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	recipe_button.add_child(row)
 	var output_icon := TextureRect.new()
 	output_icon.custom_minimum_size = Vector2(44.0, 44.0)
 	output_icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
@@ -1379,10 +1369,12 @@ func _make_craft_recipe_row(recipe_id: String, recipe: Dictionary) -> Button:
 	row.add_child(output_icon)
 	var details := VBoxContainer.new()
 	details.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	details.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	details.add_child(_label("%s × %d" % [
 		Items.item_name(output_id), output_count], 14))
 	var input_row := HBoxContainer.new()
 	input_row.add_theme_constant_override("separation", 5)
+	input_row.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	details.add_child(input_row)
 	row.add_child(details)
 	var affordable: bool = creative_mode_active \
@@ -1411,23 +1403,37 @@ func _make_craft_recipe_row(recipe_id: String, recipe: Dictionary) -> Button:
 		input_amounts.append(amount)
 		input_stack.add_child(amount)
 		input_row.add_child(input_stack)
-	recipe_button.set_meta("input_icons", input_icons)
-	recipe_button.set_meta("input_amounts", input_amounts)
-	return recipe_button
+	var craft_button := Button.new()
+	craft_button.text = "Craft"
+	craft_button.custom_minimum_size.x = 68.0
+	craft_button.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	craft_button.disabled = not affordable
+	craft_button.pressed.connect(_request_craft.bind(recipe_id))
+	row.add_child(craft_button)
+	row.set_meta("recipe_inputs", recipe.get("inputs", {}).duplicate(true))
+	row.set_meta("input_icons", input_icons)
+	row.set_meta("input_amounts", input_amounts)
+	row.set_meta("craft_button", craft_button)
+	row.tooltip_text = "%s → %s" % [str(recipe.get("inputs", {})),
+		Items.description(output_id)]
+	return row
 
 func _refresh_crafting_affordability() -> void:
 	if craft_list == null or not is_instance_valid(craft_list) or player == null:
 		return
 	for child: Node in craft_list.get_children():
-		if not child is Button or not child.has_meta("recipe_inputs"):
+		if not child is HBoxContainer or not child.has_meta("recipe_inputs"):
 			continue
-		var recipe_button: Button = child as Button
-		var recipe_inputs: Dictionary = recipe_button.get_meta("recipe_inputs", {})
+		var recipe_row: HBoxContainer = child as HBoxContainer
+		var recipe_inputs: Dictionary = recipe_row.get_meta("recipe_inputs", {})
 		var color: Color = Color("d8dfd7") \
 			if creative_mode_active or player.inventory.can_afford(recipe_inputs) \
 			else Color("df7169")
-		var input_icons: Array = recipe_button.get_meta("input_icons", [])
-		var input_amounts: Array = recipe_button.get_meta("input_amounts", [])
+		var input_icons: Array = recipe_row.get_meta("input_icons", [])
+		var input_amounts: Array = recipe_row.get_meta("input_amounts", [])
+		var craft_button: Button = recipe_row.get_meta("craft_button")
+		craft_button.disabled = not creative_mode_active \
+			and not player.inventory.can_afford(recipe_inputs)
 		for index: int in range(mini(input_icons.size(), input_amounts.size())):
 			(input_icons[index] as TextureRect).modulate = color
 			(input_amounts[index] as Label).add_theme_color_override("font_color", color)
