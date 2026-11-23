@@ -47,7 +47,7 @@ func set_graphics_options(density: float, radius: float, tree_distance: float) -
 	density_rebuild_required = was_ready \
 		and not is_equal_approx(density_multiplier, density_built_multiplier)
 	for instance: MultiMeshInstance3D in tree_multimesh_instances:
-		instance.visibility_range_end = tree_view_distance
+		instance.visibility_range_end = _tree_visibility_end()
 	for instance: MultiMeshInstance3D in grass_instances:
 		instance.visibility_range_end = grass_radius + 8.0
 	if was_ready and not grass_instances.is_empty():
@@ -58,6 +58,10 @@ func _process(_delta: float) -> void:
 	if DisplayServer.get_name() != "headless":
 		_update_grass(false)
 		_update_tree_collisions(false)
+
+func _tree_visibility_end() -> float:
+	return maxf(tree_view_distance + TREE_CHUNK_HALF_DIAGONAL + TREE_VISIBILITY_FADE_MARGIN,
+		TREE_COLLISION_RADIUS + 1.0)
 
 func restore_state(data: Variant) -> void:
 	state.from_dict(data)
@@ -162,15 +166,11 @@ func _generate_definitions() -> void:
 					"chunk": Vector2i(chunk_x, chunk_z)
 				})
 				rock_index += 1
-	if density_built_multiplier > 1.0:
-		_append_density_extras(density_built_multiplier - 1.0, occupied)
+	_append_density_extras(0.25, occupied)
 
 func _append_density_extras(extra_ratio: float, occupied: Dictionary) -> void:
 	var rng: RandomNumberGenerator = RandomNumberGenerator.new()
 	rng.seed = 194517
-	var tree_index: int = 0
-	var bush_index: int = 0
-	var rock_index: int = 0
 	var tree_extra_samples: int = roundi(TREES_PER_CHUNK * extra_ratio)
 	var bush_extra_samples: int = roundi(56.0 * extra_ratio)
 	var rock_extra_samples: int = roundi(24.0 * extra_ratio)
@@ -179,7 +179,8 @@ func _append_density_extras(extra_ratio: float, occupied: Dictionary) -> void:
 		for chunk_x: int in range(8):
 			var start_x: float = -WORLD_HALF_EXTENT + float(chunk_x) * CHUNK_SIZE
 			var start_z: float = -WORLD_HALF_EXTENT + float(chunk_z) * CHUNK_SIZE
-			for _sample: int in range(tree_extra_samples):
+			var chunk: Vector2i = Vector2i(chunk_x, chunk_z)
+			for slot: int in range(tree_extra_samples):
 				var x: float = start_x + rng.randf_range(4.0, CHUNK_SIZE - 4.0)
 				var z: float = start_z + rng.randf_range(4.0, CHUNK_SIZE - 4.0)
 				if Vector2(x, z).distance_to(Vector2(0.0, 38.0)) < 112.0 \
@@ -195,53 +196,60 @@ func _append_density_extras(extra_ratio: float, occupied: Dictionary) -> void:
 				var variant: int = rng.randi_range(0, 5)
 				var scale: float = rng.randf_range(0.82, 1.2)
 				foliage_definitions.append({
-					"id": "tree_extra_%05d" % tree_index,
+					"id": "tree_extra_%d_%d_%03d" % [chunk_x, chunk_z, slot],
 					"type": "tree",
 					"variant": variant,
 					"position": Vector3(x, terrain.height_at(x, z), z),
 					"height": tree_heights[variant] * scale,
 					"scale": scale,
 					"yaw": rng.randf_range(0.0, TAU),
-					"chunk": Vector2i(chunk_x, chunk_z)
+					"chunk": chunk
 				})
-				tree_index += 1
-			for _sample: int in range(bush_extra_samples):
+			for slot: int in range(bush_extra_samples):
 				var bush_x: float = start_x + rng.randf_range(3.0, CHUNK_SIZE - 3.0)
 				var bush_z: float = start_z + rng.randf_range(3.0, CHUNK_SIZE - 3.0)
 				var bush_density: float = terrain.forest_density_at(bush_x, bush_z)
 				if bush_density < 0.38 or rng.randf() > bush_density * 0.32:
 					continue
 				foliage_definitions.append({
-					"id": "bush_extra_%05d" % bush_index,
+					"id": "bush_extra_%d_%d_%03d" % [chunk_x, chunk_z, slot],
 					"type": "bush",
 					"variant": rng.randi_range(0, 1),
 					"position": Vector3(bush_x, terrain.height_at(bush_x, bush_z), bush_z),
 					"scale": rng.randf_range(0.7, 1.25),
 					"yaw": rng.randf_range(0.0, TAU),
-					"chunk": Vector2i(chunk_x, chunk_z)
+					"chunk": chunk
 				})
-				bush_index += 1
-			for _sample: int in range(rock_extra_samples):
+			for slot: int in range(rock_extra_samples):
 				var rock_x: float = start_x + rng.randf_range(3.0, CHUNK_SIZE - 3.0)
 				var rock_z: float = start_z + rng.randf_range(3.0, CHUNK_SIZE - 3.0)
 				if Vector2(rock_x, rock_z).distance_to(Vector2(0.0, 38.0)) < 86.0 \
 						or rng.randf() > 0.28:
 					continue
 				foliage_definitions.append({
-					"id": "rock_extra_%05d" % rock_index,
+					"id": "rock_extra_%d_%d_%03d" % [chunk_x, chunk_z, slot],
 					"type": "rock",
 					"variant": rng.randi_range(0, 1),
 					"position": Vector3(rock_x, terrain.height_at(rock_x, rock_z), rock_z),
 					"scale": rng.randf_range(0.38, 0.88),
 					"yaw": rng.randf_range(0.0, TAU),
-					"chunk": Vector2i(chunk_x, chunk_z)
+					"chunk": chunk
 				})
-				rock_index += 1
 
 func _density_keeps(definition: Dictionary) -> bool:
+	var foliage_id: String = str(definition["id"])
+	if foliage_id.contains("_extra_"):
+		if density_built_multiplier <= 1.0:
+			return false
+		var parts: PackedStringArray = foliage_id.split("_")
+		var slot: int = int(parts[parts.size() - 1])
+		var extra_ratio: float = minf(0.25, density_built_multiplier - 1.0)
+		var samples_per_chunk: int = TREES_PER_CHUNK if definition["type"] == "tree" \
+			else 56 if definition["type"] == "bush" else 24
+		return slot < roundi(samples_per_chunk * extra_ratio)
 	if density_built_multiplier >= 1.0:
 		return true
-	var parts: PackedStringArray = str(definition["id"]).split("_")
+	var parts: PackedStringArray = foliage_id.split("_")
 	var index: int = int(parts[parts.size() - 1])
 	var salt: int = 31 if definition["type"] == "tree" else 67 if definition["type"] == "bush" else 101
 	var rank: int = absi(index * 2654435761 + salt * 40503) % 1000
