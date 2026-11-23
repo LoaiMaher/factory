@@ -170,6 +170,9 @@ func _ready() -> void:
 			terrain_build_ms, foliage_build_ms)
 		add_child(benchmark_runner)
 	var user_arguments: PackedStringArray = OS.get_cmdline_user_args()
+	if user_arguments.has("--capture-machine-panels"):
+		call_deferred("_capture_machine_panels")
+		return
 	if user_arguments.has("--capture-inventory") or user_arguments.has("--capture-storage"):
 		call_deferred("_capture_inventory_storage",
 			user_arguments.has("--capture-inventory"), user_arguments.has("--capture-storage"))
@@ -1263,6 +1266,7 @@ func _capture_inventory_storage(capture_inventory: bool, capture_storage: bool) 
 			if empty_slot >= 0:
 				player.inventory.place_into(empty_slot, split_stack)
 			break
+	hud.refresh_hotbar()
 	if capture_inventory:
 		hud.open_inventory()
 		await get_tree().create_timer(0.4).timeout
@@ -1281,6 +1285,72 @@ func _capture_inventory_storage(capture_inventory: bool, capture_storage: bool) 
 			await get_tree().create_timer(0.4).timeout
 			await RenderingServer.frame_post_draw
 			_write_capture("storage")
+	get_tree().quit()
+
+func _capture_machine_panels() -> void:
+	autosave_enabled = false
+	hud.show_toast("", 0.0)
+	if hud.help_panel.visible:
+		hud.toggle_help()
+	if not hud.icon_cache.prepared:
+		await hud.icon_cache.icons_ready
+	player.set_physics_process(false)
+	player.set_panel_open(false)
+	player.velocity = Vector3.ZERO
+	player.inventory = FrontierInventory.from_totals({
+		"iron_ore": 24, "iron_ingot": 18, "wire": 7, "rotor": 3
+	})
+	hud.refresh_hotbar()
+	sim.power.bypass = true
+	var scenarios: Array[Dictionary] = [
+		{"name": "smelter-running", "kind": "smelter", "x": -18.0,
+			"recipe": "iron_ingot", "inputs": {"iron_ore": 1}},
+		{"name": "constructor-waiting-input", "kind": "constructor", "x": -6.0},
+		{"name": "assembler-output-full", "kind": "assembler", "x": 6.0,
+			"recipe": "hull_panel", "inputs": {"iron_plate": 6, "screw": 12},
+			"outputs": {"hull_panel": 20}},
+		{"name": "miner", "kind": "miner_mk1", "x": 18.0}
+	]
+	var capture_entities: Array[Dictionary] = []
+	for scenario: Dictionary in scenarios:
+		var x: float = float(scenario["x"])
+		var position := Vector3(x, terrain.height_at(x, 38.0), 38.0)
+		var entity_id: int = -1
+		if str(scenario["kind"]) == "miner_mk1":
+			var node_id: int = 900001
+			sim.register_node(node_id, "iron_ore", "pure", position, 90.0)
+			entity_id = sim.add_entity("miner_mk1", position, 0.0,
+				{"node_id": node_id})
+		else:
+			var entity_data: Dictionary = {}
+			if scenario.has("recipe"):
+				entity_data["recipe"] = str(scenario["recipe"])
+			entity_id = sim.add_entity(str(scenario["kind"]), position, 0.0, entity_data)
+			if entity_id >= 0:
+				var entity: FactoryEntity = sim.entities[entity_id]
+				entity.input_buffer = scenario.get("inputs", {}).duplicate(true)
+				entity.output_buffer = scenario.get("outputs", {}).duplicate(true)
+		if entity_id >= 0:
+			capture_entities.append({"id": entity_id, "name": scenario["name"]})
+	sim.tick(0.05)
+	visuals.refresh()
+	set_physics_process(false)
+	for capture: Dictionary in capture_entities:
+		var entity_id: int = int(capture["id"])
+		if not sim.entities.has(entity_id):
+			continue
+		var entity: FactoryEntity = sim.entities[entity_id]
+		var machine_view: Dictionary = sim.machine_view(entity_id)
+		print("MACHINE_CAPTURE %s: %s" % [
+			str(capture["name"]), str(machine_view.get("display_status", ""))])
+		var target: Vector3 = entity.position + Vector3(0.0, 2.0, 0.0)
+		var camera_position: Vector3 = target + Vector3(10.0, 7.0, 12.0)
+		_set_capture_view(target, camera_position)
+		hud.open_entity(entity_id)
+		await get_tree().create_timer(0.35).timeout
+		await RenderingServer.frame_post_draw
+		_write_capture("machine-" + str(capture["name"]))
+		hud.close_panel()
 	get_tree().quit()
 
 func _apply_graphics_settings() -> void:
