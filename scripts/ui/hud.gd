@@ -303,6 +303,7 @@ func _open_machine_panel(entity_id: int) -> void:
 		machine_panel.free()
 		machine_panel = null
 		return
+	machine_panel.set_creative_mode(creative_mode_active)
 	panel_body.add_child(machine_panel)
 	active_panel = true
 	player.set_panel_open(true)
@@ -1073,6 +1074,8 @@ func _update_hotbar() -> void:
 
 func set_creative_mode(active: bool) -> void:
 	creative_mode_active = active
+	if machine_panel != null:
+		machine_panel.set_creative_mode(active)
 	if creative_mode_label != null:
 		creative_mode_label.visible = active
 	_update_hotbar()

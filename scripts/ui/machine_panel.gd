@@ -9,6 +9,7 @@ var sim: FactorySim
 var player: FactoryPlayer
 var icon_cache: FactoryIconCache
 var entity_id: int = -1
+var creative_mode_active: bool = false
 var recipe_ids: Array[String] = []
 var recipe_selector: OptionButton
 var building_icon: TextureRect
@@ -98,8 +99,6 @@ func _build(view: Dictionary) -> void:
 	input_flow.add_child(arrow)
 	for _index: int in range(output_slot_count):
 		recipe_output_slots.append(_make_rate_slot(output_flow))
-	if not recipe_ids.is_empty():
-		pass
 	recipe_selector = OptionButton.new()
 	recipe_selector.custom_minimum_size = Vector2(220.0, 38.0)
 	recipe_selector.item_selected.connect(_on_recipe_selected)
@@ -116,7 +115,6 @@ func _build(view: Dictionary) -> void:
 	var slot_row := HBoxContainer.new()
 	slot_row.add_theme_constant_override("separation", 8)
 	production_column.add_child(slot_row)
-	var input_items: Array = view.get("inputs", [])
 	for _index: int in range(input_slot_count):
 		input_cards.append(_make_input_card(slot_row))
 	var output_column := VBoxContainer.new()
@@ -148,6 +146,7 @@ func _build(view: Dictionary) -> void:
 	production_column.add_child(power_label)
 	why_label = _label("", 12)
 	why_label.clip_text = true
+	why_label.autowrap_mode = TextServer.AUTOWRAP_OFF
 	why_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	production_column.add_child(why_label)
 
@@ -199,7 +198,7 @@ func _update_recipe(view: Dictionary) -> void:
 	_update_rate_slots(recipe_output_slots, outputs, "per_min")
 	var recipe_id: String = str(view.get("recipe_id", ""))
 	var selected_index: int = recipe_ids.find(recipe_id) + 1
-	if selected_index > 0 and recipe_selector.get_selected_id() != selected_index:
+	if selected_index > 0 and recipe_selector.selected != selected_index:
 		recipe_selector.select(selected_index)
 	var options: Array = view.get("recipes", [])
 	for index: int in range(mini(options.size(), recipe_ids.size())):
@@ -242,24 +241,24 @@ func _update_slots(view: Dictionary) -> void:
 			int(item.get("count", 0)), int(item.get("maximum", 0))]
 		(card["rate"] as Label).text = "needs %.0f/min, getting %.0f/min" % [
 			float(item.get("needs_per_min", 0.0)), float(item.get("getting_per_min", 0.0))]
-		var output_buffer: Dictionary = view.get("output_buffer", {})
-		var output_item: String = ""
-		for item_variant: Variant in output_buffer:
-			if int(output_buffer[item_variant]) > 0:
-				output_item = str(item_variant)
-				break
-		if output_item.is_empty():
-			var outputs: Array = view.get("outputs", [])
-			if not outputs.is_empty():
-				output_item = str(outputs[0].get("item_id", ""))
-		var output_count: int = int(output_buffer.get(output_item, 0))
-		output_item_label.text = Items.item_name(output_item) if not output_item.is_empty() else "Output"
-		output_slot.icon = icon_cache.get_icon("item", output_item) \
-			if icon_cache != null and not output_item.is_empty() else null
-		output_slot.text = "×%d" % output_count if output_count > 0 else ""
-		output_slot.tooltip_text = "%s · %d" % [
-			Items.item_name(output_item), output_count] if not output_item.is_empty() else "No output"
-		output_slot.disabled = output_count <= 0
+	var output_buffer: Dictionary = view.get("output_buffer", {})
+	var output_item: String = ""
+	for item_variant: Variant in output_buffer:
+		if int(output_buffer[item_variant]) > 0:
+			output_item = str(item_variant)
+			break
+	if output_item.is_empty():
+		var outputs: Array = view.get("outputs", [])
+		if not outputs.is_empty():
+			output_item = str(outputs[0].get("item_id", ""))
+	var output_count: int = int(output_buffer.get(output_item, 0))
+	output_item_label.text = Items.item_name(output_item) if not output_item.is_empty() else "Output"
+	output_slot.icon = icon_cache.get_icon("item", output_item) \
+		if icon_cache != null and not output_item.is_empty() else null
+	output_slot.text = "×%d" % output_count if output_count > 0 else ""
+	output_slot.tooltip_text = "%s · %d" % [
+		Items.item_name(output_item), output_count] if not output_item.is_empty() else "No output"
+	output_slot.disabled = output_count <= 0
 
 func _update_progress_and_rates(view: Dictionary) -> void:
 	var cycle_seconds: float = float(view.get("cycle_seconds", 0.0))
@@ -334,6 +333,9 @@ func _make_input_card(parent: HBoxContainer) -> Dictionary:
 func _on_inventory_slot_input(slot_index: int, button_index: int, shift_pressed: bool) -> void:
 	if not shift_pressed or button_index != MOUSE_BUTTON_LEFT or player == null or sim == null:
 		return
+	if creative_mode_active:
+		toast_requested.emit("Creative items can't be inserted into machines")
+		return
 	if slot_index < 0 or slot_index >= player.inventory.slots.size():
 		return
 	var slot: Dictionary = player.inventory.slots[slot_index]
@@ -348,6 +350,9 @@ func _on_inventory_slot_input(slot_index: int, button_index: int, shift_pressed:
 	inventory_grid.configure(player.inventory, icon_cache)
 	inventory_changed.emit()
 	refresh()
+
+func set_creative_mode(active: bool) -> void:
+	creative_mode_active = active
 
 func _take_output() -> void:
 	if player == null or sim == null:
