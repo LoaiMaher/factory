@@ -12,6 +12,7 @@ var model: HotbarModel
 var icon_cache: FactoryIconCache
 var inventory: Dictionary = {}
 var unlocked_tiers: int = 0
+var creative_mode_active: bool = false
 var slot_buttons: Array[Button] = []
 var slot_icons: Array[TextureRect] = []
 var slot_abbreviations: Array[Label] = []
@@ -40,11 +41,13 @@ func _process(delta: float) -> void:
 		if selected_name_time == 0.0 and selected_name != null:
 			selected_name.text = ""
 
-func refresh(factory_model: HotbarModel, current_inventory: Dictionary, tier: int) -> void:
+func refresh(factory_model: HotbarModel, current_inventory: Dictionary, tier: int,
+		creative_mode: bool = false) -> void:
 	if factory_model != null:
 		model = factory_model
 	inventory = current_inventory
 	unlocked_tiers = tier
+	creative_mode_active = creative_mode
 	if model == null or slot_buttons.is_empty():
 		return
 	if displayed_selection != model.selected_index:
@@ -59,13 +62,14 @@ func refresh(factory_model: HotbarModel, current_inventory: Dictionary, tier: in
 		var slot: Dictionary = model.slot_at(index)
 		var locked: bool = model.is_locked(index, unlocked_tiers)
 		var quantity: int = model.quantity(index, inventory)
-		var has_count: bool = quantity > 0
+		var unlimited: bool = creative_mode_active and slot.get("type", "") == "building" and not locked
+		var has_count: bool = quantity > 0 or unlimited
 		var icon: Texture2D = icon_cache.get_icon(str(slot.get("type", "")), str(slot.get("id", ""))) if icon_cache != null else null
 		slot_icons[index].texture = icon
 		slot_icons[index].visible = icon != null
 		slot_abbreviations[index].visible = icon == null and not slot.is_empty()
 		slot_abbreviations[index].text = _abbreviation(slot)
-		slot_quantities[index].text = str(quantity) if not slot.is_empty() else ""
+		slot_quantities[index].text = "∞" if unlimited else str(quantity) if not slot.is_empty() else ""
 		slot_locks[index].visible = locked
 		if locked:
 			var building_id: String = str(slot.get("id", ""))

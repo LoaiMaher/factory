@@ -10,6 +10,8 @@ signal craft_requested(recipe_id: String)
 signal quit_requested
 signal hotbar_selected(index: int)
 signal hotbar_changed(index: int)
+signal creative_toggle_requested
+signal creative_item_requested(item_id: String)
 
 var sim: FactorySim
 var building_definitions: Dictionary = BuildingDefs.all()
@@ -19,6 +21,7 @@ var tier_definitions: Array[Dictionary] = Progression.tiers()
 var root: Control
 var info_label: Label
 var power_bypass_label: Label
+var creative_mode_label: Label
 var toast_label: Label
 var hint_label: Label
 var crosshair_hint: Label
@@ -45,6 +48,7 @@ var selected_entity_id: int = -1
 var player: FactoryPlayer
 var unlocked_tiers: int = 0
 var audio_manager: Node
+var creative_mode_active: bool = false
 
 func _ready() -> void:
 	root = Control.new()
@@ -90,6 +94,17 @@ func _ready() -> void:
 	power_bypass_label.add_theme_color_override("font_color", Color("e8792b"))
 	power_bypass_label.text = "DEV: POWER BYPASS"
 	root.add_child(power_bypass_label)
+	creative_mode_label = Label.new()
+	creative_mode_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	creative_mode_label.set_anchors_preset(Control.PRESET_TOP_RIGHT)
+	creative_mode_label.position = Vector2(-690, 78)
+	creative_mode_label.size = Vector2(170, 22)
+	creative_mode_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	creative_mode_label.add_theme_font_size_override("font_size", 14)
+	creative_mode_label.add_theme_color_override("font_color", Color("e8792b"))
+	creative_mode_label.text = "CREATIVE"
+	creative_mode_label.visible = false
+	root.add_child(creative_mode_label)
 	hint_label = Label.new()
 	hint_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	hint_label.position = Vector2(18, 660)
@@ -160,6 +175,7 @@ func _process(delta: float) -> void:
 		info_label.text = "Power %0.0f / %0.0f MW\nTIER %d  ·  %s\n%s" % [totals.y, totals.x, unlocked_tiers, milestone_status, requirement_status]
 		info_label.add_theme_color_override("font_color", Color("e35c4e") if totals.y > totals.x else Color("d4ddd1"))
 		power_bypass_label.visible = sim.power.bypass
+		creative_mode_label.visible = creative_mode_active
 		if selected_entity_id >= 0 and sim.entities.has(selected_entity_id) and entity_status_label != null:
 			var entity: FactoryEntity = sim.entities[selected_entity_id]
 			entity_status_label.text = _status_markup("%s  ·  %s" % [entity.kind.replace("_", " ").capitalize(), entity.status])
@@ -237,7 +253,13 @@ func open_inventory() -> void:
 	inventory_open = true
 	selected_entity_id = -1
 	_set_panel("Inventory & hand crafting")
-	panel_body.add_child(_label("Starter cargo and delivered items", 15))
+	panel_body.add_child(_label(
+		"Click an item to add 100 in Creative mode." if creative_mode_active
+		else "Starter cargo and delivered items", 15))
+	var creative_toggle: Button = Button.new()
+	creative_toggle.text = "Return to Survival" if creative_mode_active else "Switch to Creative"
+	creative_toggle.pressed.connect(creative_toggle_requested.emit)
+	panel_body.add_child(creative_toggle)
 	assignment_hint = _label("Hover an item, press 1–0 to assign · Right-click a slot to clear", 13)
 	panel_body.add_child(assignment_hint)
 	var items: Array[String] = []
@@ -251,6 +273,7 @@ func open_inventory() -> void:
 		item_button.alignment = HORIZONTAL_ALIGNMENT_LEFT
 		item_button.mouse_entered.connect(_set_assignment_target.bind("item", item_id))
 		item_button.mouse_exited.connect(_clear_assignment_target.bind("item", item_id))
+		item_button.pressed.connect(creative_item_requested.emit.bind(item_id))
 		panel_body.add_child(item_button)
 	for recipe_id: String in recipe_definitions:
 		var recipe_button: Button = Button.new()
@@ -271,8 +294,9 @@ func open_hub() -> void:
 	for index: int in range(1, tier_definitions.size()):
 		var tier: Dictionary = tier_definitions[index]
 		var button: Button = Button.new()
-		button.text = "Tier %d · %s  —  %s" % [index, tier["name"], str(tier["cost"])]
-		button.disabled = index > unlocked_tiers + 1
+		button.text = "Tier %d · %s  —  %s" % [
+			index, tier["name"], "Unlocked" if creative_mode_active else str(tier["cost"])]
+		button.disabled = creative_mode_active or index > unlocked_tiers + 1
 		button.pressed.connect(tier_requested.emit.bind(index))
 		panel_body.add_child(button)
 	var close: Button = Button.new()
@@ -315,7 +339,8 @@ func show_build_menu(available: Array[String]) -> void:
 		var label: String = building_id.replace("_", " ").capitalize()
 		if int(definition.get("tier", 0)) > unlocked_tiers:
 			label += "\nLOCKED · Tier %d" % int(definition["tier"])
-		button.text = "%s\n%s" % [label, _cost_text(definition.get("cost", {}))]
+		var cost_label: String = "Free" if creative_mode_active else _cost_text(definition.get("cost", {}))
+		button.text = "%s\n%s" % [label, cost_label]
 		button.custom_minimum_size = Vector2(145.0, 64.0)
 		button.mouse_entered.connect(_set_assignment_target.bind("building", building_id))
 		button.mouse_exited.connect(_clear_assignment_target.bind("building", building_id))
@@ -407,7 +432,7 @@ func _create_help_panel() -> void:
 	guide.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	help_panel.add_child(guide)
 	guide.add_child(_label("PLANETARY FIELD GUIDE", 19))
-	guide.add_child(_label("WASD move · Shift sprint · Space jump · Mouse look\nE interact / mine · B build · R rotate · F dismantle · X dismantle mode\nTab inventory and craft · F5 save · F9 load · H toggle this guide", 15))
+	guide.add_child(_label("WASD move · Shift sprint · Space jump · Mouse look\nE interact / mine · B build · R rotate · F dismantle · X dismantle mode\nTab inventory and craft · F7 creative mode · F5 save · F9 load · H toggle this guide", 15))
 
 func _create_hotbar() -> void:
 	hotbar = FactoryHotbar.new()
@@ -428,7 +453,14 @@ func _on_hotbar_icons_ready() -> void:
 
 func _update_hotbar() -> void:
 	if hotbar != null:
-		hotbar.refresh(hotbar_model, player.inventory if player != null else {}, unlocked_tiers)
+		hotbar.refresh(hotbar_model, player.inventory if player != null else {},
+			unlocked_tiers, creative_mode_active)
+
+func set_creative_mode(active: bool) -> void:
+	creative_mode_active = active
+	if creative_mode_label != null:
+		creative_mode_label.visible = active
+	_update_hotbar()
 
 func _clear_hotbar_slot(index: int) -> void:
 	if hotbar_model != null and hotbar_model.clear_slot(index):

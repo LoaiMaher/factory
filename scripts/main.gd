@@ -17,6 +17,7 @@ var audio_manager: Node
 var viewmodel: FactoryViewmodel
 var build_system: FactoryBuildSystem = FactoryBuildSystem.new()
 var hotbar_model: HotbarModel = HotbarModel.new()
+var creative_mode: CreativeMode = CreativeMode.new()
 var placement: FactoryPlacement = FactoryPlacement.new()
 var belt_start: Dictionary = {}
 var save_system: FactorySaveSystem = FactorySaveSystem.new()
@@ -92,7 +93,10 @@ func _ready() -> void:
 	hud.load_requested.connect(_load_game)
 	hud.tier_requested.connect(_buy_tier)
 	hud.craft_requested.connect(_hand_craft)
+	hud.creative_toggle_requested.connect(_toggle_creative_mode)
+	hud.creative_item_requested.connect(_grant_creative_item)
 	hud.quit_requested.connect(_quit_game)
+	hud.set_creative_mode(creative_mode.active)
 	audio_manager = load("res://scripts/world/audio_manager.gd").new() as Node
 	audio_manager.name = "FactoryAudio"
 	audio_manager.call("setup", sim, player)
@@ -142,6 +146,9 @@ func _ready() -> void:
 			break
 		if argument == "--capture-v9":
 			call_deferred("_capture_v9_shots")
+			break
+		if argument == "--capture-v14":
+			call_deferred("_capture_v14_shots")
 			break
 		if argument.begins_with("--capture-"):
 			call_deferred("_capture_screenshot", argument.trim_prefix("--capture-"))
@@ -249,6 +256,9 @@ func _unhandled_input(event: InputEvent) -> void:
 		elif key == KEY_H:
 			show_help = not show_help
 			hud.toggle_help()
+			get_viewport().set_input_as_handled()
+		elif key == KEY_F7:
+			_toggle_creative_mode()
 			get_viewport().set_input_as_handled()
 		elif key == KEY_B and not hud.panel_is_open():
 			_toggle_build_menu()
@@ -617,16 +627,14 @@ func _nearest_node_id(position: Vector3, max_distance: float = 1.5) -> int:
 	return closest
 
 func _can_afford(cost: Dictionary, multiplier: int) -> bool:
-	for item_id: String in cost:
-		if int(player.inventory.get(item_id, 0)) < int(cost[item_id]) * multiplier:
-			return false
-	return true
+	return creative_mode.can_afford(cost, player.inventory, multiplier)
 
 func _pay_cost(cost: Dictionary, multiplier: int) -> void:
-	for item_id: String in cost:
-		player.inventory[item_id] = int(player.inventory.get(item_id, 0)) - int(cost[item_id]) * multiplier
+	creative_mode.pay_cost(cost, player.inventory, multiplier)
 
 func _build_info(kind: String, status: String, cost: Dictionary, multiplier: int = 1) -> String:
+	if creative_mode.active:
+		return "%s · %s · Free" % [kind.replace("_", " ").capitalize(), status]
 	var parts: Array[String] = []
 	for item_id: String in cost:
 		var amount: int = int(cost[item_id]) * multiplier
@@ -893,10 +901,10 @@ func _dismantle_aimed() -> void:
 	if not sim.entities.has(entity_id) or sim.entities[entity_id].kind == "spire":
 		return
 	var refund: Dictionary = sim.remove_entity_with_refund(entity_id)
-	for item_id: String in refund:
-		player.inventory[item_id] = int(player.inventory.get(item_id, 0)) + int(refund[item_id])
+	creative_mode.add_refund(refund, player.inventory)
 	audio_manager.call("play_one_shot", "dismantle", player.global_position)
-	hud.show_toast("Dismantled · connected belts, materials and buffers refunded.")
+	hud.show_toast("Dismantled · %s." % (
+		"no refunds in Creative mode" if creative_mode.active else "connected belts, materials and buffers refunded"))
 
 func _save_game() -> void:
 	if save_backup_pending:
@@ -908,7 +916,8 @@ func _save_game() -> void:
 		"boulders": terrain.ore_boulders.to_dict(),
 		"foliage": foliage.state.to_dict()
 	}
-	if save_system.save_game(sim, player, unlocked_tiers, world_state, hotbar_model.to_dict(), sim.power.bypass):
+	if save_system.save_game(sim, player, unlocked_tiers, world_state, hotbar_model.to_dict(),
+			sim.power.bypass, creative_mode.to_dict()):
 		hud.show_toast("Saved to user://save.json")
 	else:
 		hud.show_toast("Save failed.")
@@ -930,6 +939,10 @@ func _load_saved_game(show_toast: bool) -> bool:
 	player.position = SafePlayerPosition.adjust(restore_position,
 		terrain.height_at(restore_position.x, restore_position.z), FactoryTerrain.WORLD_HALF_EXTENT)
 	unlocked_tiers = int(loaded["unlocked_tiers"])
+	creative_mode.load_dict(loaded.get("creative", {}))
+	if creative_mode.active:
+		unlocked_tiers = _highest_building_tier()
+	hud.set_creative_mode(creative_mode.active)
 	hotbar_model.load_dict(loaded.get("hotbar", {}))
 	if hotbar_model.selected_index >= 0 and hotbar_model.is_locked(hotbar_model.selected_index, unlocked_tiers):
 		hotbar_model.selected_index = -1
@@ -960,6 +973,9 @@ func _load_saved_game(show_toast: bool) -> bool:
 	return true
 
 func _buy_tier(index: int) -> void:
+	if creative_mode.active:
+		hud.show_toast("All tiers are unlocked in Creative mode.")
+		return
 	if index != unlocked_tiers + 1:
 		return
 	var tier: Dictionary = tier_definitions[index]
@@ -977,21 +993,57 @@ func _hand_craft(recipe_id: String) -> void:
 	if not recipe_definitions.has(recipe_id):
 		return
 	var recipe: Dictionary = recipe_definitions[recipe_id]
-	for item_id: String in recipe["inputs"]:
-		if int(player.inventory.get(item_id, 0)) < int(recipe["inputs"][item_id]):
-			hud.show_toast("Missing %s." % Items.item_name(item_id))
-			return
+	if not creative_mode.active:
+		for item_id: String in recipe["inputs"]:
+			if int(player.inventory.get(item_id, 0)) < int(recipe["inputs"][item_id]):
+				hud.show_toast("Missing %s." % Items.item_name(item_id))
+				return
 	await get_tree().create_timer(0.5).timeout
-	for item_id: String in recipe["inputs"]:
-		if int(player.inventory.get(item_id, 0)) < int(recipe["inputs"][item_id]):
-			hud.show_toast("Missing %s." % Items.item_name(item_id))
-			return
-	for item_id: String in recipe["inputs"]:
-		player.inventory[item_id] = int(player.inventory.get(item_id, 0)) - int(recipe["inputs"][item_id])
+	if not creative_mode.active:
+		for item_id: String in recipe["inputs"]:
+			if int(player.inventory.get(item_id, 0)) < int(recipe["inputs"][item_id]):
+				hud.show_toast("Missing %s." % Items.item_name(item_id))
+				return
+	_pay_cost(recipe["inputs"], 1)
 	for item_id: String in recipe["outputs"]:
 		player.inventory[item_id] = int(player.inventory.get(item_id, 0)) + int(recipe["outputs"][item_id])
 	hud.show_toast("Crafted %s." % Items.item_name(str(recipe["outputs"].keys()[0])))
 	hud.open_inventory()
+
+func _toggle_creative_mode() -> void:
+	if creative_mode.active:
+		var restored: Dictionary = creative_mode.exit()
+		var restored_inventory: Dictionary = restored.get("inventory", {})
+		player.inventory.clear()
+		player.inventory.merge(restored_inventory, true)
+		unlocked_tiers = int(restored.get("unlocked_tiers", 0))
+		hud.show_toast("Survival mode · inventory and tiers restored.")
+	else:
+		creative_mode.enter(player.inventory, unlocked_tiers)
+		unlocked_tiers = _highest_building_tier()
+		hud.show_toast("Creative mode enabled · building and crafting are free.")
+	if hotbar_model.selected_index >= 0 and hotbar_model.is_locked(hotbar_model.selected_index, unlocked_tiers):
+		hotbar_model.selected_index = -1
+	_apply_hotbar_selection(false)
+	hud.unlocked_tiers = unlocked_tiers
+	hud.set_creative_mode(creative_mode.active)
+	if hud.inventory_open:
+		hud.open_inventory()
+	hud.refresh_hotbar()
+
+func _grant_creative_item(item_id: String) -> void:
+	if not creative_mode.grant_stack(player.inventory, item_id):
+		return
+	hud.show_toast("Added 100 %s." % Items.item_name(item_id))
+	hud.refresh_hotbar()
+	if hud.inventory_open:
+		hud.open_inventory()
+
+func _highest_building_tier() -> int:
+	var highest: int = 0
+	for building_id: String in building_definitions:
+		highest = maxi(highest, int(building_definitions[building_id].get("tier", 0)))
+	return highest
 
 func _on_panel_closed() -> void:
 	hud.close_build_menu()
@@ -1266,6 +1318,89 @@ func _capture_v9_shots() -> void:
 	await get_tree().process_frame
 	await RenderingServer.frame_post_draw
 	_write_capture("build-tool")
+	get_tree().quit()
+
+func _capture_v14_shots() -> void:
+	autosave_enabled = false
+	hud.show_toast("", 0.0)
+	if hud.help_panel.visible:
+		hud.toggle_help()
+	var iron_node: Dictionary = {}
+	for node: Dictionary in terrain.nodes:
+		if str(node["item"]) == "iron_ore" and not bool(node.get("hidden", false)):
+			iron_node = node
+			break
+	if iron_node.is_empty():
+		push_error("V14 capture needs an iron resource node")
+		get_tree().quit()
+		return
+	var node_position: Vector3 = iron_node["position"]
+	var node_target: Vector3 = node_position + Vector3.UP * 0.65
+	var camera_x: float = node_position.x + 4.2
+	var camera_z: float = node_position.z + 4.2
+	var node_camera: Vector3 = Vector3(camera_x, terrain.height_at(camera_x, camera_z) + 1.7, camera_z)
+	_set_capture_view(node_target, node_camera)
+	await get_tree().create_timer(0.8).timeout
+	await RenderingServer.frame_post_draw
+	_write_capture("ore-node-eye-level")
+
+	var boulder: Dictionary = terrain.boulder_definitions[0]
+	var boulder_position: Vector3 = boulder["position"]
+	var boulder_target: Vector3 = boulder_position + Vector3.UP * 0.9
+	var boulder_camera: Vector3 = boulder_position + Vector3(0.0, 1.62, 3.0)
+	var field_camera: Vector3 = Vector3(
+		0.0, terrain.height_at(0.0, 38.0) + 1.62, 38.0)
+	_set_capture_view(field_camera + Vector3(0.0, -0.1, -8.0), field_camera)
+	capture_mining_override = true
+	viewmodel.set_mining_active(true)
+	await get_tree().create_timer(0.25).timeout
+	await RenderingServer.frame_post_draw
+	_write_capture("pick-held")
+
+	_set_capture_view(boulder_target, boulder_camera)
+	await get_tree().physics_frame
+	viewmodel.play_mining_swing()
+	var ray: PhysicsRayQueryParameters3D = PhysicsRayQueryParameters3D.create(
+		player.camera.global_position,
+		player.camera.global_position - player.camera.global_basis.z * 8.0)
+	ray.collision_mask = 2
+	var impact: Dictionary = get_world_3d().direct_space_state.intersect_ray(ray)
+	var impact_position: Vector3 = impact.get(
+		"position", boulder_target + Vector3(0.0, 0.0, 1.0))
+	var impact_distance: float = impact_position.distance_to(player.camera.global_position)
+	print("V14 mining impact: ray hit %s, camera distance %.2f m" % [
+		str(not impact.is_empty()), impact_distance])
+	if impact_distance < 1.2:
+		push_error("V14 mining dust would be inside the camera safety radius")
+	visuals.spawn_mining_dust(impact_position, player.camera.global_position)
+	await get_tree().create_timer(0.1).timeout
+	await RenderingServer.frame_post_draw
+	_write_capture("pick-swing")
+	capture_mining_override = false
+	viewmodel.set_mining_active(false)
+
+	_set_capture_view(field_camera + Vector3(0.0, -0.1, -8.0), field_camera)
+	var survival_inventory: Dictionary = player.inventory.duplicate(true)
+	var survival_tiers: int = unlocked_tiers
+	_toggle_creative_mode()
+	hud.open_inventory()
+	_grant_creative_item("copper_ore")
+	await get_tree().process_frame
+	await RenderingServer.frame_post_draw
+	_write_capture("creative-hud")
+
+	_toggle_creative_mode()
+	var restored_inventory: Dictionary = player.inventory.duplicate(true)
+	var restored_tiers: int = unlocked_tiers
+	if restored_inventory != survival_inventory or restored_tiers != survival_tiers:
+		push_error("V14 survival snapshot was not restored exactly")
+	hud.open_inventory()
+	await get_tree().process_frame
+	await RenderingServer.frame_post_draw
+	_write_capture("survival-restored")
+	print("V14 creative snapshot restored: %s, tiers %d" % [
+		str(restored_inventory == survival_inventory), restored_tiers
+	])
 	get_tree().quit()
 
 func _capture_machine_set() -> void:

@@ -29,6 +29,7 @@ func _run_all() -> void:
 	_test_ore_boulders()
 	_test_foliage_state()
 	_test_hotbar_model()
+	_test_creative_mode()
 	_test_full_hotbar_build_menu_selection()
 	_test_hotbar_input_filtering()
 	print("RESULT: %d/%d test groups passed" % [passed_groups, groups])
@@ -1170,6 +1171,67 @@ func _test_hotbar_model() -> void:
 		and full_build_system.selected == "smelter"
 		and full_result.get("reason", "") == "Hotbar full — hover an entry and press 1–0 to assign",
 		str([full_result, full_model.to_dict(), full_build_system.selected]))
+	_finish_group()
+
+func _test_creative_mode() -> void:
+	var inventory: Dictionary = {"iron_plate": 7, "wire": 13}
+	var original_inventory: Dictionary = inventory.duplicate(true)
+	var original_tiers: int = 1
+	var creative: CreativeMode = CreativeMode.new()
+	var entered: bool = creative.enter(inventory, original_tiers)
+	inventory.clear()
+	var smelter_cost: Dictionary = BuildingDefs.all()["smelter"]["cost"]
+	var can_place: bool = creative.can_afford(smelter_cost, inventory, 1)
+	creative.pay_cost(smelter_cost, inventory, 1)
+	var sim: FactorySim = FactorySim.new()
+	var placed: int = sim.add_entity("smelter", Vector3.ZERO) if can_place else -1
+	var restored: Dictionary = creative.exit()
+	_check("creative placement with empty inventory restores survival inventory and tiers",
+		entered and placed > 0 and inventory.is_empty()
+		and restored.get("inventory", {}) == original_inventory
+		and int(restored.get("unlocked_tiers", -1)) == original_tiers,
+		str([entered, placed, inventory, restored]))
+	var grant_inventory: Dictionary = {}
+	creative.enter(grant_inventory, 0)
+	var granted: bool = creative.grant_stack(grant_inventory, "iron_ore")
+	creative.add_refund({"iron_plate": 5}, grant_inventory)
+	_check("creative item clicks grant 100 and dismantling refunds are suppressed",
+		granted and int(grant_inventory.get("iron_ore", 0)) == 100
+		and int(grant_inventory.get("iron_plate", 0)) == 0,
+		str(grant_inventory))
+	creative.exit()
+
+	var save_system: FactorySaveSystem = FactorySaveSystem.new()
+	save_system.save_path = "user://creative_mode_round_trip_test.json"
+	var saved_sim: FactorySim = FactorySim.new()
+	var saved_player: FactoryPlayer = FactoryPlayer.new()
+	get_root().add_child(saved_player)
+	saved_player.inventory.clear()
+	saved_player.inventory.merge({"iron_plate": 100, "copper_ore": 100}, true)
+	var survival_snapshot: Dictionary = {"iron_plate": 21, "iron_rod": 9}
+	creative.enter(survival_snapshot, 2)
+	var save_ok: bool = save_system.save_game(saved_sim, saved_player, 2, {}, {},
+		saved_sim.power.bypass, creative.to_dict())
+	var restored_sim: FactorySim = FactorySim.new()
+	var restored_player: FactoryPlayer = FactoryPlayer.new()
+	get_root().add_child(restored_player)
+	var loaded: Dictionary = save_system.load_game(restored_sim, restored_player) if save_ok else {}
+	var loaded_creative: CreativeMode = CreativeMode.new()
+	loaded_creative.load_dict(loaded.get("creative", {}))
+	var creative_was_active: bool = loaded_creative.active
+	var creative_snapshot: Dictionary = loaded_creative.survival_inventory.duplicate(true)
+	var restored_state: Dictionary = loaded_creative.exit()
+	var snapshot_saved: bool = creative_snapshot == survival_snapshot
+	var inventory_restored: bool = restored_state.get("inventory", {}) == survival_snapshot
+	var tiers_restored: bool = int(restored_state.get("unlocked_tiers", -1)) == 2
+	_check("save/load retains creative mode and its survival snapshot",
+		save_ok and creative_was_active and snapshot_saved
+		and inventory_restored and tiers_restored,
+		str([save_ok, creative_was_active, snapshot_saved, inventory_restored,
+			tiers_restored, loaded, creative_snapshot, restored_state]))
+	DirAccess.remove_absolute(ProjectSettings.globalize_path(save_system.save_path))
+	saved_player.queue_free()
+	restored_player.queue_free()
 	_finish_group()
 
 func _test_full_hotbar_build_menu_selection() -> void:
