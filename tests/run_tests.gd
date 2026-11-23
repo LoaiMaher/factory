@@ -770,11 +770,20 @@ func _test_machine_panel_refresh_and_close() -> void:
 		refreshed_ids.append(child.get_instance_id())
 	var preserved: bool = child_ids == refreshed_ids \
 		and recipe_selector_id == machine_panel.recipe_selector.get_instance_id()
+	var selected_recipe: int = machine_panel.recipe_selector.selected
+	machine_panel.recipe_selector.get_popup().index_pressed.emit(selected_recipe)
+	var same_recipe_locked: bool = bool(sim.entities[entity_id].extra.get(
+		"recipe_locked", false))
+	var different_input_accepted: bool = sim.try_insert(
+		entity_id, "copper_ore", "in0")
+	var recipe_stayed_locked: bool = same_recipe_locked and not different_input_accepted \
+		and sim.entities[entity_id].recipe_id == "iron_ingot"
 	sim.remove_entity_with_refund(entity_id)
 	hud._process(0.2)
 	_check("machine refresh preserves child IDs and closes when its entity is removed",
-		preserved and not hud.panel_is_open() and hud.machine_panel == null,
-		str([child_ids, refreshed_ids, hud.panel_is_open()]))
+		preserved and recipe_stayed_locked and not hud.panel_is_open()
+		and hud.machine_panel == null,
+		str([child_ids, refreshed_ids, recipe_stayed_locked, hud.panel_is_open()]))
 	sim.register_node(7, "iron_ore", "pure", Vector3(20.0, 0.0, 10.0), 60.0)
 	var miner_id: int = sim.add_entity("miner_mk1", Vector3(20.0, 0.0, 10.0),
 		0.0, {"node_id": 7})

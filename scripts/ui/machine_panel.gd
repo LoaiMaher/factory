@@ -90,7 +90,7 @@ func _build(view: Dictionary) -> void:
 	recipe_selector = OptionButton.new()
 	recipe_selector.custom_minimum_size.y = 38.0
 	recipe_selector.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	recipe_selector.item_selected.connect(_on_recipe_selected)
+	recipe_selector.get_popup().index_pressed.connect(_on_recipe_selected)
 	production_column.add_child(recipe_selector)
 	_load_recipe_options(view)
 
@@ -496,7 +496,7 @@ func _take_output() -> void:
 func _on_recipe_selected(index: int) -> void:
 	if sim == null or index <= 0 or index - 1 >= recipe_ids.size():
 		return
-	sim.set_recipe(entity_id, recipe_ids[index - 1])
+	sim.set_recipe(entity_id, recipe_ids[index - 1], true)
 	refresh()
 
 func _label(text_value: String, font_size: int) -> Label:
