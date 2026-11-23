@@ -370,6 +370,9 @@ func _on_player_slot_input(slot_index: int, button_index: int, shift_pressed: bo
 	var item_id: String = str(slot.get("item_id", ""))
 	var quantity: int = int(slot.get("count", 0))
 	if shift_pressed and storage_open and not item_id.is_empty():
+		if creative_mode_active:
+			show_toast("Creative items can't be stored")
+			return
 		var moved: int = sim.insert_storage_item(selected_entity_id, item_id, quantity)
 		player.inventory.take_slot(slot_index, moved)
 		_refresh_open_inventory()
@@ -518,6 +521,9 @@ func _on_storage_slot_input(slot_index: int, button_index: int, shift_pressed: b
 			cursor_stack = {"item_id": item_id, "count": moved}
 			_set_cursor_origin("storage", slot_index, selected_entity_id, item_id)
 	else:
+		if creative_mode_active and cursor_origin_type != "storage":
+			show_toast("Creative items can't be stored")
+			return
 		var held_item_id: String = str(cursor_stack.get("item_id", ""))
 		var held_count: int = int(cursor_stack.get("count", 0))
 		if button_index == MOUSE_BUTTON_RIGHT \

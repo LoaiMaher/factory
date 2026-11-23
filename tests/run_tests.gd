@@ -47,6 +47,7 @@ func _run_all() -> void:
 	_test_inventory_save_migration()
 	_test_cursor_stack_save()
 	_test_cursor_stack_load()
+	_test_creative_storage_deposits()
 	print("RESULT: %d/%d test groups passed" % [passed_groups, groups])
 	quit(1 if failures > 0 else 0)
 
@@ -414,6 +415,34 @@ func _test_cursor_stack_load() -> void:
 		str([player.inventory.totals(), hud.cursor_stack]))
 	DirAccess.remove_absolute(ProjectSettings.globalize_path(save_system.save_path))
 	app.free()
+	hud.free()
+	player.free()
+	_finish_group()
+
+func _test_creative_storage_deposits() -> void:
+	var sim := FactorySim.new()
+	var storage_id: int = sim.add_entity("storage", Vector3.ZERO)
+	var player := FactoryPlayer.new()
+	get_root().add_child(player)
+	player.inventory = FrontierInventory.from_totals({"iron_ore": 5})
+	var hud := FactoryHUD.new()
+	hud.setup(sim, player)
+	get_root().add_child(hud)
+	hud.selected_entity_id = storage_id
+	hud.storage_open = true
+	hud.set_creative_mode(true)
+	hud._on_player_slot_input(0, MOUSE_BUTTON_LEFT, true)
+	var shift_blocked: bool = sim.entities[storage_id].input_buffer.is_empty()
+	hud.cursor_stack = {"item_id": "copper_ore", "count": 3}
+	hud._set_cursor_origin("player", -1, -1, "copper_ore")
+	hud._on_storage_slot_input(0, MOUSE_BUTTON_LEFT, false)
+	_check("Creative inventory deposits are blocked by shift-click and cursor placement",
+		shift_blocked and sim.entities[storage_id].input_buffer.is_empty()
+		and player.inventory.count("iron_ore") == 5
+		and hud.cursor_stack == {"item_id": "copper_ore", "count": 3}
+		and hud.toast_label.text == "Creative items can't be stored",
+		str([sim.entities[storage_id].input_buffer, player.inventory.totals(),
+			hud.cursor_stack, hud.toast_label.text]))
 	hud.free()
 	player.free()
 	_finish_group()
