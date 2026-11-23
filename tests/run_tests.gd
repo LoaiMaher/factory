@@ -871,6 +871,40 @@ func _test_save_migration_and_refunds() -> void:
 	_check("Take all moves storage contents and clears the buffer",
 		taken == {"iron_plate": 3, "cable": 2} and refund_sim.entities[take_storage].input_buffer.is_empty(), str(taken))
 
+	var creative_builder: Node = (load("res://scripts/main.gd") as Script).new() as Node
+	var creative_build_mode: CreativeMode = creative_builder.get("creative_mode") as CreativeMode
+	creative_build_mode.enter({"wire": 3}, 0)
+	var creative_sim: FactorySim = FactorySim.new()
+	var creative_source_data: Dictionary = creative_builder.call("_creative_build_extra",
+		{"recipe": "iron_ingot"})
+	var creative_source: int = creative_sim.add_entity("smelter", Vector3.ZERO, 0.0, creative_source_data)
+	var creative_target: int = creative_sim.add_entity("storage", Vector3(0.0, 0.0, 8.0))
+	var creative_belt_data: Dictionary = creative_builder.call("_creative_build_extra")
+	var creative_belt_result: Dictionary = creative_sim.add_belt("belt_mk1", creative_source, "out0",
+		creative_target, "in0", _port_curve(creative_sim, creative_source, "out0", creative_target, "in0"),
+		creative_belt_data)
+	var creative_belt_id: int = int(creative_belt_result.get("id", -1))
+	creative_sim.entities[creative_source].input_buffer["iron_ore"] = 2
+	var creative_belt: FactoryEntity = creative_sim.entities[creative_belt_id]
+	creative_belt.belt_items = [{"item": "copper_ore", "s": 0.5}]
+	var creative_saved: Dictionary = creative_sim.to_dict()
+	var creative_loaded_sim: FactorySim = FactorySim.new()
+	creative_loaded_sim.from_dict(creative_saved)
+	var machine_flag_saved: bool = bool(creative_loaded_sim.entities[creative_source].extra.get("creative_built", false))
+	var belt_flag_saved: bool = bool(creative_loaded_sim.entities[creative_belt_id].extra.get("creative_built", false))
+	var survival_after_exit: Dictionary = creative_build_mode.exit().get("inventory", {})
+	var buffered_items: Dictionary = {}
+	var creative_refund: Dictionary = creative_loaded_sim.remove_entity_with_refund(
+		creative_source, buffered_items)
+	creative_build_mode.add_refund(creative_refund, survival_after_exit)
+	_check("Creative-built entity and belt persist flags, skip costs, and refund contents",
+		creative_belt_id > 0 and machine_flag_saved and belt_flag_saved
+		and not creative_refund.has("iron_plate") and not creative_refund.has("concrete")
+		and survival_after_exit == {"wire": 3, "iron_ore": 2, "copper_ore": 1}
+		and buffered_items == {"iron_ore": 2, "copper_ore": 1},
+		str([creative_refund, survival_after_exit, buffered_items, machine_flag_saved, belt_flag_saved]))
+	creative_builder.free()
+
 	for path: String in [save_system.save_path, legacy_system.save_path]:
 		DirAccess.remove_absolute(ProjectSettings.globalize_path(path))
 	player.queue_free()

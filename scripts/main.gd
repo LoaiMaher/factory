@@ -499,7 +499,7 @@ func _build_belt_click(hit: Dictionary) -> void:
 			hud.show_toast("Not enough materials for this belt.")
 			return
 		var result: Dictionary = sim.add_belt(build_system.selected, int(belt_start["id"]), str(belt_start["port"]),
-			int(target["id"]), str(target["port"]), curve)
+			int(target["id"]), str(target["port"]), curve, _creative_build_extra())
 		if int(result["id"]) < 0:
 			audio_manager.call("play_one_shot", "invalid_placement", position)
 			hud.show_toast(str(result["reason"]))
@@ -536,7 +536,7 @@ func _build_belt_click(hit: Dictionary) -> void:
 	if not _can_afford(total_cost, 1):
 		hud.show_toast("Not enough materials for a belt pole and segment.")
 		return
-	var pole_id: int = sim.add_entity("belt_pole", ground_position, pole_yaw)
+	var pole_id: int = sim.add_entity("belt_pole", ground_position, pole_yaw, _creative_build_extra())
 	if pole_id < 0:
 		hud.show_toast("Can't place a belt pole here.")
 		return
@@ -545,7 +545,8 @@ func _build_belt_click(hit: Dictionary) -> void:
 		sim.remove_entity(pole_id)
 		hud.show_toast(route_reason)
 		return
-	var result: Dictionary = sim.add_belt(build_system.selected, int(belt_start["id"]), str(belt_start["port"]), pole_id, "in0", belt_curve)
+	var result: Dictionary = sim.add_belt(build_system.selected, int(belt_start["id"]), str(belt_start["port"]),
+		pole_id, "in0", belt_curve, _creative_build_extra())
 	if int(result["id"]) < 0:
 		sim.remove_entity(pole_id)
 		hud.show_toast(str(result["reason"]))
@@ -606,7 +607,8 @@ func _place_building(hit: Dictionary) -> void:
 	var entity_data: Dictionary = {"node_id": node_id}
 	if build_system.selected == "miner_mk1":
 		entity_data["supply"] = 50.0
-	var entity_id: int = sim.add_entity(build_system.selected, validation["position"], placement.yaw, entity_data)
+	var entity_id: int = sim.add_entity(build_system.selected, validation["position"], placement.yaw,
+		_creative_build_extra(entity_data))
 	if entity_id < 0:
 		audio_manager.call("play_one_shot", "invalid_placement", player.global_position)
 		var check: Dictionary = sim.check_place(build_system.selected, validation["position"], placement.yaw, node_id)
@@ -616,6 +618,12 @@ func _place_building(hit: Dictionary) -> void:
 	audio_manager.call("play_one_shot", "placement_confirm", validation["position"])
 	foliage.remove_in_world_footprint(validation["position"], placement.yaw, BuildingDefs.size_of(build_system.selected))
 	hud.show_toast("Placed %s." % build_system.selected.replace("_", " "))
+
+func _creative_build_extra(extra: Dictionary = {}) -> Dictionary:
+	var result: Dictionary = extra.duplicate(true)
+	if creative_mode.active:
+		result["creative_built"] = true
+	return result
 
 func _nearest_node_id(position: Vector3, max_distance: float = 1.5) -> int:
 	var closest: int = -1

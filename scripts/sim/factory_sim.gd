@@ -121,7 +121,8 @@ func set_recipe(entity_id: int, recipe_id: String, locked: bool = true) -> bool:
 		entity.progress = 0.0
 	return true
 
-func add_belt(kind: String, from_id: int, from_port: String, to_id: int, to_port: String, curve: PackedVector3Array) -> Dictionary:
+func add_belt(kind: String, from_id: int, from_port: String, to_id: int, to_port: String,
+		curve: PackedVector3Array, extra: Dictionary = {}) -> Dictionary:
 	if kind not in ["belt_mk1", "belt_mk2"]:
 		return {"id": -1, "reason": "Unknown belt type"}
 	if not entities.has(from_id) or not entities.has(to_id) or from_id == to_id:
@@ -149,6 +150,7 @@ func add_belt(kind: String, from_id: int, from_port: String, to_id: int, to_port
 	belt.yaw = 0.0
 	belt.extra = {"from": {"id": from_id, "port": from_port}, "to": {"id": to_id, "port": to_port},
 		"curve": curve, "length": length, "speed": 2.0 if kind == "belt_mk2" else 1.0}
+	belt.extra.merge(extra, true)
 	belt.cost = {}
 	entities[belt.id] = belt
 	_rebuild_indexes()
@@ -329,15 +331,17 @@ func remove_entity_with_refund(entity_id: int, world_items: Dictionary = {}) -> 
 			continue
 		if _is_belt_segment(entity.kind):
 			var count: int = ceili(float(entity.extra.get("length", 0.0)) / 2.0)
-			_add_items(refund, {"iron_plate": count})
-			if entity.kind == "belt_mk2":
-				_add_items(refund, {"screw": count * 2})
+			if not bool(entity.extra.get("creative_built", false)):
+				_add_items(refund, {"iron_plate": count})
+				if entity.kind == "belt_mk2":
+					_add_items(refund, {"screw": count * 2})
 			for item: Dictionary in entity.belt_items:
 				var item_id: String = str(item["item"])
 				_add_items(refund, {item_id: 1})
 				_add_items(world_items, {item_id: 1})
 		else:
-			_add_items(refund, entity.cost)
+			if not bool(entity.extra.get("creative_built", false)):
+				_add_items(refund, entity.cost)
 			_add_items(refund, entity.input_buffer)
 			_add_items(refund, entity.output_buffer)
 			_add_items(world_items, entity.input_buffer)
