@@ -518,6 +518,12 @@ func machine_view(entity_id: int) -> Dictionary:
 	var power_state: String = "Free power (dev bypass)" if power.bypass else \
 		("No connected network" if network_id < 0 else
 			"Network %d · %.1f / %.1f MW" % [network_id, supply, demand])
+	var rate_window_started_at: float = float(
+		entity.extra.get("rate_window_started_at", -1.0))
+	var rate_window_elapsed: float = maxf(0.0, time - rate_window_started_at) \
+		if rate_window_started_at >= 0.0 else 0.0
+	var rate_window_ready: bool = rate_window_started_at >= 0.0 \
+		and rate_window_elapsed >= 60.0
 	return {
 		"entity_id": entity_id,
 		"kind": entity.kind,
@@ -537,6 +543,9 @@ func machine_view(entity_id: int) -> Dictionary:
 		"cycle_seconds": cycle_seconds,
 		"current_rate": current_rate,
 		"maximum_rate": maximum_rate,
+		"rate_window_elapsed": rate_window_elapsed,
+		"rate_window_ready": rate_window_ready,
+		"rate_window_measuring": rate_window_started_at >= 0.0 and not rate_window_ready,
 		"efficiency": clampf(current_rate / maximum_rate * 100.0, 0.0, 100.0)
 			if maximum_rate > 0.0 else 0.0,
 		"power_draw_mw": power_need * maxf(0.0, satisfaction),
@@ -792,6 +801,10 @@ func _update_machines(dt: float) -> void:
 			_update_merger(entity)
 		elif entity.kind == "storage":
 			_update_storage(entity)
+		if (entity.kind == "miner_mk1" or _is_machine(entity.kind)) \
+				and entity.status == "Running" \
+				and not entity.extra.has("rate_window_started_at"):
+			entity.extra["rate_window_started_at"] = time
 
 func _update_miner(entity: FactoryEntity, dt: float) -> void:
 	var node_id: int = int(entity.extra.get("node_id", -1))

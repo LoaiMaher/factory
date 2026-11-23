@@ -299,10 +299,9 @@ func _open_machine_panel(entity_id: int) -> void:
 	var miner_mode: bool = str(view.get("kind", "")) == "miner_mk1"
 	_set_inventory_panel_size(not miner_mode)
 	if miner_mode:
-		panel.size = Vector2(620.0, 400.0)
 		var panel_scroll: ScrollContainer = panel.get_child(0) as ScrollContainer
 		if panel_scroll != null:
-			panel_scroll.custom_minimum_size = Vector2(600.0, 380.0)
+			panel_scroll.custom_minimum_size = Vector2(600.0, 0.0)
 		_center_panel()
 	_set_panel("")
 	machine_panel = FactoryMachinePanel.new()
@@ -326,6 +325,7 @@ func _open_machine_panel(entity_id: int) -> void:
 	machine_frame.add_theme_stylebox_override("panel", frame_style)
 	machine_frame.add_child(machine_panel)
 	panel_body.add_child(machine_frame)
+	call_deferred("_fit_machine_panel_to_content")
 	active_panel = true
 	player.set_panel_open(true)
 	panel.visible = true
@@ -563,6 +563,17 @@ func _set_inventory_panel_size(wide: bool) -> void:
 		panel.size = Vector2(620.0, 510.0)
 		if scroll != null:
 			scroll.custom_minimum_size = Vector2(600.0, 490.0)
+	_center_panel()
+
+func _fit_machine_panel_to_content() -> void:
+	if panel == null or not is_instance_valid(panel) or machine_panel == null \
+			or not is_instance_valid(machine_panel) or panel_body == null:
+		return
+	var content_height: float = machine_panel.get_combined_minimum_size().y
+	var panel_scroll: ScrollContainer = panel.get_child(0) as ScrollContainer
+	if panel_scroll != null:
+		panel_scroll.custom_minimum_size.y = content_height + 20.0
+	panel.size.y = content_height + 40.0
 	_center_panel()
 
 func _center_panel() -> void:
@@ -1075,6 +1086,16 @@ func _create_panel() -> void:
 	panel.mouse_filter = Control.MOUSE_FILTER_STOP
 	panel.set_anchors_preset(Control.PRESET_TOP_LEFT)
 	panel.size = Vector2(620.0, 510.0)
+	var panel_style := StyleBoxFlat.new()
+	panel_style.bg_color = Color(0.055, 0.068, 0.074, 1.0)
+	panel_style.border_color = Color("566164")
+	panel_style.set_border_width_all(1)
+	panel_style.set_corner_radius_all(6)
+	panel_style.content_margin_left = 10.0
+	panel_style.content_margin_right = 10.0
+	panel_style.content_margin_top = 10.0
+	panel_style.content_margin_bottom = 10.0
+	panel.add_theme_stylebox_override("panel", panel_style)
 	panel.visible = false
 	root.add_child(panel)
 	_center_panel()
@@ -1360,6 +1381,8 @@ func _make_craft_recipe_row(recipe_id: String, recipe: Dictionary) -> HBoxContai
 	row.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	var output_icon := TextureRect.new()
 	output_icon.custom_minimum_size = Vector2(44.0, 44.0)
+	output_icon.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	output_icon.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	output_icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	output_icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 	output_icon.texture = icon_cache.get_icon("item", output_id) \
@@ -1370,11 +1393,15 @@ func _make_craft_recipe_row(recipe_id: String, recipe: Dictionary) -> HBoxContai
 	var details := VBoxContainer.new()
 	details.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	details.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-	details.add_child(_label("%s × %d" % [
-		Items.item_name(output_id), output_count], 14))
+	var output_label := _label("%s × %d" % [
+		Items.item_name(output_id), output_count], 14)
+	output_label.autowrap_mode = TextServer.AUTOWRAP_OFF
+	output_label.clip_text = true
+	details.add_child(output_label)
 	var input_row := HBoxContainer.new()
 	input_row.add_theme_constant_override("separation", 5)
 	input_row.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	input_row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	details.add_child(input_row)
 	row.add_child(details)
 	var affordable: bool = creative_mode_active \
@@ -1385,10 +1412,16 @@ func _make_craft_recipe_row(recipe_id: String, recipe: Dictionary) -> HBoxContai
 	for input_variant: Variant in recipe.get("inputs", {}):
 		var item_id: String = str(input_variant)
 		var input_stack := HBoxContainer.new()
+		input_stack.custom_minimum_size = Vector2(44.0, 20.0)
+		input_stack.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
+		input_stack.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		input_stack.clip_contents = true
 		input_stack.add_theme_constant_override("separation", 2)
 		input_stack.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		var input_icon := TextureRect.new()
 		input_icon.custom_minimum_size = Vector2(20.0, 20.0)
+		input_icon.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+		input_icon.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 		input_icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 		input_icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 		input_icon.texture = icon_cache.get_icon("item", item_id) \
@@ -1399,6 +1432,11 @@ func _make_craft_recipe_row(recipe_id: String, recipe: Dictionary) -> HBoxContai
 		input_icons.append(input_icon)
 		input_stack.add_child(input_icon)
 		var amount := _label("×%d" % int(recipe["inputs"][input_variant]), 11)
+		amount.custom_minimum_size.x = 22.0
+		amount.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
+		amount.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+		amount.autowrap_mode = TextServer.AUTOWRAP_OFF
+		amount.clip_text = true
 		amount.add_theme_color_override("font_color", input_color)
 		input_amounts.append(amount)
 		input_stack.add_child(amount)

@@ -70,7 +70,7 @@ func _build(view: Dictionary) -> void:
 	columns.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	add_child(columns)
 	var production_column := VBoxContainer.new()
-	production_column.custom_minimum_size.x = 500.0
+	production_column.custom_minimum_size.x = 540.0
 	production_column.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	columns.add_child(production_column)
 	var header := HBoxContainer.new()
@@ -90,6 +90,7 @@ func _build(view: Dictionary) -> void:
 	recipe_selector = OptionButton.new()
 	recipe_selector.custom_minimum_size.y = 38.0
 	recipe_selector.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	recipe_selector.visible = not miner_mode
 	recipe_selector.get_popup().index_pressed.connect(_on_recipe_selected)
 	production_column.add_child(recipe_selector)
 	_load_recipe_options(view)
@@ -135,9 +136,8 @@ func _build(view: Dictionary) -> void:
 	for _index: int in range(input_slot_count):
 		input_cards.append(_make_input_card(input_row))
 	var process_column := VBoxContainer.new()
-	process_column.custom_minimum_size.x = 92.0
-	if miner_mode:
-		process_column.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	process_column.custom_minimum_size.x = 160.0
+	process_column.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	process_column.alignment = BoxContainer.ALIGNMENT_CENTER
 	process_column.add_theme_constant_override("separation", 6)
 	slot_row.add_child(process_column)
@@ -147,8 +147,19 @@ func _build(view: Dictionary) -> void:
 	process_column.add_child(process_arrow)
 	progress_bar = ProgressBar.new()
 	progress_bar.max_value = 100.0
-	progress_bar.custom_minimum_size = Vector2(88.0, 14.0)
+	progress_bar.custom_minimum_size = Vector2(160.0, 20.0)
+	progress_bar.show_percentage = true
 	progress_bar.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	var progress_track := StyleBoxFlat.new()
+	progress_track.bg_color = Color("252e30")
+	progress_track.border_color = Color("566164")
+	progress_track.set_border_width_all(1)
+	progress_track.set_corner_radius_all(4)
+	var progress_fill := StyleBoxFlat.new()
+	progress_fill.bg_color = Color("d3a15d")
+	progress_fill.set_corner_radius_all(4)
+	progress_bar.add_theme_stylebox_override("background", progress_track)
+	progress_bar.add_theme_stylebox_override("fill", progress_fill)
 	process_column.add_child(progress_bar)
 	var output_column := VBoxContainer.new()
 	output_column.custom_minimum_size.x = mini(output_slot_count, 2) * 68.0
@@ -318,9 +329,12 @@ func _update_progress_and_rates(view: Dictionary) -> void:
 	var progress: float = float(view.get("progress", 0.0))
 	progress_bar.value = progress * 100.0
 	cycle_label.text = "Cycle %.1f / %.1f s" % [progress * cycle_seconds, cycle_seconds]
-	production_label.text = "Production %.1f / %.1f items/min · %.0f%% efficiency" % [
+	var efficiency_text: String = "measuring…" if \
+		bool(view.get("rate_window_measuring", false)) else \
+		"%.0f%% efficiency" % float(view.get("efficiency", 0.0))
+	production_label.text = "Production %.1f / %.1f items/min · %s" % [
 		float(view.get("current_rate", 0.0)), float(view.get("maximum_rate", 0.0)),
-		float(view.get("efficiency", 0.0))]
+		efficiency_text]
 	var deposit_item: String = str(view.get("deposit_item", ""))
 	deposit_label.visible = not deposit_item.is_empty()
 	if not deposit_item.is_empty():

@@ -644,8 +644,17 @@ func _test_machine_view_and_transfers() -> void:
 		and running_inputs[0].get("item_id", "") == "iron_ore"
 		and int(running_inputs[0].get("count", 0)) == 1
 		and int(running_inputs[0].get("maximum", 0)) == 10
+		and not bool(running_view.get("rate_window_ready", true))
+		and bool(running_view.get("rate_window_measuring", false))
 		and is_equal_approx(float(running_inputs[0].get("needs_per_min", 0.0)), 30.0),
 		str(running_view))
+	running_sim.tick(60.0)
+	var warmed_view: Dictionary = running_sim.machine_view(running_id)
+	_check("machine view marks efficiency ready after a full rate window",
+		bool(warmed_view.get("rate_window_ready", false))
+		and float(warmed_view.get("rate_window_elapsed", 0.0)) >= 60.0
+		and not bool(warmed_view.get("rate_window_measuring", true)),
+		str(warmed_view))
 
 	var waiting_sim := FactorySim.new()
 	var waiting_id: int = waiting_sim.add_entity("constructor", Vector3.ZERO)
