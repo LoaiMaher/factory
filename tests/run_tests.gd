@@ -28,13 +28,19 @@ func _run_all() -> void:
 	_test_power_bypass()
 	_test_ore_boulders()
 	_test_foliage_state()
+	_test_foliage_density_persistence()
+	_test_foliage_chunk_visibility()
 	_test_hotbar_model()
 	_test_creative_mode()
 	_test_full_hotbar_build_menu_selection()
 	_test_creative_cursor_focus()
 	_test_hotbar_input_filtering()
 	_test_graphics_settings_and_persistence()
+	_test_graphics_pending_preset()
+	_test_grass_fade_settings()
+	_test_graphics_shortcuts()
 	_test_benchmark_stats_and_cli()
+	_test_benchmark_route_clearance()
 	_test_benchmark_no_save()
 	print("RESULT: %d/%d test groups passed" % [passed_groups, groups])
 	quit(1 if failures > 0 else 0)
@@ -1145,6 +1151,110 @@ func _test_foliage_state() -> void:
 		and restored.to_dict() == ["rock_00001", "tree_00002"], str(restored.to_dict()))
 	_finish_group()
 
+func _test_foliage_density_persistence() -> void:
+	var terrain: FactoryTerrain = FactoryTerrain.new()
+	terrain.call("_configure_noise")
+	var high_density: FactoryFoliage = FactoryFoliage.new()
+	high_density.terrain = terrain
+	high_density.density_multiplier = 1.25
+	high_density.density_built_multiplier = 1.25
+	high_density.call("_generate_definitions")
+	var base_tree_ids: Array[String] = []
+	var extra_tree: Dictionary = {}
+	for definition: Dictionary in high_density.foliage_definitions:
+		if definition["type"] != "tree":
+			continue
+		var foliage_id: String = str(definition["id"])
+		if foliage_id.begins_with("tree_extra_"):
+			if extra_tree.is_empty():
+				extra_tree = definition
+		else:
+			base_tree_ids.append(foliage_id)
+	var building_position: Vector3 = extra_tree.get("position", Vector3.ZERO)
+	var building_size: Vector3 = Vector3(12.0, 4.0, 12.0)
+	high_density.remove_in_world_footprint(building_position, 0.0, building_size)
+	var save_sim: FactorySim = FactorySim.new()
+	var building_id: int = save_sim.add_entity("smelter", building_position)
+	var saved_data: Dictionary = {
+		"entities": save_sim.to_dict(),
+		"foliage": high_density.state.to_dict()
+	}
+
+	var loaded_sim: FactorySim = FactorySim.new()
+	loaded_sim.from_dict(saved_data["entities"])
+	var low_density: FactoryFoliage = FactoryFoliage.new()
+	low_density.terrain = terrain
+	low_density.density_multiplier = 0.5
+	low_density.density_built_multiplier = 0.5
+	low_density.call("_generate_definitions")
+	low_density.restore_state(saved_data["foliage"])
+	var reloaded_base_tree_ids: Array[String] = []
+	var overlaps_building: bool = false
+	for definition: Dictionary in low_density.foliage_definitions:
+		if definition["type"] != "tree":
+			continue
+		var foliage_id: String = str(definition["id"])
+		if not foliage_id.begins_with("tree_extra_"):
+			reloaded_base_tree_ids.append(foliage_id)
+		var local: Vector3 = definition["position"] - building_position
+		if absf(local.x) <= building_size.x * 0.5 and absf(local.z) <= building_size.z * 0.5 \
+				and not low_density.state.is_removed(foliage_id):
+			overlaps_building = true
+	_check("density change reload keeps saved buildings clear and base tree IDs stable",
+		building_id > 0 and loaded_sim.entities.has(building_id)
+		and base_tree_ids == reloaded_base_tree_ids
+		and not extra_tree.is_empty() and not overlaps_building,
+		str([building_id, base_tree_ids.size(), reloaded_base_tree_ids.size(),
+			high_density.state.to_dict(), overlaps_building]))
+	low_density.free()
+	high_density.free()
+	terrain.free()
+	_finish_group()
+
+func _test_foliage_chunk_visibility() -> void:
+	var terrain: FactoryTerrain = FactoryTerrain.new()
+	terrain.call("_configure_noise")
+	var foliage: FactoryFoliage = FactoryFoliage.new()
+	foliage.terrain = terrain
+	foliage.tree_view_distance = 100.0
+	get_root().add_child(foliage)
+	var first_tree: Dictionary = {}
+	var second_tree: Dictionary = {}
+	for definition: Dictionary in foliage.foliage_definitions:
+		if definition["type"] != "tree":
+			continue
+		if first_tree.is_empty():
+			first_tree = definition
+		elif definition["chunk"] != first_tree["chunk"]:
+			second_tree = definition
+			break
+	foliage.foliage_definitions = [first_tree, second_tree]
+	foliage.call("_build_tree_multimeshes")
+	var chunks: Dictionary = {}
+	var all_near_trees_visible: bool = not foliage.tree_multimesh_instances.is_empty()
+	for instance: MultiMeshInstance3D in foliage.tree_multimesh_instances:
+		var chunk: Vector2i = instance.get_meta("tree_chunk")
+		chunks[chunk] = true
+		var expected_center: Vector3 = Vector3(
+			-FactoryFoliage.WORLD_HALF_EXTENT + (float(chunk.x) + 0.5) * FactoryFoliage.CHUNK_SIZE,
+			0.0,
+			-FactoryFoliage.WORLD_HALF_EXTENT + (float(chunk.y) + 0.5) * FactoryFoliage.CHUNK_SIZE)
+		all_near_trees_visible = all_near_trees_visible \
+			and instance.position.is_equal_approx(expected_center) \
+			and instance.visibility_range_end >= foliage.tree_view_distance \
+				+ FactoryFoliage.TREE_CHUNK_HALF_DIAGONAL \
+				+ FactoryFoliage.TREE_VISIBILITY_FADE_MARGIN \
+			and instance.visibility_range_end - FactoryFoliage.TREE_VISIBILITY_FADE_MARGIN \
+				>= FactoryFoliage.TREE_COLLISION_RADIUS \
+					+ FactoryFoliage.TREE_CHUNK_HALF_DIAGONAL \
+			and instance.multimesh.instance_count == 1
+	_check("Tree batches are chunk-local and include collision-radius visibility margin",
+		chunks.size() == 2 and all_near_trees_visible,
+		str([chunks, foliage.tree_multimesh_instances.size()]))
+	foliage.free()
+	terrain.free()
+	_finish_group()
+
 func _test_hotbar_model() -> void:
 	var model: HotbarModel = HotbarModel.new()
 	_check("hotbar defaults to the seven starter building slots",
@@ -1528,6 +1638,128 @@ func _test_graphics_settings_and_persistence() -> void:
 	DirAccess.remove_absolute(ProjectSettings.globalize_path(path))
 	_finish_group()
 
+func _test_graphics_pending_preset() -> void:
+	var player: FactoryPlayer = FactoryPlayer.new()
+	get_root().add_child(player)
+	var hud: FactoryHUD = FactoryHUD.new()
+	hud.setup(FactorySim.new(), player)
+	get_root().add_child(hud)
+	var settings: FrontierGraphicsSettings = FrontierGraphicsSettings.new()
+	hud.open_graphics_settings(settings)
+	var window_mode: OptionButton = hud.graphics_setting_controls["window_mode"] as OptionButton
+	var vsync: OptionButton = hud.graphics_setting_controls["vsync"] as OptionButton
+	var preset: OptionButton = hud.graphics_setting_controls["preset"] as OptionButton
+	window_mode.select(1)
+	vsync.select(1)
+	preset.select(3)
+	hud.call("_on_graphics_preset_selected", 3)
+	_check("Preset selection preserves pending window and VSync edits without applying",
+		str(settings.window_mode) == "windowed" and bool(settings.vsync)
+		and str(window_mode.get_item_metadata(window_mode.selected)) == "borderless"
+		and str(vsync.get_item_metadata(vsync.selected)) == "off"
+		and int((hud.graphics_setting_controls["shadow_atlas_size"] as SpinBox).value) == 8192
+		and is_equal_approx(float((hud.graphics_setting_controls["grass_radius"] as SpinBox).value),
+			75.0),
+		str([settings.to_dict(), window_mode.selected, vsync.selected]))
+	hud.close_panel()
+	hud.open_graphics_settings(settings)
+	var reopened_window: OptionButton = hud.graphics_setting_controls["window_mode"] as OptionButton
+	var reopened_vsync: OptionButton = hud.graphics_setting_controls["vsync"] as OptionButton
+	var reopened_preset: OptionButton = hud.graphics_setting_controls["preset"] as OptionButton
+	_check("Closing settings without Apply discards pending form changes",
+		str(reopened_window.get_item_metadata(reopened_window.selected)) == "windowed"
+		and str(reopened_vsync.get_item_metadata(reopened_vsync.selected)) == "on"
+		and str(reopened_preset.get_item_metadata(reopened_preset.selected)) == "high",
+		str([reopened_window.selected, reopened_vsync.selected, reopened_preset.selected]))
+	hud.queue_free()
+	player.queue_free()
+	_finish_group()
+
+func _test_grass_fade_settings() -> void:
+	var settings: FrontierGraphicsSettings = FrontierGraphicsSettings.new()
+	settings.apply_preset("ultra")
+	var foliage: FactoryFoliage = FactoryFoliage.new()
+	foliage.set_graphics_options(settings.foliage_density, settings.grass_radius,
+		settings.tree_view_distance)
+	var material: ShaderMaterial = foliage.call(
+		"_wind_material", Color.WHITE, 0.12, foliage.grass_fade_start,
+		foliage.grass_fade_end)
+	_check("Grass fade uniforms follow Ultra radius through the full 75 m",
+		foliage.grass_fade_start == 67.0 and foliage.grass_fade_end == 75.0
+		and float(material.get_shader_parameter("fade_start")) == 67.0
+		and float(material.get_shader_parameter("fade_end")) == 75.0,
+		str([foliage.grass_radius, foliage.grass_fade_start, foliage.grass_fade_end]))
+	foliage.free()
+	_finish_group()
+
+func _test_graphics_shortcuts() -> void:
+	var previous_mouse_mode: Input.MouseMode = Input.mouse_mode
+	var app: Node = load("res://scripts/main.gd").new()
+	var player: FactoryPlayer = FactoryPlayer.new()
+	get_root().add_child(player)
+	var hud: FactoryHUD = FactoryHUD.new()
+	hud.setup(app.get("sim") as FactorySim, player, app.get("hotbar_model") as HotbarModel)
+	get_root().add_child(hud)
+	var settings: FrontierGraphicsSettings = FrontierGraphicsSettings.new()
+	var overlay: FrontierPerfOverlay = FrontierPerfOverlay.new()
+	overlay.configure(settings)
+	get_root().add_child(overlay)
+	app.set("player", player)
+	app.set("hud", hud)
+	app.set("graphics_settings", settings)
+	app.set("perf_overlay", overlay)
+	app.set("benchmark_mode", false)
+
+	var f3: InputEventKey = InputEventKey.new()
+	f3.pressed = true
+	f3.keycode = KEY_F3
+	app.call("_unhandled_input", f3)
+	_check("F3 opens the performance overlay",
+		overlay.panel.visible and overlay.summary_label.text.begins_with("PERFORMANCE"),
+		str([overlay.panel.visible, overlay.summary_label.text]))
+	app.call("_unhandled_input", f3)
+	_check("F3 closes the performance overlay",
+		not overlay.panel.visible, str(overlay.panel.visible))
+
+	var f10: InputEventKey = InputEventKey.new()
+	f10.pressed = true
+	f10.keycode = KEY_F10
+	app.call("_unhandled_input", f10)
+	_check("F10 opens graphics settings",
+		hud.graphics_settings_open and hud.panel_is_open()
+		and player.panel_open and Input.mouse_mode == Input.MOUSE_MODE_VISIBLE,
+		str([hud.graphics_settings_open, hud.panel_is_open(), player.panel_open, Input.mouse_mode]))
+	var focused_control: Control = hud.graphics_setting_controls.get("preset") as Control
+	if focused_control != null:
+		focused_control.grab_focus()
+	app.call("_input", f10)
+	_check("F10 closes graphics settings while a HUD control is focused",
+		not hud.graphics_settings_open and not hud.panel_is_open()
+		and not player.panel_open,
+		str([hud.graphics_settings_open, hud.panel_is_open(), player.panel_open]))
+	hud.open_hub()
+	app.call("_input", f10)
+	_check("F10 opens settings from another open panel",
+		hud.graphics_settings_open and hud.panel_is_open()
+		and player.panel_open and Input.mouse_mode == Input.MOUSE_MODE_VISIBLE,
+		str([hud.graphics_settings_open, hud.panel_is_open(), player.panel_open, Input.mouse_mode]))
+	app.call("_input", f3)
+	_check("F3 works with settings open without changing cursor state",
+		overlay.panel.visible and player.panel_open and Input.mouse_mode == Input.MOUSE_MODE_VISIBLE,
+		str([overlay.panel.visible, player.panel_open, Input.mouse_mode]))
+	app.call("_input", f3)
+	app.call("_input", f10)
+	_check("F10 closes settings after overlay use",
+		not hud.graphics_settings_open and not hud.panel_is_open(),
+		str([hud.graphics_settings_open, hud.panel_is_open()]))
+
+	hud.queue_free()
+	player.queue_free()
+	overlay.queue_free()
+	app.free()
+	Input.mouse_mode = previous_mouse_mode
+	_finish_group()
+
 func _test_benchmark_stats_and_cli() -> void:
 	var times: Array[float] = [10.0, 20.0, 30.0, 40.0, 100.0]
 	var stats: Dictionary = FrontierBenchmark.summarize_frame_times(times)
@@ -1556,6 +1788,50 @@ func _test_benchmark_stats_and_cli() -> void:
 		bool(double_plus["enabled"]) and double_plus["route"] == "flythrough"
 		and double_plus["preset"] == "ultra" and float(double_plus["seconds"]) == 30.0
 		and float(double_plus["warmup"]) == 1.0, str(double_plus))
+	_finish_group()
+
+func _test_benchmark_route_clearance() -> void:
+	var terrain: FactoryTerrain = FactoryTerrain.new()
+	terrain.call("_configure_noise")
+	var start_xz: Vector2 = Vector2(110.0, 70.0)
+	var end_xz: Vector2 = Vector2(245.0, -18.0)
+	var walk: FrontierBenchmark = FrontierBenchmark.new()
+	walk.terrain = terrain
+	walk.route = "walk"
+	var walk_start: Vector3 = Vector3(start_xz.x, terrain.height_at(start_xz.x, start_xz.y), start_xz.y)
+	var walk_end: Vector3 = Vector3(end_xz.x, terrain.height_at(end_xz.x, end_xz.y), end_xz.y)
+	walk.route_points.append(walk_start)
+	walk.route_points.append(walk_end)
+	walk.segment_lengths.append(walk_start.distance_to(walk_end))
+	var walk_sample: Vector3 = walk.call("_sample_route", walk.segment_lengths[0] * 0.5)
+	_check("Walk route samples ground height across the east ridge",
+		is_equal_approx(walk_sample.y, terrain.height_at(walk_sample.x, walk_sample.z)),
+		str([walk_sample, terrain.height_at(walk_sample.x, walk_sample.z)]))
+
+	var flythrough: FrontierBenchmark = FrontierBenchmark.new()
+	flythrough.terrain = terrain
+	flythrough.route = "flythrough"
+	for altitude: float in [-5.0, -1.0]:
+		var fly_point: Vector2 = start_xz if flythrough.route_points.is_empty() else end_xz
+		flythrough.route_altitudes.append(altitude)
+		flythrough.route_points.append(Vector3(fly_point.x,
+			terrain.height_at(fly_point.x, fly_point.y) + altitude, fly_point.y))
+	flythrough.segment_lengths.append(
+		flythrough.route_points[0].distance_to(flythrough.route_points[1]))
+	var has_clearance: bool = true
+	var clearances: Array[float] = []
+	for fraction: float in [0.1, 0.25, 0.5, 0.75, 0.9]:
+		var point: Vector3 = flythrough.call(
+			"_sample_route", flythrough.segment_lengths[0] * fraction)
+		var clearance: float = point.y - terrain.height_at(point.x, point.z)
+		clearances.append(clearance)
+		has_clearance = has_clearance \
+			and clearance >= FrontierBenchmark.MIN_FLY_CLEARANCE - 0.001
+	_check("Flythrough route keeps minimum terrain clearance",
+		has_clearance, str(clearances))
+	walk.free()
+	flythrough.free()
+	terrain.free()
 	_finish_group()
 
 func _test_benchmark_no_save() -> void:
