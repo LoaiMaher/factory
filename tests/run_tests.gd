@@ -52,6 +52,7 @@ func _run_all() -> void:
 	_test_refund_preview()
 	_test_storage_grid_mapping_refresh()
 	_test_storage_stack_withdrawals()
+	_test_machine_view_and_transfers()
 	print("RESULT: %d/%d test groups passed" % [passed_groups, groups])
 	quit(1 if failures > 0 else 0)
 
@@ -618,6 +619,98 @@ func _test_storage_origin_return_gain() -> void:
 		str([sim.entities[storage_id].input_buffer, restored_inventory.to_data()]))
 	hud.free()
 	player.free()
+	_finish_group()
+
+func _test_machine_view_and_transfers() -> void:
+	var running_sim := FactorySim.new()
+	var running_id: int = running_sim.add_entity("smelter", Vector3.ZERO, 0.0,
+		{"recipe": "iron_ingot"})
+	running_sim.entities[running_id].input_buffer["iron_ore"] = 1
+	running_sim.power.bypass = true
+	running_sim.tick(0.05)
+	var running_view: Dictionary = running_sim.machine_view(running_id)
+	var running_inputs: Array = running_view.get("inputs", [])
+	_check("machine view exposes running recipe, buffers, rates, and progress",
+		running_view.get("state", "") == "running"
+		and running_view.get("recipe_id", "") == "iron_ingot"
+		and is_equal_approx(float(running_view.get("cycle_seconds", 0.0)), 2.0)
+		and is_equal_approx(float(running_view.get("progress", 0.0)), 0.025)
+		and running_inputs.size() == 1
+		and running_inputs[0].get("item_id", "") == "iron_ore"
+		and int(running_inputs[0].get("count", 0)) == 1
+		and int(running_inputs[0].get("maximum", 0)) == 10
+		and is_equal_approx(float(running_inputs[0].get("needs_per_min", 0.0)), 30.0),
+		str(running_view))
+
+	var waiting_sim := FactorySim.new()
+	var waiting_id: int = waiting_sim.add_entity("constructor", Vector3.ZERO)
+	waiting_sim.tick(0.05)
+	var waiting_view: Dictionary = waiting_sim.machine_view(waiting_id)
+	_check("machine view reports waiting for input",
+		waiting_view.get("state", "") == "waiting_input"
+		and waiting_view.get("display_status", "") == "Waiting for input"
+		and str(waiting_view.get("why", "")).contains("needs"),
+		str(waiting_view))
+
+	var full_sim := FactorySim.new()
+	var full_id: int = full_sim.add_entity("assembler", Vector3.ZERO)
+	full_sim.entities[full_id].output_buffer["hull_panel"] = 20
+	full_sim.tick(0.05)
+	var full_view: Dictionary = full_sim.machine_view(full_id)
+	_check("machine view reports output-full status and buffered output",
+		full_view.get("state", "") == "output_full"
+		and full_view.get("display_status", "") == "Output full"
+		and int(full_view.get("output_buffer", {}).get("hull_panel", 0)) == 20,
+		str(full_view))
+
+	var unpowered_sim := FactorySim.new()
+	var unpowered_id: int = unpowered_sim.add_entity("smelter", Vector3.ZERO)
+	unpowered_sim.entities[unpowered_id].input_buffer["iron_ore"] = 1
+	unpowered_sim.power.bypass = false
+	unpowered_sim.tick(0.05)
+	var unpowered_view: Dictionary = unpowered_sim.machine_view(unpowered_id)
+	_check("machine view reports real-power network state",
+		unpowered_view.get("state", "") == "no_power"
+		and not bool(unpowered_view.get("power_bypassed", true))
+		and float(unpowered_view.get("power_draw_mw", -1.0)) == 0.0
+		and str(unpowered_view.get("power_state", "")).contains("No connected network"),
+		str(unpowered_view))
+
+	var insert_sim := FactorySim.new()
+	var insert_id: int = insert_sim.add_entity("smelter", Vector3.ZERO, 0.0,
+		{"recipe": "iron_ingot"})
+	var inserted: int = insert_sim.insert_input_items(insert_id, "iron_ore", 12)
+	var wrong_item: int = insert_sim.insert_input_items(insert_id, "copper_ore", 1)
+	_check("insert_input_items respects buffer maximum and rejects wrong items",
+		inserted == 10 and wrong_item == 0
+		and int(insert_sim.entities[insert_id].input_buffer.get("iron_ore", 0)) == 10,
+		str([inserted, wrong_item, insert_sim.entities[insert_id].input_buffer]))
+
+	var output_sim := FactorySim.new()
+	var output_id: int = output_sim.add_entity("smelter", Vector3.ZERO)
+	output_sim.entities[output_id].output_buffer["iron_ingot"] = 10
+	var receiving_inventory := FrontierInventory.new(1)
+	receiving_inventory.add("iron_ingot", 60)
+	var fits: int = receiving_inventory.fit_count("iron_ingot", 10)
+	var taken: int = output_sim.take_output_items(output_id, "iron_ingot", fits)
+	receiving_inventory.add("iron_ingot", taken)
+	_check("take_output_items transfers only the amount that fits",
+		fits == 4 and taken == 4 and receiving_inventory.count("iron_ingot") == 64
+		and int(output_sim.entities[output_id].output_buffer.get("iron_ingot", 0)) == 6,
+		str([fits, taken, receiving_inventory.totals(),
+			output_sim.entities[output_id].output_buffer]))
+
+	var miner_sim := FactorySim.new()
+	miner_sim.register_node(7, "iron_ore", "pure", Vector3(20.0, 0.0, 10.0), 120.0)
+	var miner_id: int = miner_sim.add_entity("miner_mk1", Vector3(20.0, 0.0, 10.0),
+		0.0, {"node_id": 7})
+	var miner_view: Dictionary = miner_sim.machine_view(miner_id)
+	_check("miner view exposes deposit item, purity, and rate",
+		miner_view.get("deposit_item", "") == "iron_ore"
+		and miner_view.get("deposit_purity", "") == "pure"
+		and is_equal_approx(float(miner_view.get("deposit_rate", 0.0)), 120.0)
+		and is_equal_approx(float(miner_view.get("maximum_rate", 0.0)), 120.0),
+		str(miner_view))
 	_finish_group()
 
 func _test_placement_and_ports() -> void:
