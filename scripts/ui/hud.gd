@@ -443,10 +443,29 @@ func _on_graphics_preset_selected(index: int) -> void:
 		return
 	var option: OptionButton = graphics_setting_controls["preset"] as OptionButton
 	var selected_preset: String = str(option.get_item_metadata(index))
-	if selected_preset != "custom" and graphics_settings_ref.apply_preset(selected_preset):
-		open_graphics_settings(graphics_settings_ref)
+	if selected_preset != "custom" and FrontierGraphicsSettings.PRESETS.has(selected_preset):
+		loading_graphics_settings = true
+		var preset_values: Dictionary = FrontierGraphicsSettings.PRESETS[selected_preset]
+		for key: String in preset_values:
+			_set_graphics_form_value(key, preset_values[key])
+		loading_graphics_settings = false
 	else:
 		_mark_graphics_preset_custom()
+
+func _set_graphics_form_value(key: String, value: Variant) -> void:
+	if not graphics_setting_controls.has(key):
+		return
+	var control: Control = graphics_setting_controls[key]
+	if control is OptionButton:
+		var option: OptionButton = control as OptionButton
+		for index: int in range(option.item_count):
+			if str(option.get_item_metadata(index)) == str(value):
+				option.select(index)
+				return
+	elif control is SpinBox:
+		(control as SpinBox).value = float(value)
+	elif control is CheckBox:
+		(control as CheckBox).button_pressed = bool(value)
 
 func _mark_graphics_preset_custom(_value: Variant = null) -> void:
 	if loading_graphics_settings or not graphics_setting_controls.has("preset"):
