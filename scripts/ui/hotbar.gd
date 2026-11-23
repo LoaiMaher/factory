@@ -10,7 +10,7 @@ const SLOT_ROW_WIDTH: int = SLOT_SIZE * HotbarModel.SLOT_COUNT + SLOT_GAP * (Hot
 
 var model: HotbarModel
 var icon_cache: FactoryIconCache
-var inventory: Dictionary = {}
+var inventory: FrontierInventory = FrontierInventory.new()
 var unlocked_tiers: int = 0
 var creative_mode_active: bool = false
 var slot_buttons: Array[Button] = []
@@ -41,7 +41,7 @@ func _process(delta: float) -> void:
 		if selected_name_time == 0.0 and selected_name != null:
 			selected_name.text = ""
 
-func refresh(factory_model: HotbarModel, current_inventory: Dictionary, tier: int,
+func refresh(factory_model: HotbarModel, current_inventory: FrontierInventory, tier: int,
 		creative_mode: bool = false) -> void:
 	if factory_model != null:
 		model = factory_model
