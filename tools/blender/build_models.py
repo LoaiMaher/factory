@@ -1179,48 +1179,119 @@ def build_hands():
     return root, (1.45, 1.0, 0.75)
 
 
+def _pick_crescent_head(parent):
+    sections = [
+        (-0.25, 0.39, 0.012, 0.044),
+        (-0.22, 0.405, 0.026, 0.044),
+        (-0.18, 0.445, 0.036, 0.042),
+        (-0.135, 0.50, 0.044, 0.039),
+        (-0.085, 0.56, 0.051, 0.038),
+        (-0.035, 0.595, 0.055, 0.040),
+        (0.0, 0.61, 0.057, 0.045),
+        (0.04, 0.595, 0.054, 0.040),
+        (0.09, 0.56, 0.050, 0.038),
+        (0.14, 0.51, 0.042, 0.035),
+        (0.19, 0.45, 0.032, 0.029),
+        (0.23, 0.40, 0.020, 0.018),
+        (0.25, 0.375, 0.004, 0.006),
+    ]
+    corners = [
+        (-0.7, -1.0), (0.7, -1.0), (1.0, -0.7), (1.0, 0.7),
+        (0.7, 1.0), (-0.7, 1.0), (-1.0, 0.7), (-1.0, -0.7),
+    ]
+    vertices = []
+    faces = []
+    side_count = len(corners)
+    for index, (x, z, half_height, half_depth) in enumerate(sections):
+        previous = sections[max(0, index - 1)]
+        following = sections[min(len(sections) - 1, index + 1)]
+        tangent_x = following[0] - previous[0]
+        tangent_z = following[1] - previous[1]
+        tangent_length = math.hypot(tangent_x, tangent_z)
+        normal_x = -tangent_z / tangent_length
+        normal_z = tangent_x / tangent_length
+        for height_scale, depth_scale in corners:
+            vertices.append((
+                x + normal_x * half_height * height_scale,
+                half_depth * depth_scale,
+                z + normal_z * half_height * height_scale,
+            ))
+    for index in range(len(sections) - 1):
+        start = index * side_count
+        end = (index + 1) * side_count
+        for corner_index in range(side_count):
+            next_corner = (corner_index + 1) % side_count
+            faces.append((
+                start + corner_index,
+                end + corner_index,
+                end + next_corner,
+                start + next_corner,
+            ))
+    faces.append(tuple(range(side_count)))
+    last_start = (len(sections) - 1) * side_count
+    faces.append(tuple(reversed(range(last_start, last_start + side_count))))
+    mesh = bpy.data.meshes.new("Pick_Crescent_Head_Mesh")
+    mesh.from_pydata(vertices, [], faces)
+    mesh.update()
+    head = bpy.data.objects.new("Pick_Crescent_Head", mesh)
+    bpy.context.collection.objects.link(head)
+    attach(head, parent, (0.0, 0.0, 0.0))
+    finish_mesh(head, "Steel", 0.004, 2)
+
+
+def _pick_socket(parent):
+    side_count = 16
+    outer_radius = 0.064
+    inner_radius = 0.047
+    bottom_z = 0.555
+    top_z = 0.675
+    vertices = []
+    for z, radius in (
+        (bottom_z, outer_radius), (bottom_z, inner_radius),
+        (top_z, outer_radius), (top_z, inner_radius),
+    ):
+        for index in range(side_count):
+            angle = math.tau * index / side_count
+            vertices.append((math.cos(angle) * radius,
+                             math.sin(angle) * radius, z))
+    outer_bottom = 0
+    inner_bottom = side_count
+    outer_top = side_count * 2
+    inner_top = side_count * 3
+    faces = []
+    for index in range(side_count):
+        next_index = (index + 1) % side_count
+        faces.extend((
+            (outer_bottom + index, outer_bottom + next_index,
+             outer_top + next_index, outer_top + index),
+            (inner_bottom + index, inner_top + index,
+             inner_top + next_index, inner_bottom + next_index),
+            (outer_bottom + index, inner_bottom + index,
+             inner_bottom + next_index, outer_bottom + next_index),
+            (outer_top + index, outer_top + next_index,
+             inner_top + next_index, inner_top + index),
+        ))
+    mesh = bpy.data.meshes.new("Pick_Socket_Eye_Mesh")
+    mesh.from_pydata(vertices, [], faces)
+    mesh.update()
+    socket = bpy.data.objects.new("Pick_Socket_Eye", mesh)
+    bpy.context.collection.objects.link(socket)
+    attach(socket, parent, (0.0, 0.0, 0.0))
+    finish_mesh(socket, "Steel", 0.003, 2)
+
+
 def build_hand_pick():
     root = empty("HandPick")
-    cone(root, "Pick_Wooden_Haft", (0.0, 0.0, 0.0), 0.035, 0.029, 0.65,
+    cone(root, "Pick_Wooden_Haft", (0.0, 0.0, 0.35), 0.032, 0.045, 0.70,
          "Pick_Wood", 16)
-    cylinder(root, "Pick_Grip_Wrap", (0.0, 0.0, -0.215), 0.044, 0.20,
-             "Rubber", 16, 0.008)
-    for index in range(4):
-        z = -0.29 + index * 0.05
-        torus(root, "Pick_Grip_Ridge_%02d" % index, (0.0, 0.0, z), 0.041, 0.003,
+    cylinder(root, "Pick_Grip_Wrap", (0.0, 0.0, 0.075), 0.043, 0.15,
+             "Rubber", 16, 0.006)
+    for index, z in enumerate((0.015, 0.05, 0.10, 0.135)):
+        torus(root, "Pick_Grip_Ridge_%02d" % index, (0.0, 0.0, z), 0.041, 0.0025,
               "Paint_Dark")
-    cylinder(root, "Pick_Head_Collar", (0.0, 0.0, 0.265), 0.052, 0.07,
-             "Steel", 16, 0.012)
-    torus(root, "Pick_Collar_Lip", (0.0, 0.0, 0.30), 0.052, 0.008, "Steel")
-    head_curve = bpy.data.curves.new("Pick_Curved_Head", "CURVE")
-    head_curve.dimensions = "3D"
-    head_curve.resolution_u = 12
-    head_curve.bevel_depth = 0.034
-    head_curve.bevel_resolution = 4
-    head_curve.use_fill_caps = True
-    spline = head_curve.splines.new("BEZIER")
-    head_points = [
-        (-0.12, 0.0, 0.31), (-0.06, 0.008, 0.333),
-        (0.0, 0.014, 0.345), (0.06, 0.008, 0.333), (0.12, 0.0, 0.31)
-    ]
-    spline.bezier_points.add(len(head_points) - 1)
-    for point, coordinates in zip(spline.bezier_points, head_points):
-        point.co = coordinates
-        point.handle_left_type = "AUTO"
-        point.handle_right_type = "AUTO"
-    curved_head = bpy.data.objects.new("Pick_Curved_Head", head_curve)
-    bpy.context.collection.objects.link(curved_head)
-    attach(curved_head, root, (0.0, 0.0, 0.0))
-    head_curve.materials.append(material("Steel"))
-    bpy.ops.object.select_all(action="DESELECT")
-    curved_head.select_set(True)
-    bpy.context.view_layer.objects.active = curved_head
-    bpy.ops.object.convert(target="MESH")
-    cube(root, "Pick_Flat_Chisel", (-0.145, 0.0, 0.31), (0.06, 0.095, 0.05),
-         "Steel", 0.016)
-    cone(root, "Pick_Point", (0.145, 0.0, 0.31), 0.034, 0.0, 0.07,
-         "Steel", 16, (0.0, math.pi / 2.0, 0.0))
-    return root, (0.38, 0.15, 0.72)
+    _pick_crescent_head(root)
+    _pick_socket(root)
+    return root, (0.52, 0.12, 0.70)
 
 def build_tool():
     root = empty("BuildTool")

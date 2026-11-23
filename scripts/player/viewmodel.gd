@@ -201,10 +201,10 @@ func _create_overlay() -> void:
 		mining_pick = pick_scene.instantiate() as Node3D
 		mining_pick.name = "MiningPick"
 		hand_right.add_child(mining_pick)
-		mining_pick.position = Vector3(-0.22, 0.32, -0.30)
+		mining_pick.position = Vector3(-0.05, 0.045, -0.43)
 		mining_pick.scale = Vector3.ONE * 0.95
 		mining_pick.rotation = Vector3.ZERO
-		mining_pick.rotation.z = 0.24
+		mining_pick.rotation.z = -0.12
 		machine_models.apply_pbr_materials(mining_pick)
 		_set_viewmodel_layers(mining_pick)
 		mining_pick.visible = false
