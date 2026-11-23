@@ -375,14 +375,29 @@ func _power_diagnostic(entity: FactoryEntity) -> String:
 	return "Power: %.0f / %.0f MW network · %d%% satisfaction" % [
 		supply, demand, roundi(satisfaction * 100.0)]
 
+func preview_refund(entity_id: int) -> Dictionary:
+	return _build_refund_preview(entity_id).get("refund", {})
+
 func remove_entity_with_refund(entity_id: int, world_items: Dictionary = {}) -> Dictionary:
 	if not entities.has(entity_id):
 		return {}
+	var preview: Dictionary = _build_refund_preview(entity_id)
+	_add_items(world_items, preview.get("world_items", {}))
+	for remove_id: int in preview.get("remove_ids", []):
+		entities.erase(remove_id)
+	_rebuild_indexes()
+	power.rebuild(entities)
+	return preview.get("refund", {})
+
+func _build_refund_preview(entity_id: int) -> Dictionary:
+	if not entities.has(entity_id):
+		return {"refund": {}, "world_items": {}, "remove_ids": []}
 	var remove_ids: Array[int] = [entity_id]
 	for belt: FactoryEntity in entities.values():
 		if _is_belt_segment(belt.kind) and (int(belt.extra["from"]["id"]) == entity_id or int(belt.extra["to"]["id"]) == entity_id):
 			remove_ids.append(belt.id)
 	var refund: Dictionary = {}
+	var world_items: Dictionary = {}
 	for remove_id: int in remove_ids:
 		var entity: FactoryEntity = entities.get(remove_id)
 		if entity == null:
@@ -408,10 +423,7 @@ func remove_entity_with_refund(entity_id: int, world_items: Dictionary = {}) -> 
 				for item_id: String in queue:
 					_add_items(refund, {item_id: 1})
 					_add_items(world_items, {item_id: 1})
-		entities.erase(remove_id)
-	_rebuild_indexes()
-	power.rebuild(entities)
-	return refund
+	return {"refund": refund, "world_items": world_items, "remove_ids": remove_ids}
 
 func remove_entity(entity_id: int) -> FactoryEntity:
 	if not entities.has(entity_id):

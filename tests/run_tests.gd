@@ -49,6 +49,7 @@ func _run_all() -> void:
 	_test_cursor_stack_load()
 	_test_creative_storage_deposits()
 	_test_storage_origin_return_gain()
+	_test_refund_preview()
 	print("RESULT: %d/%d test groups passed" % [passed_groups, groups])
 	quit(1 if failures > 0 else 0)
 
@@ -205,6 +206,15 @@ func _test_inventory_gameplay() -> void:
 	_check("full inventory blocks dismantling before removing the entity",
 		not dismantle_fits and sim.entities.has(storage_id)
 		and fake_hud.toast_label.text == "Inventory full", str(sim.entities.keys()))
+
+	var miner_sim := FactorySim.new()
+	miner_sim.register_node(1, "iron_ore", "pure", Vector3.ZERO)
+	var miner_id: int = miner_sim.add_entity("miner_mk1", Vector3.ZERO, 0.0, {"node_id": 1})
+	app.set("sim", miner_sim)
+	var miner_refund_fits: bool = app.call("_dismantle_refund_fits", miner_id)
+	_check("full inventory blocks dismantling a miner on its deposit",
+		not miner_refund_fits and miner_sim.entities.has(miner_id)
+		and fake_hud.toast_label.text == "Inventory full", str(miner_sim.entities.keys()))
 
 	player.inventory = FrontierInventory.new(48)
 	var full_slots: Array[Dictionary] = []
@@ -447,6 +457,47 @@ func _test_creative_storage_deposits() -> void:
 	hud.free()
 	player.free()
 	_finish_group()
+
+func _test_refund_preview() -> void:
+	var miner_sim := FactorySim.new()
+	miner_sim.register_node(1, "iron_ore", "pure", Vector3.ZERO)
+	var miner_id: int = miner_sim.add_entity("miner_mk1", Vector3.ZERO, 0.0, {"node_id": 1})
+	miner_sim.entities[miner_id].output_buffer["iron_ore"] = 3
+	var miner_matches: bool = _refund_preview_matches_removal(miner_sim, miner_id)
+
+	var tap_sim := FactorySim.new()
+	tap_sim.register_vent("vent", Vector3.ZERO)
+	var tap_id: int = tap_sim.add_entity("geo_tap", Vector3.ZERO)
+	tap_sim.entities[tap_id].output_buffer["geothermal_power"] = 2
+	var tap_matches: bool = _refund_preview_matches_removal(tap_sim, tap_id)
+
+	var machine_sim := FactorySim.new()
+	var machine_id: int = machine_sim.add_entity("smelter", Vector3.ZERO)
+	machine_sim.entities[machine_id].input_buffer["iron_ore"] = 7
+	machine_sim.entities[machine_id].output_buffer["iron_ingot"] = 4
+	var machine_matches: bool = _refund_preview_matches_removal(machine_sim, machine_id)
+
+	var belt_sim := FactorySim.new()
+	var source_id: int = belt_sim.add_entity("smelter", Vector3.ZERO)
+	var target_id: int = belt_sim.add_entity("storage", Vector3(0.0, 0.0, 10.0))
+	var belt_result: Dictionary = _connect(belt_sim, "belt_mk1", source_id, "out0",
+		target_id, "in0")
+	var belt_id: int = int(belt_result.get("id", -1))
+	if belt_id >= 0:
+		belt_sim.entities[belt_id].belt_items = [
+			{"item": "copper_ore", "s": 0.5, "born_at": 0.0}
+		]
+	var belt_matches: bool = belt_id >= 0 \
+		and _refund_preview_matches_removal(belt_sim, source_id)
+	_check("refund preview matches removal for miner, geo tap, buffers, and loaded belts",
+		miner_matches and tap_matches and machine_matches and belt_matches,
+		str([miner_matches, tap_matches, machine_matches, belt_result, belt_matches]))
+	_finish_group()
+
+func _refund_preview_matches_removal(sim: FactorySim, entity_id: int) -> bool:
+	var expected: Dictionary = sim.preview_refund(entity_id)
+	var actual: Dictionary = sim.remove_entity_with_refund(entity_id)
+	return expected == actual
 
 func _test_storage_origin_return_gain() -> void:
 	var sim := FactorySim.new()

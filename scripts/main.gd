@@ -1143,9 +1143,7 @@ func _mine_boulder_into_inventory(boulder_id: String) -> Dictionary:
 	return result
 
 func _dismantle_refund_fits(entity_id: int) -> bool:
-	var preview_sim := FactorySim.new()
-	preview_sim.from_dict(sim.to_dict())
-	var preview_refund: Dictionary = preview_sim.remove_entity_with_refund(entity_id)
+	var preview_refund: Dictionary = sim.preview_refund(entity_id)
 	if player.inventory.can_fit(preview_refund):
 		return true
 	hud.show_toast("Inventory full")
