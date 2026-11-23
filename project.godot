@@ -7,7 +7,7 @@ config_version=5
 config/name="Factory"
 config/description="First-person factory builder. Build a planet-scale factory, launch the ship you assembled, and keep building on the next world."
 run/main_scene="res://scenes/main.tscn"
-config/features=PackedStringArray("4.3", "Forward Plus")
+config/features=PackedStringArray("4.7", "Forward Plus")
 
 [display]
 
@@ -22,6 +22,10 @@ window/stretch/mode="canvas_items"
 renderer/rendering_method="forward_plus"
 renderer/rendering_method.mobile="gl_compatibility"
 renderer/rendering_method.web="gl_compatibility"
+
+[physics]
+
+3d/physics_engine="Jolt Physics"
 
 [factory/dev]
 
