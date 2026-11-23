@@ -61,7 +61,11 @@ var storage_contents_snapshot: Dictionary = {}
 var storage_slot_stacks: Array[Dictionary] = []
 var inventory_category_filter: String = "all"
 var inventory_grid: FactoryInventoryPanel
+var craft_list: VBoxContainer
+var craft_scroll: ScrollContainer
 var storage_grid: FactoryInventoryPanel
+var machine_panel: FactoryMachinePanel
+var machine_refresh_elapsed: float = 0.0
 var cursor_stack: Dictionary = {}
 var cursor_stack_panel: PanelContainer
 var cursor_stack_icon: TextureRect
@@ -205,6 +209,12 @@ func _process(delta: float) -> void:
 			var lines: Array[String] = sim.diagnostics(selected_entity_id)
 			for index: int in range(mini(lines.size(), diagnostic_labels.size())):
 				diagnostic_labels[index].text = lines[index]
+	if active_panel and machine_panel != null:
+		machine_refresh_elapsed += delta
+		if machine_refresh_elapsed >= 0.2:
+			machine_refresh_elapsed = 0.0
+			if not machine_panel.refresh():
+				close_panel()
 	if help_panel.visible:
 		help_elapsed += delta
 		if help_elapsed >= 20.0:
@@ -228,7 +238,13 @@ func set_crosshair_hint(text_value: String) -> void:
 	crosshair_hint.text = text_value
 
 func open_entity(entity_id: int) -> void:
-	if sim == null or not sim.entities.has(entity_id):
+	if sim == null:
+		return
+	if not sim.machine_view(entity_id).is_empty():
+		selected_entity_id = entity_id
+		_open_machine_panel(entity_id)
+		return
+	if not sim.entities.has(entity_id):
 		return
 	selected_entity_id = entity_id
 	var entity: FactoryEntity = sim.entities[entity_id]
@@ -275,7 +291,49 @@ func open_entity(entity_id: int) -> void:
 	player.set_panel_open(true)
 	panel.visible = true
 
+func _open_machine_panel(entity_id: int) -> void:
+	inventory_open = false
+	storage_open = false
+	graphics_settings_open = false
+	var view: Dictionary = sim.machine_view(entity_id)
+	var miner_mode: bool = str(view.get("kind", "")) == "miner_mk1"
+	_set_inventory_panel_size(not miner_mode)
+	if miner_mode:
+		var panel_scroll: ScrollContainer = panel.get_child(0) as ScrollContainer
+		if panel_scroll != null:
+			panel_scroll.custom_minimum_size = Vector2(600.0, 0.0)
+		_center_panel()
+	_set_panel("")
+	machine_panel = FactoryMachinePanel.new()
+	machine_panel.items_collected.connect(world_item_collected.emit)
+	machine_panel.inventory_changed.connect(refresh_hotbar)
+	machine_panel.toast_requested.connect(show_toast)
+	machine_panel.output_slot_requested.connect(_on_machine_output_slot_requested)
+	machine_panel.player_slot_input_requested.connect(_on_player_slot_input)
+	if not machine_panel.configure(sim, player, icon_cache, entity_id):
+		machine_panel.free()
+		machine_panel = null
+		return
+	machine_panel.set_creative_mode(creative_mode_active)
+	var machine_frame := PanelContainer.new()
+	machine_frame.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	var frame_style := StyleBoxFlat.new()
+	frame_style.bg_color = Color(0.055, 0.068, 0.074, 0.96)
+	frame_style.border_color = Color("566164")
+	frame_style.set_border_width_all(1)
+	frame_style.set_corner_radius_all(6)
+	machine_frame.add_theme_stylebox_override("panel", frame_style)
+	machine_frame.add_child(machine_panel)
+	panel_body.add_child(machine_frame)
+	call_deferred("_fit_machine_panel_to_content")
+	active_panel = true
+	player.set_panel_open(true)
+	panel.visible = true
+	machine_refresh_elapsed = 0.0
+
 func open_inventory() -> void:
+	var previous_craft_scroll: int = craft_scroll.scroll_vertical \
+		if craft_scroll != null and is_instance_valid(craft_scroll) else 0
 	inventory_open = true
 	storage_open = false
 	selected_entity_id = -1
@@ -315,31 +373,45 @@ func open_inventory() -> void:
 	inventory_grid.configure(player.inventory, icon_cache, inventory_category_filter)
 	var craft_column := VBoxContainer.new()
 	craft_column.custom_minimum_size.x = 440.0
+	craft_column.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	craft_column.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	content.add_child(craft_column)
 	craft_column.add_child(_label("Hand crafting", 19))
+	craft_scroll = ScrollContainer.new()
+	craft_scroll.custom_minimum_size = Vector2(440.0, 560.0)
+	craft_scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	craft_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	craft_column.add_child(craft_scroll)
+	craft_list = VBoxContainer.new()
+	craft_list.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	craft_list.add_theme_constant_override("separation", 3)
+	craft_scroll.add_child(craft_list)
 	var items: Array[String] = []
 	for item_id: String in Items.all():
 		items.append(item_id)
 	items.sort()
 	if creative_mode_active:
-		craft_column.add_child(_label("Creative items · click for one full stack", 14))
+		craft_list.add_child(_label("Creative items · click for one full stack", 14))
 	for item_id: String in items:
 		if creative_mode_active:
 			var item_button := Button.new()
 			item_button.text = Items.item_name(item_id)
 			item_button.icon = icon_cache.get_icon("item", item_id) if icon_cache != null else null
-			item_button.pressed.connect(creative_item_requested.emit.bind(item_id))
-			craft_column.add_child(item_button)
+			item_button.custom_minimum_size.y = 34.0
+			item_button.add_theme_constant_override("icon_max_width", 24)
+			item_button.pressed.connect(_request_creative_item.bind(item_id))
+			craft_list.add_child(item_button)
 	for recipe_id: String in recipe_definitions:
 		var recipe: Dictionary = recipe_definitions[recipe_id]
-		var output_id: String = str(recipe["outputs"].keys()[0])
-		var output_count: int = int(recipe["outputs"][output_id])
-		var recipe_button := Button.new()
-		recipe_button.text = "Craft %s × %d" % [Items.item_name(output_id), output_count]
-		recipe_button.icon = icon_cache.get_icon("item", output_id) if icon_cache != null else null
-		recipe_button.tooltip_text = "%s → %s" % [str(recipe["inputs"]), Items.description(output_id)]
-		recipe_button.pressed.connect(_request_craft.bind(recipe_id))
-		craft_column.add_child(recipe_button)
+		craft_list.add_child(_make_craft_recipe_row(recipe_id, recipe))
+	if previous_craft_scroll > 0:
+		var scroll_restore_timer := Timer.new()
+		scroll_restore_timer.one_shot = true
+		scroll_restore_timer.wait_time = 0.05
+		add_child(scroll_restore_timer)
+		scroll_restore_timer.timeout.connect(_restore_craft_scroll_position.bind(
+			craft_scroll, previous_craft_scroll, scroll_restore_timer))
+		scroll_restore_timer.start()
 	var close := Button.new()
 	close.text = "Close  [Tab / Esc]"
 	close.pressed.connect(close_panel)
@@ -367,6 +439,38 @@ func _on_inventory_slot_hovered(slot_index: int, entered: bool) -> void:
 		_set_assignment_target("item", item_id)
 	else:
 		_clear_assignment_target("item", item_id)
+
+func _on_machine_output_slot_requested(slot_index: int, item_id: String,
+		displayed_count: int, button_index: int, shift_pressed: bool) -> void:
+	if sim == null or player == null or machine_panel == null \
+			or machine_panel.miner_mode \
+			or item_id.is_empty() or displayed_count <= 0 \
+			or not sim.entities.has(selected_entity_id):
+		return
+	if shift_pressed:
+		var transfer_count: int = player.inventory.fit_count(item_id, displayed_count)
+		var moved: int = sim.take_output_items(selected_entity_id, item_id, transfer_count)
+		if moved > 0:
+			player.inventory.add(item_id, moved)
+			world_item_collected.emit(item_id, moved)
+			machine_panel.inventory_grid.configure(player.inventory, icon_cache)
+			machine_panel.inventory_changed.emit()
+		machine_panel.refresh()
+		return
+	if not cursor_stack.is_empty():
+		return
+	var stack_limit: int = Items.stack_size(item_id)
+	var take_count: int = displayed_count
+	if button_index == MOUSE_BUTTON_RIGHT:
+		take_count = ceili(float(displayed_count) / 2.0)
+	take_count = mini(take_count, stack_limit)
+	var taken: int = sim.take_output_items(selected_entity_id, item_id, take_count)
+	if taken <= 0:
+		return
+	cursor_stack = {"item_id": item_id, "count": taken}
+	_set_cursor_origin("machine", slot_index, selected_entity_id, item_id)
+	_update_cursor_stack_visual()
+	machine_panel.refresh()
 
 func _on_player_slot_input(slot_index: int, button_index: int, shift_pressed: bool) -> void:
 	if slot_index >= player.inventory.slots.size():
@@ -401,7 +505,7 @@ func _on_player_slot_input(slot_index: int, button_index: int, shift_pressed: bo
 		var moved_count: int = held_count
 		if not cursor_stack.is_empty() and str(cursor_stack.get("item_id", "")) == held_item_id:
 			moved_count -= int(cursor_stack.get("count", 0))
-		if cursor_origin_type == "storage" and moved_count > 0:
+		if cursor_origin_type in ["storage", "machine"] and moved_count > 0:
 			world_item_collected.emit(held_item_id, moved_count)
 		if not cursor_stack.is_empty():
 			if str(cursor_stack.get("item_id", "")) != held_item_id:
@@ -410,6 +514,8 @@ func _on_player_slot_input(slot_index: int, button_index: int, shift_pressed: bo
 		else:
 			_clear_cursor_origin()
 	_refresh_open_inventory()
+	if machine_panel != null and is_instance_valid(machine_panel):
+		machine_panel.refresh_inventory()
 	refresh_hotbar()
 
 func _place_one_in_player_slot(slot_index: int) -> void:
@@ -423,7 +529,7 @@ func _place_one_in_player_slot(slot_index: int) -> void:
 		slot_index, {"item_id": item_id, "count": 1})
 	if remainder.is_empty():
 		cursor_stack["count"] = int(cursor_stack["count"]) - 1
-		if cursor_origin_type == "storage":
+		if cursor_origin_type in ["storage", "machine"]:
 			world_item_collected.emit(item_id, 1)
 		if int(cursor_stack["count"]) <= 0:
 			cursor_stack.clear()
@@ -432,26 +538,58 @@ func _place_one_in_player_slot(slot_index: int) -> void:
 func _refresh_open_inventory() -> void:
 	if inventory_grid != null and is_instance_valid(inventory_grid):
 		inventory_grid.configure(player.inventory, icon_cache, inventory_category_filter)
+	if inventory_open:
+		_refresh_crafting_affordability()
 	if storage_open:
 		_refresh_storage_grid()
+
+func _restore_craft_scroll_position(scroll: ScrollContainer, position: int,
+		timer: Timer) -> void:
+	if is_instance_valid(scroll) and scroll.is_inside_tree():
+		scroll.scroll_vertical = position
+	if is_instance_valid(timer):
+		timer.queue_free()
 
 func _set_inventory_panel_size(wide: bool) -> void:
 	if panel == null:
 		return
 	var scroll: ScrollContainer = panel.get_child(0) as ScrollContainer
 	panel.set_anchors_preset(Control.PRESET_TOP_LEFT)
-	if wide:
-		panel.size = Vector2(1130.0, 700.0)
-		if scroll != null:
-			scroll.custom_minimum_size = Vector2(1110.0, 680.0)
-	else:
-		panel.size = Vector2(620.0, 510.0)
-		if scroll != null:
-			scroll.custom_minimum_size = Vector2(600.0, 490.0)
+	var panel_width: float = 1130.0 if wide else 620.0
+	var desired_height: float = 700.0 if wide else 510.0
+	var panel_height: float = minf(desired_height, _max_panel_height())
+	panel.size = Vector2(panel_width, panel_height)
+	if scroll != null:
+		scroll.custom_minimum_size = Vector2(panel_width - 20.0,
+			maxf(1.0, panel_height - 20.0))
 	_center_panel()
+
+func _fit_machine_panel_to_content() -> void:
+	if panel == null or not is_instance_valid(panel) or machine_panel == null \
+			or not is_instance_valid(machine_panel) or panel_body == null:
+		return
+	var content_height: float = machine_panel.get_combined_minimum_size().y
+	var panel_height: float = minf(content_height + 40.0, _max_panel_height())
+	var panel_scroll: ScrollContainer = panel.get_child(0) as ScrollContainer
+	if panel_scroll != null:
+		panel_scroll.custom_minimum_size.y = maxf(1.0, panel_height - 20.0)
+	panel.size.y = panel_height
+	_center_panel()
+
+func _max_panel_height() -> float:
+	var viewport_height: float = root.size.y if root != null else 0.0
+	if viewport_height <= 0.0 and root != null:
+		viewport_height = root.get_viewport_rect().size.y
+	return maxf(1.0, viewport_height - 48.0)
 
 func _center_panel() -> void:
 	if panel != null and root != null:
+		var maximum_height: float = _max_panel_height()
+		if panel.size.y > maximum_height:
+			panel.size.y = maximum_height
+			var panel_scroll: ScrollContainer = panel.get_child(0) as ScrollContainer
+			if panel_scroll != null:
+				panel_scroll.custom_minimum_size.y = maxf(1.0, maximum_height - 20.0)
 		panel.position = (root.size - panel.size) * 0.5
 
 func _open_storage_panel(entity: FactoryEntity) -> void:
@@ -627,6 +765,27 @@ func _return_cursor_stack() -> void:
 			var remainder: int = player.inventory.add(item_id, quantity)
 			player.inventory.add_restored(item_id, remainder)
 			world_item_collected.emit(item_id, quantity)
+	elif cursor_origin_type == "machine":
+		var item_id: String = str(pending.get("item_id", ""))
+		var quantity: int = int(pending.get("count", 0))
+		if sim != null and sim.entities.has(cursor_origin_entity):
+			quantity -= sim.insert_output_items(cursor_origin_entity, item_id, quantity)
+		var player_quantity: int = 0
+		if quantity > 0:
+			var leftover: int = player.inventory.add(item_id, quantity)
+			player_quantity = quantity - leftover
+			quantity = leftover
+		if quantity > 0 and sim != null and sim.entities.has(cursor_origin_entity):
+			quantity -= sim.insert_output_items(cursor_origin_entity, item_id, quantity)
+		if player_quantity > 0:
+			world_item_collected.emit(item_id, player_quantity)
+		if quantity > 0:
+			cursor_stack = {"item_id": item_id, "count": quantity}
+			_update_cursor_stack_visual()
+			if machine_panel != null and is_instance_valid(machine_panel):
+				machine_panel.refresh()
+			refresh_hotbar()
+			return
 	elif cursor_origin_type == "player" and cursor_origin_slot >= 0:
 		pending = player.inventory.place_into(cursor_origin_slot, pending)
 		if not pending.is_empty():
@@ -639,8 +798,12 @@ func _return_cursor_stack() -> void:
 		player.inventory.add_restored(item_id, remainder)
 	cursor_stack.clear()
 	_clear_cursor_origin()
+	_update_cursor_stack_visual()
 	if storage_open:
 		_refresh_storage_grid()
+	if machine_panel != null and is_instance_valid(machine_panel):
+		machine_panel.refresh()
+		machine_panel.refresh_inventory()
 	refresh_hotbar()
 
 func discard_cursor_stack() -> void:
@@ -898,6 +1061,7 @@ func close_panel() -> void:
 	inventory_open = false
 	storage_open = false
 	graphics_settings_open = false
+	machine_panel = null
 	panel.visible = false
 	assignment_target.clear()
 	player.set_panel_open(false)
@@ -908,7 +1072,10 @@ func panel_is_open() -> bool:
 
 func refresh_entity_panel() -> void:
 	if active_panel and selected_entity_id >= 0:
-		open_entity(selected_entity_id)
+		if machine_panel != null:
+			machine_panel.refresh()
+		else:
+			open_entity(selected_entity_id)
 
 func has_assignment_target() -> bool:
 	return not assignment_target.is_empty()
@@ -931,6 +1098,16 @@ func _create_panel() -> void:
 	panel.mouse_filter = Control.MOUSE_FILTER_STOP
 	panel.set_anchors_preset(Control.PRESET_TOP_LEFT)
 	panel.size = Vector2(620.0, 510.0)
+	var panel_style := StyleBoxFlat.new()
+	panel_style.bg_color = Color(0.055, 0.068, 0.074, 1.0)
+	panel_style.border_color = Color("566164")
+	panel_style.set_border_width_all(1)
+	panel_style.set_corner_radius_all(6)
+	panel_style.content_margin_left = 10.0
+	panel_style.content_margin_right = 10.0
+	panel_style.content_margin_top = 10.0
+	panel_style.content_margin_bottom = 10.0
+	panel.add_theme_stylebox_override("panel", panel_style)
 	panel.visible = false
 	root.add_child(panel)
 	_center_panel()
@@ -1035,9 +1212,15 @@ func _update_hotbar() -> void:
 
 func set_creative_mode(active: bool) -> void:
 	creative_mode_active = active
+	if machine_panel != null:
+		machine_panel.set_creative_mode(active)
 	if creative_mode_label != null:
 		creative_mode_label.visible = active
 	_update_hotbar()
+	if inventory_open:
+		_refresh_open_inventory()
+	if machine_panel != null:
+		machine_panel.refresh_inventory()
 
 func _clear_hotbar_slot(index: int) -> void:
 	if hotbar_model != null and hotbar_model.clear_slot(index):
@@ -1066,11 +1249,14 @@ func _set_panel(title: String) -> void:
 	for child: Node in panel_body.get_children():
 		child.queue_free()
 	assignment_hint = null
+	craft_scroll = null
+	machine_panel = null
 	assignment_target.clear()
 	entity_status_label = null
 	diagnostic_labels.clear()
-	var heading: Label = _label(title, 22)
-	panel_body.add_child(heading)
+	if not title.is_empty():
+		var heading: Label = _label(title, 22)
+		panel_body.add_child(heading)
 
 func _label(text_value: String, font_size: int) -> Label:
 	var label: Label = Label.new()
@@ -1188,3 +1374,116 @@ func _select_building(building_id: String) -> void:
 
 func _request_craft(recipe_id: String) -> void:
 	craft_requested.emit(recipe_id)
+	_refresh_open_inventory()
+	refresh_hotbar()
+
+func _request_creative_item(item_id: String) -> void:
+	creative_item_requested.emit(item_id)
+	_refresh_open_inventory()
+	refresh_hotbar()
+
+func _make_craft_recipe_row(recipe_id: String, recipe: Dictionary) -> HBoxContainer:
+	var output_id: String = str(recipe["outputs"].keys()[0])
+	var output_count: int = int(recipe["outputs"][output_id])
+	var row := HBoxContainer.new()
+	row.custom_minimum_size.y = 56.0
+	row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	row.clip_contents = true
+	row.add_theme_constant_override("separation", 8)
+	row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var output_icon := TextureRect.new()
+	output_icon.custom_minimum_size = Vector2(44.0, 44.0)
+	output_icon.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	output_icon.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	output_icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	output_icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	output_icon.texture = icon_cache.get_icon("item", output_id) \
+		if icon_cache != null else null
+	output_icon.tooltip_text = Items.item_name(output_id)
+	output_icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	row.add_child(output_icon)
+	var details := VBoxContainer.new()
+	details.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	details.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	var output_label := _label("%s × %d" % [
+		Items.item_name(output_id), output_count], 14)
+	output_label.autowrap_mode = TextServer.AUTOWRAP_OFF
+	output_label.clip_text = true
+	details.add_child(output_label)
+	var input_row := HBoxContainer.new()
+	input_row.add_theme_constant_override("separation", 5)
+	input_row.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	input_row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	details.add_child(input_row)
+	row.add_child(details)
+	var affordable: bool = creative_mode_active \
+		or player.inventory.can_afford(recipe.get("inputs", {}))
+	var input_color: Color = Color("d8dfd7") if affordable else Color("df7169")
+	var input_icons: Array[TextureRect] = []
+	var input_amounts: Array[Label] = []
+	for input_variant: Variant in recipe.get("inputs", {}):
+		var item_id: String = str(input_variant)
+		var input_stack := HBoxContainer.new()
+		input_stack.custom_minimum_size = Vector2(44.0, 20.0)
+		input_stack.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
+		input_stack.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		input_stack.clip_contents = true
+		input_stack.add_theme_constant_override("separation", 2)
+		input_stack.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		var input_icon := TextureRect.new()
+		input_icon.custom_minimum_size = Vector2(20.0, 20.0)
+		input_icon.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+		input_icon.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		input_icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		input_icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+		input_icon.texture = icon_cache.get_icon("item", item_id) \
+			if icon_cache != null else null
+		input_icon.modulate = input_color
+		input_icon.tooltip_text = Items.item_name(item_id)
+		input_icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		input_icons.append(input_icon)
+		input_stack.add_child(input_icon)
+		var amount := _label("×%d" % int(recipe["inputs"][input_variant]), 11)
+		amount.custom_minimum_size.x = 22.0
+		amount.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
+		amount.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+		amount.autowrap_mode = TextServer.AUTOWRAP_OFF
+		amount.clip_text = true
+		amount.add_theme_color_override("font_color", input_color)
+		input_amounts.append(amount)
+		input_stack.add_child(amount)
+		input_row.add_child(input_stack)
+	var craft_button := Button.new()
+	craft_button.text = "Craft"
+	craft_button.custom_minimum_size.x = 68.0
+	craft_button.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	craft_button.disabled = not affordable
+	craft_button.pressed.connect(_request_craft.bind(recipe_id))
+	row.add_child(craft_button)
+	row.set_meta("recipe_inputs", recipe.get("inputs", {}).duplicate(true))
+	row.set_meta("input_icons", input_icons)
+	row.set_meta("input_amounts", input_amounts)
+	row.set_meta("craft_button", craft_button)
+	row.tooltip_text = "%s → %s" % [str(recipe.get("inputs", {})),
+		Items.description(output_id)]
+	return row
+
+func _refresh_crafting_affordability() -> void:
+	if craft_list == null or not is_instance_valid(craft_list) or player == null:
+		return
+	for child: Node in craft_list.get_children():
+		if not child is HBoxContainer or not child.has_meta("recipe_inputs"):
+			continue
+		var recipe_row: HBoxContainer = child as HBoxContainer
+		var recipe_inputs: Dictionary = recipe_row.get_meta("recipe_inputs", {})
+		var color: Color = Color("d8dfd7") \
+			if creative_mode_active or player.inventory.can_afford(recipe_inputs) \
+			else Color("df7169")
+		var input_icons: Array = recipe_row.get_meta("input_icons", [])
+		var input_amounts: Array = recipe_row.get_meta("input_amounts", [])
+		var craft_button: Button = recipe_row.get_meta("craft_button")
+		craft_button.disabled = not creative_mode_active \
+			and not player.inventory.can_afford(recipe_inputs)
+		for index: int in range(mini(input_icons.size(), input_amounts.size())):
+			(input_icons[index] as TextureRect).modulate = color
+			(input_amounts[index] as Label).add_theme_color_override("font_color", color)

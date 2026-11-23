@@ -52,6 +52,13 @@ func _run_all() -> void:
 	_test_refund_preview()
 	_test_storage_grid_mapping_refresh()
 	_test_storage_stack_withdrawals()
+	_test_machine_view_and_transfers()
+	_test_machine_panel_refresh_and_close()
+	await _test_machine_panel_overflow_scroll()
+	_test_machine_panel_creative_transfers()
+	_test_machine_output_stack_transfers()
+	_test_machine_origin_cursor_return()
+	await _test_craft_scroll_preservation()
 	print("RESULT: %d/%d test groups passed" % [passed_groups, groups])
 	quit(1 if failures > 0 else 0)
 
@@ -619,6 +626,435 @@ func _test_storage_origin_return_gain() -> void:
 	hud.free()
 	player.free()
 	_finish_group()
+
+func _test_machine_view_and_transfers() -> void:
+	var running_sim := FactorySim.new()
+	var running_id: int = running_sim.add_entity("smelter", Vector3.ZERO, 0.0,
+		{"recipe": "iron_ingot"})
+	running_sim.entities[running_id].input_buffer["iron_ore"] = 1
+	running_sim.power.bypass = true
+	running_sim.tick(0.05)
+	var running_view: Dictionary = running_sim.machine_view(running_id)
+	var running_inputs: Array = running_view.get("inputs", [])
+	_check("machine view exposes running recipe, buffers, rates, and progress",
+		running_view.get("state", "") == "running"
+		and running_view.get("recipe_id", "") == "iron_ingot"
+		and is_equal_approx(float(running_view.get("cycle_seconds", 0.0)), 2.0)
+		and is_equal_approx(float(running_view.get("progress", 0.0)), 0.025)
+		and running_inputs.size() == 1
+		and running_inputs[0].get("item_id", "") == "iron_ore"
+		and int(running_inputs[0].get("count", 0)) == 1
+		and int(running_inputs[0].get("maximum", 0)) == 10
+		and not bool(running_view.get("rate_window_ready", true))
+		and bool(running_view.get("rate_window_measuring", false))
+		and is_equal_approx(float(running_inputs[0].get("needs_per_min", 0.0)), 30.0),
+		str(running_view))
+	running_sim.tick(60.0)
+	var warmed_view: Dictionary = running_sim.machine_view(running_id)
+	_check("machine view marks efficiency ready after a full rate window",
+		bool(warmed_view.get("rate_window_ready", false))
+		and float(warmed_view.get("rate_window_elapsed", 0.0)) >= 60.0
+		and not bool(warmed_view.get("rate_window_measuring", true)),
+		str(warmed_view))
+
+	var waiting_sim := FactorySim.new()
+	var waiting_id: int = waiting_sim.add_entity("constructor", Vector3.ZERO)
+	waiting_sim.tick(0.05)
+	var waiting_view: Dictionary = waiting_sim.machine_view(waiting_id)
+	_check("machine view reports waiting for input",
+		waiting_view.get("state", "") == "waiting_input"
+		and waiting_view.get("display_status", "") == "Waiting for input"
+		and str(waiting_view.get("why", "")).contains("needs")
+		and int(waiting_view.get("output_slot_count", 0)) == 6,
+		str(waiting_view))
+
+	var full_sim := FactorySim.new()
+	var full_id: int = full_sim.add_entity("assembler", Vector3.ZERO)
+	full_sim.entities[full_id].input_buffer["iron_plate"] = 6
+	full_sim.entities[full_id].input_buffer["screw"] = 12
+	full_sim.entities[full_id].output_buffer["hull_panel"] = 20
+	full_sim.tick(0.05)
+	var full_view: Dictionary = full_sim.machine_view(full_id)
+	_check("machine view reports output-full status and buffered output",
+		full_view.get("state", "") == "output_full"
+		and full_view.get("display_status", "") == "Output full"
+		and int(full_view.get("output_buffer", {}).get("hull_panel", 0)) == 20,
+		str(full_view))
+
+	var unpowered_sim := FactorySim.new()
+	var unpowered_id: int = unpowered_sim.add_entity("smelter", Vector3.ZERO)
+	unpowered_sim.entities[unpowered_id].input_buffer["iron_ore"] = 1
+	unpowered_sim.power.bypass = false
+	unpowered_sim.tick(0.05)
+	var unpowered_view: Dictionary = unpowered_sim.machine_view(unpowered_id)
+	_check("machine view reports real-power network state",
+		unpowered_view.get("state", "") == "no_power"
+		and not bool(unpowered_view.get("power_bypassed", true))
+		and float(unpowered_view.get("power_draw_mw", -1.0)) == 0.0
+		and str(unpowered_view.get("power_state", "")).contains("No connected network"),
+		str(unpowered_view))
+
+	var insert_sim := FactorySim.new()
+	var insert_id: int = insert_sim.add_entity("smelter", Vector3.ZERO, 0.0,
+		{"recipe": "iron_ingot"})
+	var inserted: int = insert_sim.insert_input_items(insert_id, "iron_ore", 12)
+	var wrong_item: int = insert_sim.insert_input_items(insert_id, "copper_ore", 1)
+	var input_capacity: int = insert_sim.input_capacity(insert_id, "iron_ore")
+	var input_capacity_view: Dictionary = insert_sim.machine_view(insert_id)
+	var input_slots: Array = input_capacity_view.get("inputs", [])
+	_check("insert_input_items respects buffer maximum and rejects wrong items",
+		inserted == 10 and wrong_item == 0
+		and input_capacity == 10
+		and int(input_slots[0].get("maximum", 0)) == input_capacity
+		and int(insert_sim.entities[insert_id].input_buffer.get("iron_ore", 0)) == 10,
+		str([inserted, wrong_item, input_capacity, input_capacity_view]))
+
+	var output_sim := FactorySim.new()
+	var output_id: int = output_sim.add_entity("smelter", Vector3.ZERO)
+	output_sim.entities[output_id].output_buffer["iron_ingot"] = 10
+	var receiving_inventory := FrontierInventory.new(1)
+	receiving_inventory.add("iron_ingot", 60)
+	var fits: int = receiving_inventory.fit_count("iron_ingot", 10)
+	var taken: int = output_sim.take_output_items(output_id, "iron_ingot", fits)
+	receiving_inventory.add("iron_ingot", taken)
+	_check("take_output_items transfers only the amount that fits",
+		fits == 4 and taken == 4 and receiving_inventory.count("iron_ingot") == 64
+		and int(output_sim.entities[output_id].output_buffer.get("iron_ingot", 0)) == 6,
+		str([fits, taken, receiving_inventory.totals(),
+			output_sim.entities[output_id].output_buffer]))
+
+	var output_fill_sim := FactorySim.new()
+	var output_fill_id: int = output_fill_sim.add_entity("smelter", Vector3.ZERO,
+		0.0, {"recipe": "iron_ingot"})
+	output_fill_sim.power.bypass = true
+	var output_capacity: int = output_fill_sim.output_capacity(output_fill_id, "iron_ingot")
+	var produced_cycles: int = 0
+	for _cycle: int in range(output_capacity + 1):
+		produced_cycles += output_fill_sim.insert_input_items(output_fill_id, "iron_ore", 1)
+		output_fill_sim.tick(2.0)
+	var filled_view: Dictionary = output_fill_sim.machine_view(output_fill_id)
+	var filled_outputs: Array = filled_view.get("outputs", [])
+	var filled_count: int = int(output_fill_sim.entities[output_fill_id]
+		.output_buffer.get("iron_ingot", 0))
+	_check("machine output production stops at the capacity reported by machine_view",
+		produced_cycles == output_capacity + 1
+		and filled_count == output_capacity
+		and int(filled_outputs[0].get("maximum", 0)) == output_capacity
+		and int(filled_outputs[0].get("count", 0)) == output_capacity
+		and filled_view.get("state", "") == "output_full",
+		str([produced_cycles, output_capacity, filled_view]))
+
+	var miner_sim := FactorySim.new()
+	miner_sim.register_node(7, "iron_ore", "pure", Vector3(20.0, 0.0, 10.0), 120.0)
+	var miner_id: int = miner_sim.add_entity("miner_mk1", Vector3(20.0, 0.0, 10.0),
+		0.0, {"node_id": 7})
+	miner_sim.power.bypass = true
+	miner_sim.tick(0.05)
+	var miner_view: Dictionary = miner_sim.machine_view(miner_id)
+	_check("miner view exposes deposit item, purity, and rate",
+		miner_view.get("deposit_item", "") == "iron_ore"
+		and miner_view.get("deposit_purity", "") == "pure"
+		and is_equal_approx(float(miner_view.get("deposit_rate", 0.0)), 120.0)
+		and is_equal_approx(float(miner_view.get("maximum_rate", 0.0)), 120.0)
+		and is_equal_approx(float(miner_view.get("progress", 0.0)), 0.1)
+		and is_equal_approx(float(miner_view.get("cycle_seconds", 0.0)), 0.5),
+		str(miner_view))
+	_finish_group()
+
+func _test_machine_panel_refresh_and_close() -> void:
+	var sim := FactorySim.new()
+	var entity_id: int = sim.add_entity("smelter", Vector3.ZERO)
+	var player := FactoryPlayer.new()
+	get_root().add_child(player)
+	var hud := FactoryHUD.new()
+	hud.setup(sim, player)
+	get_root().add_child(hud)
+	hud.open_entity(entity_id)
+	var machine_panel: FactoryMachinePanel = hud.machine_panel
+	var child_ids: Array[int] = []
+	for child: Node in machine_panel.get_children():
+		child_ids.append(child.get_instance_id())
+	var recipe_selector_id: int = machine_panel.recipe_selector.get_instance_id()
+	machine_panel.refresh()
+	machine_panel.refresh()
+	var refreshed_ids: Array[int] = []
+	for child: Node in machine_panel.get_children():
+		refreshed_ids.append(child.get_instance_id())
+	var preserved: bool = child_ids == refreshed_ids \
+		and recipe_selector_id == machine_panel.recipe_selector.get_instance_id()
+	var selected_recipe: int = machine_panel.recipe_selector.selected
+	machine_panel.recipe_selector.get_popup().index_pressed.emit(selected_recipe)
+	var same_recipe_locked: bool = bool(sim.entities[entity_id].extra.get(
+		"recipe_locked", false))
+	var different_input_accepted: bool = sim.try_insert(
+		entity_id, "copper_ore", "in0")
+	var recipe_stayed_locked: bool = same_recipe_locked and not different_input_accepted \
+		and sim.entities[entity_id].recipe_id == "iron_ingot"
+	sim.remove_entity_with_refund(entity_id)
+	hud._process(0.2)
+	_check("machine refresh preserves child IDs and closes when its entity is removed",
+		preserved and recipe_stayed_locked and not hud.panel_is_open()
+		and hud.machine_panel == null,
+		str([child_ids, refreshed_ids, recipe_stayed_locked, hud.panel_is_open()]))
+	sim.register_node(7, "iron_ore", "pure", Vector3(20.0, 0.0, 10.0), 60.0)
+	var miner_id: int = sim.add_entity("miner_mk1", Vector3(20.0, 0.0, 10.0),
+		0.0, {"node_id": 7})
+	hud.open_entity(miner_id)
+	var miner_panel: FactoryMachinePanel = hud.machine_panel
+	_check("miner panel hides inventory transfers while keeping production details",
+		miner_panel.miner_mode and not miner_panel.take_button.visible
+		and miner_panel.inventory_grid == null
+		and miner_panel.deposit_label.visible and miner_panel.progress_bar.visible
+		and miner_panel.power_label.visible,
+		str([miner_panel.miner_mode, miner_panel.take_button.visible,
+			miner_panel.inventory_grid == null,
+			miner_panel.deposit_label.text]))
+	hud.free()
+	player.free()
+	_finish_group()
+
+func _test_machine_panel_overflow_scroll() -> void:
+	var sim := FactorySim.new()
+	var entity_id: int = sim.add_entity("smelter", Vector3.ZERO)
+	var player := FactoryPlayer.new()
+	for _index: int in range(40):
+		player.inventory.slots.append({"item_id": "iron_ore", "count": 1})
+	get_root().add_child(player)
+	var hud := FactoryHUD.new()
+	hud.setup(sim, player)
+	get_root().add_child(hud)
+	await process_frame
+	hud.root.set_anchors_and_offsets_preset(Control.PRESET_TOP_LEFT)
+	hud.root.size = Vector2(1600.0, 720.0)
+	hud.open_entity(entity_id)
+	await process_frame
+	await process_frame
+	await process_frame
+	var panel_scroll: ScrollContainer = hud.panel.get_child(0) as ScrollContainer
+	var scroll_bar: VScrollBar = panel_scroll.get_v_scroll_bar()
+	var max_scroll: float = scroll_bar.max_value - scroll_bar.page
+	var viewport_rect: Rect2 = hud.root.get_viewport_rect()
+	var panel_rect: Rect2 = hud.panel.get_global_rect()
+	var inventory_grid: FactoryInventoryPanel = hud.machine_panel.inventory_grid
+	var panel_inside_viewport: bool = panel_rect.position.x >= viewport_rect.position.x \
+		and panel_rect.position.y >= viewport_rect.position.y \
+		and panel_rect.end.x <= viewport_rect.end.x \
+		and panel_rect.end.y <= viewport_rect.end.y
+	_check("machine panel clamps overflow content and keeps it scrollable",
+		panel_inside_viewport and max_scroll > 0.0,
+		str({"panel": panel_rect, "viewport": viewport_rect, "max_scroll": max_scroll,
+			"scroll_max": scroll_bar.max_value, "scroll_page": scroll_bar.page,
+			"scroll_size": panel_scroll.size,
+			"body_min": hud.panel_body.get_combined_minimum_size(),
+			"machine_min": hud.machine_panel.get_combined_minimum_size(),
+			"grid_min": inventory_grid.get_combined_minimum_size(),
+			"grid_children": inventory_grid.get_child_count(),
+			"inventory_slots": player.inventory.slots.size()}))
+	hud.free()
+	player.free()
+	_finish_group()
+
+func _test_machine_panel_creative_transfers() -> void:
+	var sim := FactorySim.new()
+	var entity_id: int = sim.add_entity("smelter", Vector3.ZERO, 0.0, {
+		"recipe": "iron_ingot"
+	})
+	sim.entities[entity_id].output_buffer["iron_ingot"] = 2
+	var creative := CreativeMode.new()
+	creative.enter(FrontierInventory.new(), 0)
+	var player := FactoryPlayer.new()
+	get_root().add_child(player)
+	player.inventory = creative.inventory
+	var hud := FactoryHUD.new()
+	hud.setup(sim, player)
+	get_root().add_child(hud)
+	hud.set_creative_mode(true)
+	hud.world_item_collected.connect(creative.record_world_gain)
+	hud.open_entity(entity_id)
+	var machine_panel: FactoryMachinePanel = hud.machine_panel
+	player.inventory.add("iron_ore", 5)
+	machine_panel._on_inventory_slot_input(0, MOUSE_BUTTON_LEFT, true)
+	var creative_input_blocked: bool = player.inventory.count("iron_ore") == 5 \
+		and sim.entities[entity_id].input_buffer.is_empty()
+	machine_panel._take_output()
+	sim.entities[entity_id].output_buffer["iron_ingot"] = 2
+	machine_panel.refresh()
+	var click_event := InputEventMouseButton.new()
+	click_event.button_index = MOUSE_BUTTON_LEFT
+	click_event.pressed = true
+	machine_panel._on_output_slot_input(click_event, 0)
+	hud._return_cursor_stack()
+	var output_count: int = int(creative.world_gains.get("iron_ingot", 0))
+	var restored: Dictionary = creative.exit()
+	var survival_inventory: FrontierInventory = restored.get("inventory")
+	hud.set_creative_mode(false)
+	player.inventory = FrontierInventory.from_totals({"iron_ore": 67})
+	machine_panel._on_inventory_slot_input(0, MOUSE_BUTTON_LEFT, true)
+	_check("Creative blocks machine input deposits but tracks collected output as a gain",
+		creative_input_blocked and output_count == 2
+		and survival_inventory.count("iron_ingot") == 2
+		and int(sim.entities[entity_id].output_buffer.get("iron_ingot", 0)) == 2
+		and sim.entities[entity_id].input_buffer.get("iron_ore", 0) == 10
+		and player.inventory.count("iron_ore") == 57
+		and int(player.inventory.slots[0].get("count", 0)) == 54
+		and int(player.inventory.slots[1].get("count", 0)) == 3,
+		str([creative_input_blocked, output_count, survival_inventory.totals(),
+			sim.entities[entity_id].input_buffer, player.inventory.to_data()]))
+	hud.free()
+	player.free()
+	_finish_group()
+
+func _test_machine_output_stack_transfers() -> void:
+	var sim := FactorySim.new()
+	var entity_id: int = sim.add_entity("smelter", Vector3.ZERO, 0.0, {
+		"recipe": "iron_ingot"
+	})
+	sim.entities[entity_id].output_buffer["iron_ingot"] = 20
+	var player := FactoryPlayer.new()
+	player.inventory = FrontierInventory.new()
+	get_root().add_child(player)
+	var hud := FactoryHUD.new()
+	hud.setup(sim, player)
+	get_root().add_child(hud)
+	hud.open_entity(entity_id)
+	var panel: FactoryMachinePanel = hud.machine_panel
+	var slot: Dictionary = panel.output_slots[0]
+	var rendered_stack: bool = panel.output_slots.size() == 2 \
+		and slot.get("item_id", "") == "iron_ingot" \
+		and int(slot.get("count", 0)) == 20
+	var left_event := InputEventMouseButton.new()
+	left_event.button_index = MOUSE_BUTTON_LEFT
+	left_event.pressed = true
+	panel._on_output_slot_input(left_event, 0)
+	var left_count: int = int(hud.cursor_stack.get("count", 0))
+	var left_output: int = int(sim.entities[entity_id].output_buffer.get("iron_ingot", 0))
+	hud._on_player_slot_input(0, MOUSE_BUTTON_LEFT, false)
+
+	sim.entities[entity_id].output_buffer["iron_ingot"] = 20
+	panel.refresh()
+	var right_event := InputEventMouseButton.new()
+	right_event.button_index = MOUSE_BUTTON_RIGHT
+	right_event.pressed = true
+	panel._on_output_slot_input(right_event, 0)
+	var right_count: int = int(hud.cursor_stack.get("count", 0))
+	var right_output: int = int(sim.entities[entity_id].output_buffer.get("iron_ingot", 0))
+	hud._on_player_slot_input(1, MOUSE_BUTTON_LEFT, false)
+	var shift_count: int = int(panel.output_slots[0].get("count", 0))
+	var shift_event := InputEventMouseButton.new()
+	shift_event.button_index = MOUSE_BUTTON_LEFT
+	shift_event.pressed = true
+	shift_event.shift_pressed = true
+	panel._on_output_slot_input(shift_event, 0)
+	var shift_output: int = int(sim.entities[entity_id].output_buffer.get("iron_ingot", 0))
+	var inventory_count: int = player.inventory.count("iron_ingot")
+
+	sim.entities[entity_id].output_buffer["iron_ingot"] = 100
+	panel.refresh()
+	panel._on_output_slot_input(left_event, 0)
+	var cursor_cap: int = int(hud.cursor_stack.get("count", 0))
+	var cap_remaining: int = int(sim.entities[entity_id].output_buffer.get("iron_ingot", 0))
+	hud._return_cursor_stack()
+	var first_slot_button: Button = panel.inventory_grid.get_child(0) as Button
+	var mini_grid_count: int = -1
+	if first_slot_button.get_child_count() > 0 \
+			and first_slot_button.get_child(0) is Label:
+		mini_grid_count = int((first_slot_button.get_child(0) as Label).text)
+
+	player.inventory = FrontierInventory.new(1)
+	player.inventory.add("iron_ingot", 60)
+	sim.entities[entity_id].output_buffer["iron_ingot"] = 20
+	panel._take_output()
+	var take_fit: int = player.inventory.count("iron_ingot")
+	var remaining_output: int = int(sim.entities[entity_id].output_buffer.get("iron_ingot", 0))
+	_check("machine outputs use clicked-stack, half-stack, shift-fit, and Take-fit rules",
+		rendered_stack and left_count == 20 and left_output == 0
+		and right_count == 10 and right_output == 10
+		and shift_count == 10 and shift_output == 0 and inventory_count == 40
+		and cursor_cap == Items.stack_size("iron_ingot") and cap_remaining == 36
+		and mini_grid_count == Items.stack_size("iron_ingot")
+		and take_fit == 64 and remaining_output == 16
+		and left_count <= Items.stack_size("iron_ingot")
+		and right_count <= Items.stack_size("iron_ingot"),
+		str([rendered_stack, left_count, left_output, right_count, right_output,
+			shift_count, shift_output, inventory_count, cursor_cap, cap_remaining,
+			mini_grid_count, take_fit, remaining_output]))
+	hud.free()
+	player.free()
+	_finish_group()
+
+func _test_machine_origin_cursor_return() -> void:
+	var sim := FactorySim.new()
+	var entity_id: int = sim.add_entity("smelter", Vector3.ZERO, 0.0, {
+		"recipe": "iron_ingot"
+	})
+	sim.entities[entity_id].output_buffer["iron_ingot"] = 5
+	var player := FactoryPlayer.new()
+	player.inventory = FrontierInventory.new()
+	player.inventory.add("copper_ore", 64 * player.inventory.capacity)
+	get_root().add_child(player)
+	var hud := FactoryHUD.new()
+	hud.setup(sim, player)
+	get_root().add_child(hud)
+	hud.open_entity(entity_id)
+	var click_event := InputEventMouseButton.new()
+	click_event.button_index = MOUSE_BUTTON_LEFT
+	click_event.pressed = true
+	hud.machine_panel._on_output_slot_input(click_event, 0)
+	var held_count: int = int(hud.cursor_stack.get("count", 0))
+	hud.close_panel()
+	var output_count: int = int(sim.entities[entity_id].output_buffer.get("iron_ingot", 0))
+	_check("machine-origin cursor returns to output without creating overflow",
+		held_count == 5 and hud.cursor_stack.is_empty() and output_count == 5
+		and player.inventory.slots.size() == player.inventory.capacity,
+		str([held_count, output_count, player.inventory.slots.size(),
+			hud.cursor_stack]))
+	hud.free()
+	player.free()
+	_finish_group()
+
+func _test_craft_scroll_preservation() -> void:
+	var sim := FactorySim.new()
+	var player := FactoryPlayer.new()
+	get_root().add_child(player)
+	player.inventory = FrontierInventory.new()
+	player.inventory.add("iron_ore", 1)
+	var hud := FactoryHUD.new()
+	hud.setup(sim, player)
+	get_root().add_child(hud)
+	hud.open_inventory()
+	await process_frame
+	var max_scroll: int = int(hud.craft_scroll.get_v_scroll_bar().max_value)
+	var target_scroll: int = mini(160, max_scroll)
+	hud.craft_scroll.scroll_vertical = target_scroll
+	await process_frame
+	var before: int = hud.craft_scroll.scroll_vertical
+	hud._request_craft("iron_ingot")
+	_complete_test_craft_for_scroll("iron_ingot", player.inventory)
+	var crafted: bool = player.inventory.count("iron_ore") == 0 \
+		and player.inventory.count("iron_ingot") == 1
+	var after_craft: int = hud.craft_scroll.scroll_vertical
+	hud.open_inventory()
+	await process_frame
+	await process_frame
+	await create_timer(0.1).timeout
+	var after_rebuild: int = hud.craft_scroll.scroll_vertical
+	_check("crafting refresh and inventory rebuild preserve craft scroll position",
+		before > 0 and crafted and after_craft == before and after_rebuild == before,
+		str([max_scroll, before, after_craft, after_rebuild]))
+	hud.free()
+	player.free()
+	_finish_group()
+
+func _complete_test_craft_for_scroll(recipe_id: String,
+		inventory: FrontierInventory) -> void:
+	var recipe: Dictionary = Recipes.all().get(recipe_id, {})
+	var inputs: Dictionary = recipe.get("inputs", {})
+	if recipe.is_empty() or not inventory.can_afford(inputs):
+		return
+	for item_id: String in inputs:
+		inventory.remove(item_id, int(inputs[item_id]))
+	for item_id: String in recipe.get("outputs", {}):
+		inventory.add(item_id, int(recipe["outputs"][item_id]))
 
 func _test_placement_and_ports() -> void:
 	var sim: FactorySim = FactorySim.new()

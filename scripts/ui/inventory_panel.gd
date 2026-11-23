@@ -4,7 +4,7 @@ class_name FactoryInventoryPanel
 signal slot_input(slot_index: int, button_index: int, shift_pressed: bool)
 signal slot_hovered(slot_index: int, entered: bool)
 
-const SLOT_SIZE: Vector2 = Vector2(62.0, 62.0)
+const SLOT_SIZE: Vector2 = Vector2(64.0, 64.0)
 
 var inventory: FrontierInventory
 var icon_cache: FactoryIconCache
@@ -37,9 +37,12 @@ func _rebuild() -> void:
 		button.focus_mode = Control.FOCUS_NONE
 		button.disabled = filtered
 		button.tooltip_text = "Filtered slot" if filtered else _tooltip(item_id, quantity, overflow)
-		button.add_theme_stylebox_override("normal", _style(overflow, false))
-		button.add_theme_stylebox_override("hover", _style(overflow, true))
-		button.add_theme_stylebox_override("pressed", _style(overflow, true))
+		button.add_theme_stylebox_override("normal",
+			make_slot_style(item_id, false, overflow))
+		button.add_theme_stylebox_override("hover",
+			make_slot_style(item_id, true, overflow))
+		button.add_theme_stylebox_override("pressed",
+			make_slot_style(item_id, true, overflow))
 		if not display_item_id.is_empty() and icon_cache != null:
 			var icon: Texture2D = icon_cache.get_icon("item", display_item_id)
 			if icon != null:
@@ -47,7 +50,7 @@ func _rebuild() -> void:
 				button.expand_icon = true
 				button.icon_alignment = HORIZONTAL_ALIGNMENT_CENTER
 				button.vertical_icon_alignment = VERTICAL_ALIGNMENT_CENTER
-				button.add_theme_constant_override("icon_max_width", 40)
+				button.add_theme_constant_override("icon_max_width", 50)
 		if display_quantity > 1:
 			var count_label := Label.new()
 			count_label.text = str(display_quantity)
@@ -86,10 +89,32 @@ func _tooltip(item_id: String, quantity: int, overflow: bool) -> String:
 		result += "\nOverflow · removal only"
 	return result
 
-func _style(overflow: bool, hovered: bool) -> StyleBoxFlat:
+static func make_slot_style(item_id: String, hovered: bool = false,
+		overflow: bool = false) -> StyleBoxFlat:
 	var style := StyleBoxFlat.new()
-	style.bg_color = Color("30383a") if hovered else Color("242a2b")
-	style.border_color = Color("f2b46f") if overflow else Color("536063")
+	var background := Color("242a2b")
+	var border := Color("536063")
+	if not item_id.is_empty():
+		match Items.category(item_id):
+			"raw":
+				background = Color("29352e")
+				border = Color("587862")
+			"processed":
+				background = Color("29323b")
+				border = Color("5e7791")
+			"component":
+				background = Color("342d38")
+				border = Color("80648f")
+			"special":
+				background = Color("3a3326")
+				border = Color("9b824d")
+	if hovered:
+		background = background.lightened(0.18)
+		border = border.lightened(0.22)
+	if overflow:
+		border = Color("f2b46f")
+	style.bg_color = background
+	style.border_color = border
 	style.set_border_width_all(2 if overflow else 1)
 	style.set_corner_radius_all(4)
 	style.content_margin_left = 4.0

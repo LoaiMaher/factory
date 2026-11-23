@@ -246,7 +246,7 @@ func try_insert(entity_id: int, item_id: String, port_id: String) -> bool:
 		entity.recipe_id = compatible_recipe
 		entity.progress = 0.0
 	var recipe: Dictionary = recipe_definitions[entity.recipe_id]
-	var maximum: int = maxi(10, int(recipe["inputs"].get(item_id, 0)) * 2)
+	var maximum: int = input_capacity(entity_id, item_id)
 	if int(entity.input_buffer.get(item_id, 0)) >= maximum:
 		return false
 	entity.input_buffer[item_id] = int(entity.input_buffer.get(item_id, 0)) + 1
@@ -273,6 +273,42 @@ func insert_input(entity_id: int, item_id: String, quantity: int) -> int:
 			break
 		inserted += 1
 	return inserted
+
+func insert_input_items(entity_id: int, item_id: String, quantity: int) -> int:
+	if quantity <= 0 or item_id.is_empty() or not entities.has(entity_id):
+		return 0
+	if not _is_machine(str(entities[entity_id].kind)):
+		return 0
+	return insert_input(entity_id, item_id, quantity)
+
+func input_capacity(entity_id: int, item_id: String) -> int:
+	if item_id.is_empty() or not entities.has(entity_id):
+		return 0
+	var entity: FactoryEntity = entities[entity_id]
+	if not _is_machine(entity.kind):
+		return 0
+	var recipe: Dictionary = recipe_definitions.get(entity.recipe_id, {})
+	var inputs: Dictionary = recipe.get("inputs", {})
+	if not inputs.has(item_id):
+		return 0
+	return maxi(10, int(inputs[item_id]) * 2)
+
+func output_capacity(entity_id: int, item_id: String) -> int:
+	if item_id.is_empty() or not entities.has(entity_id):
+		return 0
+	var entity: FactoryEntity = entities[entity_id]
+	if not _is_machine(entity.kind) and entity.kind != "miner_mk1":
+		return 0
+	if entity.kind == "miner_mk1":
+		var node_id: int = int(entity.extra.get("node_id", -1))
+		var node: Dictionary = nodes.get(node_id, {})
+		if str(node.get("item", "")) != item_id \
+				and not entity.output_buffer.has(item_id):
+			return 0
+	elif not entity.output_buffer.has(item_id) \
+			and not recipe_definitions.get(entity.recipe_id, {}).get("outputs", {}).has(item_id):
+		return 0
+	return 20
 
 func take_storage(entity_id: int) -> Dictionary:
 	if not entities.has(entity_id) or entities[entity_id].kind != "storage":
@@ -315,6 +351,22 @@ func take_output_item(entity_id: int, item_id: String, quantity: int) -> int:
 	entity.output_buffer[item_id] = int(entity.output_buffer[item_id]) - moved
 	if int(entity.output_buffer[item_id]) <= 0:
 		entity.output_buffer.erase(item_id)
+	return moved
+
+func take_output_items(entity_id: int, item_id: String, quantity: int) -> int:
+	return take_output_item(entity_id, item_id, quantity)
+
+func insert_output_items(entity_id: int, item_id: String, quantity: int) -> int:
+	if quantity <= 0 or item_id.is_empty() or not entities.has(entity_id):
+		return 0
+	var capacity: int = output_capacity(entity_id, item_id)
+	if capacity <= 0:
+		return 0
+	var entity: FactoryEntity = entities[entity_id]
+	var current: int = int(entity.output_buffer.get(item_id, 0))
+	var moved: int = mini(quantity, maxi(0, capacity - current))
+	if moved > 0:
+		entity.output_buffer[item_id] = current + moved
 	return moved
 
 func take_output(entity_id: int) -> Dictionary:
@@ -361,6 +413,160 @@ func diagnostics(entity_id: int) -> Array[String]:
 	for item: String in recipe["outputs"]:
 		result.append("Output %s: %.1f/min (max %.1f)" % [Items.item_name(item), entity.rate(item, time), float(recipe["outputs"][item]) * 60.0 / float(recipe["time"])])
 	return result
+
+func machine_view(entity_id: int) -> Dictionary:
+	if not entities.has(entity_id):
+		return {}
+	var entity: FactoryEntity = entities[entity_id]
+	if not _is_machine(entity.kind) and entity.kind != "miner_mk1":
+		return {}
+	var recipe: Dictionary = recipe_definitions.get(entity.recipe_id, {})
+	var recipe_inputs: Dictionary = recipe.get("inputs", {})
+	var recipe_outputs: Dictionary = recipe.get("outputs", {})
+	var cycle_seconds: float = float(recipe.get("time", 0.0))
+	var input_items: Array[Dictionary] = []
+	var output_items: Array[Dictionary] = []
+	var max_input_slots: int = recipe_inputs.size()
+	var possible_output_ids: Dictionary = {}
+	for item_variant: Variant in recipe_outputs:
+		possible_output_ids[str(item_variant)] = true
+	for recipe_id: String in Recipes.for_machine(entity.kind):
+		var other_recipe: Dictionary = recipe_definitions.get(recipe_id, {})
+		max_input_slots = maxi(max_input_slots, other_recipe.get("inputs", {}).size())
+		for item_variant: Variant in other_recipe.get("outputs", {}):
+			possible_output_ids[str(item_variant)] = true
+	var max_output_slots: int = possible_output_ids.size()
+	var maximum_rate: float = 0.0
+	for item_variant: Variant in recipe_inputs:
+		var item_id: String = str(item_variant)
+		var recipe_count: int = int(recipe_inputs[item_variant])
+		input_items.append({
+			"item_id": item_id,
+			"count": int(entity.input_buffer.get(item_id, 0)),
+			"maximum": input_capacity(entity_id, item_id),
+			"needs_per_min": float(recipe_count) * 60.0 / maxf(cycle_seconds, 0.001),
+			"getting_per_min": entity.rate(item_id, time)
+		})
+	var output_item_ids: Array[String] = []
+	for item_variant: Variant in recipe_outputs:
+		output_item_ids.append(str(item_variant))
+	for item_variant: Variant in entity.output_buffer:
+		if str(item_variant) not in output_item_ids:
+			output_item_ids.append(str(item_variant))
+	for item_id: String in output_item_ids:
+		var recipe_count: int = int(recipe_outputs.get(item_id, 0))
+		output_items.append({
+			"item_id": item_id,
+			"count": int(entity.output_buffer.get(item_id, 0)),
+			"maximum": output_capacity(entity_id, item_id),
+			"per_min": float(recipe_count) * 60.0 / maxf(cycle_seconds, 0.001)
+		})
+		maximum_rate += float(recipe_count) * 60.0 / maxf(cycle_seconds, 0.001)
+	var deposit: Dictionary = {}
+	if entity.kind == "miner_mk1":
+		var node_id: int = int(entity.extra.get("node_id", -1))
+		if nodes.has(node_id):
+			deposit = (nodes[node_id] as Dictionary).duplicate(true)
+		cycle_seconds = 60.0 / maxf(float(deposit.get("rate", 0.0)), 0.001)
+		maximum_rate = float(deposit.get("rate", 0.0))
+		output_items.clear()
+		var deposit_item: String = str(deposit.get("item", ""))
+		if not deposit_item.is_empty():
+			output_items.append({
+				"item_id": deposit_item,
+				"count": int(entity.output_buffer.get(deposit_item, 0)),
+				"maximum": output_capacity(entity_id, deposit_item),
+				"per_min": maximum_rate
+			})
+	var current_rate: float = 0.0
+	if entity.kind == "miner_mk1":
+		current_rate = entity.rate(str(deposit.get("item", "")), time)
+	else:
+		for item_variant: Variant in recipe_outputs:
+			current_rate += entity.rate(str(item_variant), time)
+	var satisfaction: float = power.satisfaction(entity_id, entities)
+	var network_id: int = int(power.network_for.get(entity_id, -1))
+	var power_need: float = float(building_definitions.get(entity.kind, {}).get("power", 0.0))
+	var supply: float = float(power.supply_for.get(network_id, 0.0))
+	var demand: float = float(power.demand_for.get(network_id, 0.0))
+	var status_text: String = str(entity.status)
+	var state: String = "idle"
+	var display_status: String = "Idle"
+	if status_text.begins_with("No power"):
+		state = "no_power"
+		display_status = "No power"
+	elif status_text == "Output full":
+		state = "output_full"
+		display_status = "Output full"
+	elif status_text.begins_with("Missing input") or status_text == "No resource node":
+		state = "waiting_input"
+		display_status = "Waiting for input"
+	elif status_text.begins_with("Low power"):
+		state = "low_power"
+		display_status = status_text
+	elif status_text == "Running":
+		state = "running"
+		display_status = "Running"
+	elif status_text == "No recipe":
+		display_status = "No recipe"
+	var why_lines: Array[String] = diagnostics(entity_id)
+	var progress_ratio: float = 0.0
+	if entity.kind == "miner_mk1":
+		progress_ratio = clampf(entity.progress, 0.0, 1.0)
+	elif cycle_seconds > 0.0:
+		progress_ratio = clampf(entity.progress / cycle_seconds, 0.0, 1.0)
+	var power_state: String = "Free power (dev bypass)" if power.bypass else \
+		("No connected network" if network_id < 0 else
+			"Network %d · %.1f / %.1f MW" % [network_id, supply, demand])
+	var rate_window_started_at: float = float(
+		entity.extra.get("rate_window_started_at", -1.0))
+	var rate_window_elapsed: float = maxf(0.0, time - rate_window_started_at) \
+		if rate_window_started_at >= 0.0 else 0.0
+	var rate_window_ready: bool = rate_window_started_at >= 0.0 \
+		and rate_window_elapsed >= 60.0
+	return {
+		"entity_id": entity_id,
+		"kind": entity.kind,
+		"name": entity.kind.replace("_", " ").capitalize(),
+		"status": status_text,
+		"display_status": display_status,
+		"state": state,
+		"recipe_id": entity.recipe_id,
+		"recipe_locked": bool(entity.extra.get("recipe_locked", false)),
+		"recipes": _machine_recipe_options(entity),
+		"inputs": input_items,
+		"outputs": output_items,
+		"input_slot_count": max_input_slots if entity.kind != "miner_mk1" else 0,
+		"output_slot_count": max_output_slots,
+		"output_buffer": entity.output_buffer.duplicate(true),
+		"progress": progress_ratio,
+		"cycle_seconds": cycle_seconds,
+		"current_rate": current_rate,
+		"maximum_rate": maximum_rate,
+		"rate_window_elapsed": rate_window_elapsed,
+		"rate_window_ready": rate_window_ready,
+		"rate_window_measuring": rate_window_started_at >= 0.0 and not rate_window_ready,
+		"efficiency": clampf(current_rate / maximum_rate * 100.0, 0.0, 100.0)
+			if maximum_rate > 0.0 else 0.0,
+		"power_draw_mw": power_need * maxf(0.0, satisfaction),
+		"power_need_mw": power_need,
+		"power_state": power_state,
+		"power_satisfaction": maxf(0.0, satisfaction),
+		"power_bypassed": power.bypass,
+		"deposit_item": str(deposit.get("item", "")),
+		"deposit_purity": str(deposit.get("purity", "")),
+		"deposit_rate": float(deposit.get("rate", 0.0)),
+		"why": " · ".join(why_lines) if not why_lines.is_empty() else status_text
+	}
+
+func _machine_recipe_options(entity: FactoryEntity) -> Array[Dictionary]:
+	var options: Array[Dictionary] = []
+	for recipe_id: String in Recipes.for_machine(entity.kind):
+		var label: String = recipe_id.replace("_", " ").capitalize()
+		if recipe_id == entity.recipe_id and not bool(entity.extra.get("recipe_locked", false)):
+			label += " (auto)"
+		options.append({"id": recipe_id, "label": label})
+	return options
 
 func _power_diagnostic(entity: FactoryEntity) -> String:
 	var need: float = float(building_definitions.get(entity.kind, {}).get("power", 0.0))
@@ -595,6 +801,10 @@ func _update_machines(dt: float) -> void:
 			_update_merger(entity)
 		elif entity.kind == "storage":
 			_update_storage(entity)
+		if (entity.kind == "miner_mk1" or _is_machine(entity.kind)) \
+				and entity.status == "Running" \
+				and not entity.extra.has("rate_window_started_at"):
+			entity.extra["rate_window_started_at"] = time
 
 func _update_miner(entity: FactoryEntity, dt: float) -> void:
 	var node_id: int = int(entity.extra.get("node_id", -1))
@@ -626,7 +836,8 @@ func _update_machine(entity: FactoryEntity, dt: float) -> void:
 			entity.status = "Missing input: %s" % Items.item_name(item_id)
 			return
 	for item_id: String in recipe["outputs"]:
-		if int(entity.output_buffer.get(item_id, 0)) + int(recipe["outputs"][item_id]) > 20:
+		if int(entity.output_buffer.get(item_id, 0)) + int(recipe["outputs"][item_id]) \
+				> output_capacity(entity.id, item_id):
 			entity.status = "Output full"
 			return
 	var sat: float = power.satisfaction(entity.id, entities)
