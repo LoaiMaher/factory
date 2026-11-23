@@ -32,9 +32,9 @@ MATERIALS = {
     "GrassBlade": ((0.18, 0.34, 0.15, 1.0), 0.0, 0.9),
     "Bark": ((0.22, 0.13, 0.08, 1.0), 0.0, 0.95),
     "Ore_Iron": ((0.25, 0.07, 0.04, 1.0), 0.1, 0.88),
-    "Ore_Copper": ((0.58, 0.19, 0.055, 1.0), 0.1, 0.82),
-    "Ore_Limestone": ((0.72, 0.68, 0.52, 1.0), 0.0, 0.91),
-    "Ore_Surface": ((0.12, 0.11, 0.095, 1.0), 0.02, 0.94),
+    "Ore_Copper": ((0.42, 0.19, 0.085, 1.0), 0.14, 0.76),
+    "Ore_Limestone": ((0.52, 0.49, 0.4, 1.0), 0.0, 0.97),
+    "Ore_Surface": ((0.085, 0.078, 0.072, 1.0), 0.02, 0.94),
     "Ore_Crack": ((0.055, 0.06, 0.055, 1.0), 0.0, 0.98),
     "Ore_Rubble": ((0.25, 0.24, 0.22, 1.0), 0.04, 0.94),
 }
@@ -85,13 +85,13 @@ def material(name):
         nodes = mat.node_tree.nodes
         links = mat.node_tree.links
         tex = nodes.new("ShaderNodeTexNoise")
-        tex.inputs["Scale"].default_value = 34.0
+        tex.inputs["Scale"].default_value = 7.0
         tex.inputs["Detail"].default_value = 2.0
         ramp = nodes.new("ShaderNodeValToRGB")
-        ramp.color_ramp.elements[0].position = 0.6
+        ramp.color_ramp.elements[0].position = 0.64
         ramp.color_ramp.elements[0].color = color
-        ramp.color_ramp.elements[1].position = 0.7
-        ramp.color_ramp.elements[1].color = (0.055, 0.34, 0.29, 1.0)
+        ramp.color_ramp.elements[1].position = 0.78
+        ramp.color_ramp.elements[1].color = (0.075, 0.24, 0.2, 1.0)
         links.new(tex.outputs["Fac"], ramp.inputs["Fac"])
         links.new(ramp.outputs["Color"], shader.inputs["Base Color"])
     MATERIAL_CACHE[name] = mat
@@ -845,6 +845,204 @@ def _ore_node_variant(root, name, slab_count, seed):
     return variant
 
 
+def _ore_copper_pillow_wedge(parent, name, angle, rng, slab_count):
+    step = math.tau / slab_count
+    inner = 0.22
+    outer = 3.0
+    half = step * 0.5 - 0.18 / outer
+    radial_steps = [0.0, 0.13, 0.28, 0.42, 0.55, 0.7, 0.84, 0.94, 1.0]
+    angular_segments = 12
+    angle_offsets = [0.0] + [
+        rng.uniform(-0.002, 0.002) for _ in range(angular_segments - 1)
+    ] + [0.0]
+    radial_factors = [
+        1.0 if index == angular_segments // 2 else rng.uniform(0.985, 1.0)
+        for index in range(angular_segments + 1)
+    ]
+    vertices = []
+    for progress in radial_steps:
+        for index in range(angular_segments + 1):
+            fraction = index / angular_segments
+            theta = angle - half + 2.0 * half * fraction + angle_offsets[index]
+            edge_factor = 1.0 + (radial_factors[index] - 1.0) * progress ** 4
+            radius = (inner + (outer - inner) * progress) * edge_factor
+            height = -0.015 + 0.03 + 0.29 * math.exp(-((progress - 0.5) / 0.4) ** 2)
+            angular_dome = 0.72 + 0.28 * math.cos((fraction - 0.5) * math.pi)
+            height = -0.015 + (height + 0.015) * angular_dome
+            height += rng.uniform(-0.003, 0.003)
+            vertices.append((math.cos(theta) * radius, math.sin(theta) * radius, height))
+
+    top_vertex_count = len(vertices)
+    thickness = 0.45
+    bottom_vertices = [(x, y, z - thickness) for x, y, z in vertices]
+    vertices.extend(bottom_vertices)
+    ring_size = angular_segments + 1
+    faces = []
+    for ring in range(len(radial_steps) - 1):
+        for index in range(angular_segments):
+            inner_index = ring * ring_size + index
+            outer_index = (ring + 1) * ring_size + index
+            faces.append((inner_index, outer_index, outer_index + 1, inner_index + 1))
+    for ring in range(len(radial_steps) - 1):
+        for index in range(angular_segments):
+            inner_index = top_vertex_count + ring * ring_size + index
+            outer_index = top_vertex_count + (ring + 1) * ring_size + index
+            faces.append((inner_index + 1, outer_index + 1, outer_index, inner_index))
+    outer_ring = len(radial_steps) - 1
+    for index in range(angular_segments):
+        top_index = outer_ring * ring_size + index
+        bottom_index = top_vertex_count + top_index
+        faces.append((top_index, bottom_index, bottom_index + 1, top_index + 1))
+        top_index = index
+        bottom_index = top_vertex_count + top_index
+        faces.append((top_index, top_index + 1, bottom_index + 1, bottom_index))
+    for ring in range(len(radial_steps) - 1):
+        start_top = ring * ring_size
+        end_top = start_top + angular_segments
+        start_bottom = top_vertex_count + start_top
+        end_bottom = top_vertex_count + end_top
+        next_start_top = (ring + 1) * ring_size
+        next_end_top = next_start_top + angular_segments
+        next_start_bottom = top_vertex_count + next_start_top
+        next_end_bottom = top_vertex_count + next_end_top
+        faces.append((start_top, start_bottom, next_start_bottom, next_start_top))
+        faces.append((end_top, next_end_top, next_end_bottom, end_bottom))
+
+    mesh = bpy.data.meshes.new(name + "_Mesh")
+    mesh.from_pydata(vertices, [], faces)
+    mesh.update()
+    obj = bpy.data.objects.new(name, mesh)
+    bpy.context.collection.objects.link(obj)
+    obj.parent = parent
+    obj.matrix_parent_inverse = Matrix.Identity(4)
+    finish_mesh(obj, "Ore_Copper", 0.045, 3, True)
+    return obj
+
+
+def _ore_style_wedge(parent, name, angle, rng, slab_count, style, layer=0):
+    if style == "copper":
+        return _ore_copper_pillow_wedge(parent, name, angle, rng, slab_count)
+
+    step = math.tau / slab_count
+    inner = 0.22
+    outer = 3.0 - (0.14 * layer if style == "limestone" else 0.0)
+    crack_width = 0.24 if style == "iron" else 0.14
+    half = step * 0.5 - crack_width / outer
+    segments = 4 if style == "iron" else 6
+    boundary = [(inner, angle - half)]
+    for index in range(segments + 1):
+        fraction = index / segments
+        theta = angle - half + 2.0 * half * fraction
+        if 0 < index < segments:
+            jitter = 0.055 if style == "iron" else 0.018
+            theta += rng.uniform(-jitter, jitter)
+        radial = outer
+        if style == "iron" and index != segments // 2:
+            radial *= rng.uniform(0.92, 0.99)
+        boundary.append((radial, theta))
+    boundary.append((inner, angle + half))
+
+    if style == "limestone":
+        base_height = -0.015 + layer * 0.075
+        thickness = 0.11
+    else:
+        base_height = -0.015
+        thickness = rng.uniform(0.4, 0.6)
+    top = []
+    bottom = []
+    for radial, theta in boundary:
+        progress = (radial - inner) / (outer - inner)
+        if style == "iron":
+            height = base_height + 0.27 * progress + rng.uniform(-0.028, 0.028)
+        else:
+            height = base_height + 0.075 + 0.015 * progress
+            height += rng.uniform(-0.002, 0.002)
+        top.append((math.cos(theta) * radial, math.sin(theta) * radial, height))
+        bottom.append((math.cos(theta) * radial, math.sin(theta) * radial,
+                       height - thickness))
+
+    center_r = rng.uniform(0.72, 1.15)
+    center_height = base_height + rng.uniform(0.14, 0.19) if style == "iron" \
+        else base_height + 0.13
+    center = (math.cos(angle) * center_r, math.sin(angle) * center_r, center_height)
+    vertices = top + bottom + [center, (center[0], center[1], center[2] - thickness)]
+    top_center = len(vertices) - 2
+    bottom_center = len(vertices) - 1
+    faces = []
+    for index in range(len(boundary) - 1):
+        faces.append((top_center, index, index + 1))
+        faces.append((bottom_center, len(boundary) + index + 1, len(boundary) + index))
+        next_index = (index + 1) % len(boundary)
+        faces.append((index, len(boundary) + index, len(boundary) + next_index, next_index))
+
+    mesh = bpy.data.meshes.new(name + "_Mesh")
+    mesh.from_pydata(vertices, [], faces)
+    mesh.update()
+    obj = bpy.data.objects.new(name, mesh)
+    bpy.context.collection.objects.link(obj)
+    obj.parent = parent
+    obj.matrix_parent_inverse = Matrix.Identity(4)
+    surface_material = "Ore_Surface" if style == "iron" else "Ore_Limestone"
+    edge_material = "Ore_Iron" if style == "iron" else "Ore_Surface"
+    bevel = 0.012 if style == "iron" else 0.018
+    finish_mesh(obj, surface_material, bevel, 2, False)
+    obj.data.materials.append(material(edge_material))
+    for polygon_index, polygon in enumerate(obj.data.polygons):
+        if polygon_index % 3 != 0:
+            polygon.material_index = 1
+    return obj
+
+
+def _ore_style_variant(root, name, slab_count, seed, style):
+    rng = random.Random(seed)
+    variant = empty(name, root)
+    for index in range(slab_count):
+        angle = math.tau * index / slab_count + rng.uniform(-0.008, 0.008)
+        if style == "limestone":
+            for layer in range(3):
+                _ore_style_wedge(variant, "Ore_Slab_%02d_Layer_%d" % (index, layer),
+                                 angle, rng, slab_count, style, layer)
+        else:
+            _ore_style_wedge(variant, "Ore_Slab_%02d" % index, angle, rng,
+                             slab_count, style)
+    rubble_material = {"iron": "Ore_Iron", "copper": "Ore_Copper",
+                       "limestone": "Ore_Limestone"}[style]
+    for index in range(9):
+        angle = rng.uniform(0.0, math.tau)
+        radial = rng.uniform(0.08, 0.68)
+        bpy.ops.mesh.primitive_ico_sphere_add(subdivisions=1, radius=rng.uniform(0.11, 0.17))
+        rubble = bpy.context.object
+        rubble.name = "Ore_Core_Rubble"
+        rubble.location = (math.cos(angle) * radial, math.sin(angle) * radial, 0.055)
+        rubble.scale = (rng.uniform(0.75, 1.25), rng.uniform(0.72, 1.18),
+                        rng.uniform(0.45, 0.72))
+        bpy.ops.object.transform_apply(location=False, rotation=False, scale=True)
+        attach(rubble, variant, rubble.location.copy())
+        finish_mesh(rubble, rubble_material, 0.01, 2, style == "copper")
+    return variant
+
+
+def _build_ore_style(style):
+    root = empty("Ore_Node_Root")
+    seeds = {"iron": 4127, "copper": 7831, "limestone": 22039}
+    for index, slab_count in enumerate((8, 9, 10)):
+        _ore_style_variant(root, "OreNode_%s" % "ABC"[index], slab_count,
+                           seeds[style] + index * 1171, style)
+    return root, (7.0, 7.0, 1.0)
+
+
+def build_ore_node_iron():
+    return _build_ore_style("iron")
+
+
+def build_ore_node_copper():
+    return _build_ore_style("copper")
+
+
+def build_ore_node_limestone():
+    return _build_ore_style("limestone")
+
+
 def build_ore_node():
     root = empty("Ore_Node_Root")
     _ore_node_variant(root, "OreNode_A", 8, 4127)
@@ -1346,6 +1544,9 @@ BUILDERS = {
     "belt": build_belt,
     "belt_pole": build_belt_pole,
     "ore_node": build_ore_node,
+    "ore_node_iron": build_ore_node_iron,
+    "ore_node_copper": build_ore_node_copper,
+    "ore_node_limestone": build_ore_node_limestone,
     "hub": build_hub,
     "drop_pod": build_drop_pod,
     "hand_pick": build_hand_pick,

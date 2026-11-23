@@ -170,6 +170,9 @@ func _ready() -> void:
 			terrain_build_ms, foliage_build_ms)
 		add_child(benchmark_runner)
 	var user_arguments: PackedStringArray = OS.get_cmdline_user_args()
+	if user_arguments.has("--capture-ore-visuals"):
+		call_deferred("_capture_ore_visuals")
+		return
 	if user_arguments.has("--capture-machine-panels"):
 		call_deferred("_capture_machine_panels")
 		return
@@ -1720,6 +1723,76 @@ func _capture_v14_shots() -> void:
 	print("V14 creative snapshot restored: %s, tiers %d" % [
 		str(restored_inventory == survival_inventory), restored_tiers
 	])
+	get_tree().quit()
+
+func _capture_ore_visuals() -> void:
+	autosave_enabled = false
+	hud.show_toast("", 0.0)
+	if hud.help_panel.visible:
+		hud.toggle_help()
+	hud.hide()
+	viewmodel.hide()
+	foliage.hide()
+	perf_overlay.hide()
+
+	var item_nodes: Dictionary = {}
+	for definition: Dictionary in terrain.nodes:
+		var item: String = str(definition["item"])
+		if item in ["iron_ore", "copper_ore", "limestone"] \
+				and not bool(definition.get("hidden", false)) and not item_nodes.has(item):
+			item_nodes[item] = definition
+	for item: String in ["iron_ore", "copper_ore", "limestone"]:
+		if not item_nodes.has(item):
+			push_error("Ore visual capture is missing a visible " + item + " deposit")
+			get_tree().quit()
+			return
+		var point: Vector3 = item_nodes[item]["position"]
+		var target: Vector3 = point + Vector3.UP * 0.22
+		var camera_x: float = point.x + 7.0
+		var camera_z: float = point.z
+		var eye_camera: Vector3 = Vector3(
+			camera_x, terrain.height_at(camera_x, camera_z) + 1.7, camera_z)
+		_set_capture_view(target, eye_camera)
+		await get_tree().create_timer(0.45).timeout
+		await RenderingServer.frame_post_draw
+		_write_capture(item.trim_suffix("_ore") + "-eye-level")
+
+		var high_camera: Vector3 = point + Vector3(3.5, 5.22, 3.5)
+		_set_capture_view(target, high_camera)
+		await get_tree().create_timer(0.45).timeout
+		await RenderingServer.frame_post_draw
+		_write_capture(item.trim_suffix("_ore") + "-45-degree")
+
+	var miner_site: Dictionary = {}
+	for definition: Dictionary in terrain.nodes:
+		if str(definition["item"]) != "iron_ore" or bool(definition.get("hidden", false)):
+			continue
+		if sim.node_reservations.has(int(definition["id"])):
+			continue
+		var placement: Dictionary = sim.check_place(
+			"miner_mk1", definition["position"], 0.0, int(definition["id"]))
+		if bool(placement.get("ok", false)):
+			miner_site = definition
+			break
+	if miner_site.is_empty():
+		push_error("Ore visual capture could not find an unreserved iron deposit for a miner")
+		get_tree().quit()
+		return
+	var miner_id: int = sim.add_entity("miner_mk1", miner_site["position"], 0.0,
+		{"node_id": int(miner_site["id"])})
+	if miner_id <= 0:
+		push_error("Ore visual capture failed to place a miner on an iron deposit")
+		get_tree().quit()
+		return
+	visuals.refresh()
+	await get_tree().process_frame
+	await get_tree().process_frame
+	var miner_target: Vector3 = miner_site["position"] + Vector3.UP * 2.1
+	var miner_camera: Vector3 = miner_site["position"] + Vector3(8.0, 8.0, -8.0)
+	_set_capture_view(miner_target, miner_camera)
+	await get_tree().create_timer(0.65).timeout
+	await RenderingServer.frame_post_draw
+	_write_capture("miner-on-iron-deposit")
 	get_tree().quit()
 
 func _capture_machine_set() -> void:
