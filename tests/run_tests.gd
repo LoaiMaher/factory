@@ -12,6 +12,7 @@ func _run_all() -> void:
 	_test_placement_and_ports()
 	_test_glb_model_ports()
 	_test_ore_node_model()
+	_test_ore_variant_mapping_and_collision()
 	_test_ore_node_world_normal()
 	_test_deposit_reservations()
 	_test_belt_validation_and_flow()
@@ -1143,6 +1144,105 @@ func _test_ore_node_model() -> void:
 	_check("shared ore-node shader is available",
 		load("res://shaders/resource_node.gdshader") is Shader,
 		"shaders/resource_node.gdshader")
+	_finish_group()
+
+func _test_ore_variant_mapping_and_collision() -> void:
+	var terrain: FactoryTerrain = FactoryTerrain.new()
+	var items: Array[String] = ["iron_ore", "copper_ore", "limestone"]
+	var expected_paths: Array[String] = [
+		"res://assets/models/ore_node_iron.glb",
+		"res://assets/models/ore_node_copper.glb",
+		"res://assets/models/ore_node_limestone.glb"
+	]
+	var unique_paths: Dictionary = {}
+	var piece_prefixes: Array[String] = ["Ore_Slab_", "Ore_Lobe_", "Ore_Plate_"]
+	var piece_counts: Dictionary = {}
+	for index: int in range(items.size()):
+		var item: String = items[index]
+		var model_path: String = terrain._ore_mesh_path(item)
+		unique_paths[model_path] = true
+		var packed: PackedScene = load(model_path) as PackedScene
+		_check("%s maps to its own ore mesh resource" % item,
+			model_path == expected_paths[index] and packed != null,
+			str([model_path, packed != null]))
+		if packed == null:
+			continue
+		var model: Node3D = packed.instantiate() as Node3D
+		var piece_count: int = 0
+		for mesh_node: Node in model.find_children("*", "MeshInstance3D", true, false):
+			if str(mesh_node.name).begins_with(piece_prefixes[index]):
+				piece_count += 1
+		piece_counts[item] = piece_count
+		for variant_name: String in ["OreNode_A", "OreNode_B", "OreNode_C"]:
+			var variant: Node3D = model.find_child(variant_name, true, false) as Node3D
+			var meshes: Array[Node] = variant.find_children("*", "MeshInstance3D", true, false) \
+				if variant != null else []
+			var maximum_radius: float = 0.0
+			var maximum_height: float = -INF
+			for raw_mesh: Node in meshes:
+				var mesh_node: MeshInstance3D = raw_mesh as MeshInstance3D
+				if mesh_node.mesh == null:
+					continue
+				var mesh_transform: Transform3D = mesh_node.transform
+				var ancestor: Node = mesh_node.get_parent()
+				while ancestor != null and ancestor != model:
+					mesh_transform = (ancestor as Node3D).transform * mesh_transform
+					ancestor = ancestor.get_parent()
+				for surface_index: int in range(mesh_node.mesh.get_surface_count()):
+					var arrays: Array = mesh_node.mesh.surface_get_arrays(surface_index)
+					var vertices: PackedVector3Array = arrays[Mesh.ARRAY_VERTEX]
+					for local_vertex: Vector3 in vertices:
+						var vertex: Vector3 = mesh_transform * local_vertex
+						maximum_radius = maxf(maximum_radius, Vector2(vertex.x, vertex.z).length())
+						maximum_height = maxf(maximum_height, vertex.y)
+			_check("%s %s keeps the shared flat deposit footprint" % [item, variant_name],
+				not meshes.is_empty() and absf(maximum_radius - 3.0) <= 0.05
+				and maximum_height >= 0.15 and maximum_height <= 0.3
+				and maximum_height * 1.2 <= 0.35,
+				str({"radius": maximum_radius, "height": maximum_height, "meshes": meshes.size()}))
+		model.free()
+	_check("ore resource meshes use distinct paths", unique_paths.size() == items.size(),
+		str(unique_paths.keys()))
+	var unique_piece_counts: Dictionary = {}
+	for item: String in items:
+		unique_piece_counts[piece_counts.get(item, 0)] = true
+	_check("ore GLBs have distinct slab or child-mesh counts",
+		unique_piece_counts.size() == items.size(), str(piece_counts))
+	_check("unknown ore resources retain the legacy mesh fallback",
+		terrain._ore_mesh_path("caterium_ore") == "res://assets/models/ore_node.glb",
+		terrain._ore_mesh_path("caterium_ore"))
+	_check("deposit collisions continue to use the original mesh",
+		terrain._ore_collision_mesh_path() == "res://assets/models/ore_node.glb",
+		terrain._ore_collision_mesh_path())
+
+	var expected_sites: Array[Vector2] = [
+		Vector2(-17.0, -2.0), Vector2(-30.0, 18.0), Vector2(18.0, 3.0),
+		Vector2(28.0, 15.0), Vector2(-12.0, -35.0), Vector2(14.0, -40.0),
+		Vector2(-35.0, -30.0), Vector2(-43.0, 32.0), Vector2(70.0, 20.0),
+		Vector2(235.0, 120.0), Vector2(325.0, -245.0), Vector2(-342.0, -118.0),
+		Vector2(-275.0, 300.0), Vector2(118.0, 322.0), Vector2(-350.0, 15.0),
+		Vector2(318.0, 260.0), Vector2(-205.0, -335.0), Vector2(15.0, 340.0),
+		Vector2(-330.0, 265.0), Vector2(368.0, -70.0), Vector2(260.0, -40.0)
+	]
+	terrain._configure_noise()
+	terrain._build_nodes()
+	_check("deposit positions and placement footprint remain unchanged",
+		terrain.resource_sites == expected_sites, str(terrain.resource_sites))
+	var collision_model: Node3D = (load(terrain._ore_collision_mesh_path()) as PackedScene).instantiate() as Node3D
+	var collision_radii: Dictionary = {
+		"OreNode_A": 3.09555, "OreNode_B": 2.628, "OreNode_C": 2.84689
+	}
+	for variant_name: String in collision_radii:
+		var variant: Node3D = collision_model.find_child(variant_name, true, false) as Node3D
+		var faces: PackedVector3Array = terrain._resource_collision_faces(variant, collision_model)
+		var radius: float = 0.0
+		for vertex: Vector3 in faces:
+			radius = maxf(radius, Vector2(vertex.x, vertex.z).length())
+		_check("legacy %s deposit collision footprint remains unchanged" % variant_name,
+			not faces.is_empty() and absf(radius - float(collision_radii[variant_name])) <= 0.02,
+			str({"radius": radius, "faces": faces.size()}))
+	collision_model.free()
+	terrain.free()
 	_finish_group()
 
 func _test_ore_node_world_normal() -> void:

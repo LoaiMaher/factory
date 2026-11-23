@@ -501,9 +501,10 @@ func _make_node_visual(definition: Dictionary) -> void:
 	root.position = point
 	root.name = "%s_%s" % [definition["item"], definition["purity"]]
 	root.set_meta("resource_node", definition)
-	var packed: PackedScene = load("res://assets/models/ore_node.glb") as PackedScene
+	var item: String = str(definition["item"])
+	var packed: PackedScene = load(_ore_mesh_path(item)) as PackedScene
 	if packed == null:
-		push_error("Missing Blender model: ore_node")
+		push_error("Missing Blender model for resource node: " + item)
 		return
 	var model: Node3D = packed.instantiate() as Node3D
 	model.name = "OreNodeModel"
@@ -511,6 +512,7 @@ func _make_node_visual(definition: Dictionary) -> void:
 	var purity: String = str(definition["purity"])
 	var variant_name: String = "OreNode_A" if purity == "impure" else "OreNode_C" if purity == "pure" else ["OreNode_A", "OreNode_B", "OreNode_C"][int(definition["id"]) % 3]
 	var active_part: Node3D = null
+	var purity_scale: float = 0.8 if purity == "impure" else 1.2 if purity == "pure" else 1.0
 	for variant: String in ["OreNode_A", "OreNode_B", "OreNode_C"]:
 		var part: Node3D = model.find_child(variant, true, false) as Node3D
 		if part == null:
@@ -520,43 +522,37 @@ func _make_node_visual(definition: Dictionary) -> void:
 		if not part.visible:
 			continue
 		active_part = part
-		var purity_scale: float = 0.8 if purity == "impure" else 1.2 if purity == "pure" else 1.0
 		part.scale = Vector3.ONE * purity_scale
 		for mesh_node: Node in part.find_children("*", "MeshInstance3D", true, false):
 			var mesh: MeshInstance3D = mesh_node as MeshInstance3D
 			var ore_material: ShaderMaterial = ShaderMaterial.new()
 			ore_material.shader = load("res://shaders/resource_node.gdshader") as Shader
-			var item: String = str(definition["item"])
 			ore_material.set_shader_parameter("ore_tint", _ore_tint(item))
-			ore_material.set_shader_parameter("patina_tint", Color("358876"))
-			ore_material.set_shader_parameter("patina_strength", 0.55 if item == "copper_ore" else 0.0)
+			ore_material.set_shader_parameter("patina_tint", Color("4c9580"))
+			ore_material.set_shader_parameter("patina_strength", 0.72 if item == "copper_ore" else 0.0)
 			ore_material.set_shader_parameter("vein_glow", 0.18 if purity == "pure" else 0.0)
+			ore_material.set_shader_parameter("ore_style", _ore_style(item))
 			mesh.material_override = ore_material
 	var normal: Vector3 = world_surface_normal_at(point.x, point.z)
 	root.basis = Basis(Quaternion(Vector3.UP, normal))
+	var collision_faces: PackedVector3Array = PackedVector3Array()
+	var collision_packed: PackedScene = load(_ore_collision_mesh_path()) as PackedScene
+	var collision_model: Node3D = collision_packed.instantiate() as Node3D \
+		if collision_packed != null else null
+	var collision_part: Node3D = active_part
+	if collision_model != null:
+		collision_model.visible = false
+		root.add_child(collision_model)
+		var legacy_part: Node3D = collision_model.find_child(variant_name, true, false) as Node3D
+		if legacy_part != null:
+			legacy_part.scale = Vector3.ONE * purity_scale
+			collision_part = legacy_part
+	collision_faces = _resource_collision_faces(collision_part, root)
+	if collision_model != null:
+		root.remove_child(collision_model)
+		collision_model.free()
 	var collision_body: StaticBody3D = StaticBody3D.new()
 	collision_body.collision_layer = 2
-	var collision_faces: PackedVector3Array = PackedVector3Array()
-	for mesh_node: Node in active_part.find_children("*", "MeshInstance3D", true, false):
-		var mesh_instance: MeshInstance3D = mesh_node as MeshInstance3D
-		if mesh_instance.mesh == null:
-			continue
-		var mesh_transform: Transform3D = mesh_instance.transform
-		var ancestor: Node = mesh_instance.get_parent()
-		while ancestor != null and ancestor != root:
-			mesh_transform = (ancestor as Node3D).transform * mesh_transform
-			ancestor = ancestor.get_parent()
-		for surface_index: int in range(mesh_instance.mesh.get_surface_count()):
-			var arrays: Array = mesh_instance.mesh.surface_get_arrays(surface_index)
-			var vertices: PackedVector3Array = arrays[Mesh.ARRAY_VERTEX]
-			var indices: PackedInt32Array = arrays[Mesh.ARRAY_INDEX]
-			if indices.is_empty():
-				for vertex: Vector3 in vertices:
-					collision_faces.append(mesh_transform * vertex)
-			else:
-				for triangle_index: int in range(0, indices.size(), 3):
-					for vertex_index: int in range(3):
-						collision_faces.append(mesh_transform * vertices[indices[triangle_index + vertex_index]])
 	if not collision_faces.is_empty():
 		var collision_shape: CollisionShape3D = CollisionShape3D.new()
 		var slab_shape: ConcavePolygonShape3D = ConcavePolygonShape3D.new()
@@ -579,14 +575,61 @@ func _make_node_visual(definition: Dictionary) -> void:
 	root.add_child(label)
 	add_child(root)
 
+func _ore_mesh_path(item: String) -> String:
+	match item:
+		"iron_ore":
+			return "res://assets/models/ore_node_iron.glb"
+		"copper_ore":
+			return "res://assets/models/ore_node_copper.glb"
+		"limestone":
+			return "res://assets/models/ore_node_limestone.glb"
+		_:
+			return "res://assets/models/ore_node.glb"
+
+func _ore_collision_mesh_path() -> String:
+	return "res://assets/models/ore_node.glb"
+
+func _ore_style(item: String) -> int:
+	match item:
+		"copper_ore":
+			return 1
+		"limestone":
+			return 2
+		_:
+			return 0
+
+func _resource_collision_faces(active_part: Node3D, stop_at: Node) -> PackedVector3Array:
+	var collision_faces: PackedVector3Array = PackedVector3Array()
+	for mesh_node: Node in active_part.find_children("*", "MeshInstance3D", true, false):
+		var mesh_instance: MeshInstance3D = mesh_node as MeshInstance3D
+		if mesh_instance.mesh == null:
+			continue
+		var mesh_transform: Transform3D = mesh_instance.transform
+		var ancestor: Node = mesh_instance.get_parent()
+		while ancestor != null and ancestor != stop_at:
+			mesh_transform = (ancestor as Node3D).transform * mesh_transform
+			ancestor = ancestor.get_parent()
+		for surface_index: int in range(mesh_instance.mesh.get_surface_count()):
+			var arrays: Array = mesh_instance.mesh.surface_get_arrays(surface_index)
+			var vertices: PackedVector3Array = arrays[Mesh.ARRAY_VERTEX]
+			var indices: PackedInt32Array = arrays[Mesh.ARRAY_INDEX]
+			if indices.is_empty():
+				for vertex: Vector3 in vertices:
+					collision_faces.append(mesh_transform * vertex)
+			else:
+				for triangle_index: int in range(0, indices.size(), 3):
+					for vertex_index: int in range(3):
+						collision_faces.append(mesh_transform * vertices[indices[triangle_index + vertex_index]])
+	return collision_faces
+
 func _ore_tint(item: String) -> Color:
 	match item:
 		"iron_ore":
-			return Color("9b5945")
+			return Color("67534d")
 		"copper_ore":
-			return Color("b87333")
+			return Color("92593a")
 		"limestone":
-			return Color("c6bea5")
+			return Color("a89d84")
 		"caterium_ore":
 			return Color("d8bb4b")
 		_:
@@ -763,19 +806,19 @@ func _boulder_material(item_id: String, vein: bool) -> StandardMaterial3D:
 	var cache_key: String = "%s_%s" % [item_id, "vein" if vein else "rock"]
 	if not boulder_materials.has(cache_key):
 		var rock_colors: Dictionary = {
-			"iron_ore": Color("40332f"),
-			"copper_ore": Color("294744"),
-			"limestone": Color("706b5e")
+			"iron_ore": Color("3c3a39"),
+			"copper_ore": Color("76503a"),
+			"limestone": Color("96917f")
 		}
 		var vein_colors: Dictionary = {
-			"iron_ore": Color("a5593a"),
-			"copper_ore": Color("d68649"),
-			"limestone": Color("c9c3a7")
+			"iron_ore": Color("c56a3c"),
+			"copper_ore": Color("4c9580"),
+			"limestone": Color("d8cfb3")
 		}
 		var material: StandardMaterial3D = StandardMaterial3D.new()
 		material.albedo_color = vein_colors[item_id] if vein else rock_colors[item_id]
-		material.roughness = 0.92 if not vein else 0.72
-		material.metallic = 0.1 if vein else 0.02
+		material.roughness = 0.97 if item_id == "limestone" else 0.92 if not vein else 0.72
+		material.metallic = 0.16 if vein and item_id != "limestone" else 0.0
 		boulder_materials[cache_key] = material
 	return boulder_materials[cache_key]
 
