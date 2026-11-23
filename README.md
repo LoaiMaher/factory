@@ -13,7 +13,7 @@ Open the project in Godot 4.7.2 and press **F6/F5** to run the main scene/projec
 - **B** — open build menu; **1–9**, **Q/0**, and the scroll wheel select buildings
 - **R** — rotate; click start/end cells to route a belt
 - **F** — hold to dismantle; **X** — dismantle mode, then click
-- **Tab** — inventory and hand crafting; **F7** — toggle creative/survival; **F5/F9** — save/load; **Esc** — pause/menu; **H** — help
+- **Tab** — inventory and hand crafting; **F7** — toggle creative/survival; **F10** — graphics settings; **F3** — performance overlay; **F5/F9** — save/load; **Esc** — pause/menu; **H** — help
 
 ## Headless tests
 

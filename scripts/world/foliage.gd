@@ -4,17 +4,23 @@ class_name FactoryFoliage
 const WORLD_HALF_EXTENT: float = 512.0
 const CHUNK_SIZE: float = 128.0
 const TREES_PER_CHUNK: int = 132
-const GRASS_RADIUS: float = 60.0
+const DEFAULT_GRASS_RADIUS: float = 60.0
 const TREE_COLLISION_RADIUS: float = 76.0
 
 var terrain: FactoryTerrain
 var player: FactoryPlayer
+var density_multiplier: float = 1.0
+var grass_radius: float = DEFAULT_GRASS_RADIUS
+var tree_view_distance: float = 450.0
+var density_built_multiplier: float = 1.0
+var density_rebuild_required: bool = false
 var state: FoliageState = FoliageState.new()
 var foliage_definitions: Array[Dictionary] = []
 var instance_lookup: Dictionary = {}
 var tree_colliders: Dictionary = {}
 var chunk_bodies: Dictionary = {}
 var grass_instances: Array[MultiMeshInstance3D] = []
+var tree_multimesh_instances: Array[MultiMeshInstance3D] = []
 var last_grass_region: Vector2i = Vector2i(999999, 999999)
 var last_tree_collision_region: Vector2i = Vector2i(999999, 999999)
 
@@ -23,6 +29,7 @@ func setup(factory_terrain: FactoryTerrain, factory_player: FactoryPlayer) -> vo
 	player = factory_player
 
 func _ready() -> void:
+	density_built_multiplier = density_multiplier
 	_generate_definitions()
 	if DisplayServer.get_name() == "headless":
 		return
@@ -31,6 +38,21 @@ func _ready() -> void:
 	_build_grass_mesh()
 	_update_grass(true)
 	_update_tree_collisions(true)
+
+func set_graphics_options(density: float, radius: float, tree_distance: float) -> bool:
+	var was_ready: bool = is_node_ready()
+	density_multiplier = clampf(density, 0.5, 1.25)
+	grass_radius = clampf(radius, 20.0, 100.0)
+	tree_view_distance = clampf(tree_distance, 100.0, 720.0)
+	density_rebuild_required = was_ready \
+		and not is_equal_approx(density_multiplier, density_built_multiplier)
+	for instance: MultiMeshInstance3D in tree_multimesh_instances:
+		instance.visibility_range_end = tree_view_distance
+	for instance: MultiMeshInstance3D in grass_instances:
+		instance.visibility_range_end = grass_radius + 8.0
+	if was_ready and not grass_instances.is_empty():
+		_update_grass(true)
+	return density_rebuild_required
 
 func _process(_delta: float) -> void:
 	if DisplayServer.get_name() != "headless":
@@ -140,11 +162,96 @@ func _generate_definitions() -> void:
 					"chunk": Vector2i(chunk_x, chunk_z)
 				})
 				rock_index += 1
+	if density_built_multiplier > 1.0:
+		_append_density_extras(density_built_multiplier - 1.0, occupied)
+
+func _append_density_extras(extra_ratio: float, occupied: Dictionary) -> void:
+	var rng: RandomNumberGenerator = RandomNumberGenerator.new()
+	rng.seed = 194517
+	var tree_index: int = 0
+	var bush_index: int = 0
+	var rock_index: int = 0
+	var tree_extra_samples: int = roundi(TREES_PER_CHUNK * extra_ratio)
+	var bush_extra_samples: int = roundi(56.0 * extra_ratio)
+	var rock_extra_samples: int = roundi(24.0 * extra_ratio)
+	var tree_heights: Array[float] = [12.0, 15.8, 19.5, 8.8, 11.7, 14.5]
+	for chunk_z: int in range(8):
+		for chunk_x: int in range(8):
+			var start_x: float = -WORLD_HALF_EXTENT + float(chunk_x) * CHUNK_SIZE
+			var start_z: float = -WORLD_HALF_EXTENT + float(chunk_z) * CHUNK_SIZE
+			for _sample: int in range(tree_extra_samples):
+				var x: float = start_x + rng.randf_range(4.0, CHUNK_SIZE - 4.0)
+				var z: float = start_z + rng.randf_range(4.0, CHUNK_SIZE - 4.0)
+				if Vector2(x, z).distance_to(Vector2(0.0, 38.0)) < 112.0 \
+						or Vector2(x, z).distance_to(terrain.LAKE_CENTER) < 120.0:
+					continue
+				var density: float = terrain.forest_density_at(x, z)
+				if rng.randf() > density * 0.72:
+					continue
+				var cell_key: Vector2i = Vector2i(floori(x / 5.0), floori(z / 5.0))
+				if occupied.has(cell_key):
+					continue
+				occupied[cell_key] = true
+				var variant: int = rng.randi_range(0, 5)
+				var scale: float = rng.randf_range(0.82, 1.2)
+				foliage_definitions.append({
+					"id": "tree_extra_%05d" % tree_index,
+					"type": "tree",
+					"variant": variant,
+					"position": Vector3(x, terrain.height_at(x, z), z),
+					"height": tree_heights[variant] * scale,
+					"scale": scale,
+					"yaw": rng.randf_range(0.0, TAU),
+					"chunk": Vector2i(chunk_x, chunk_z)
+				})
+				tree_index += 1
+			for _sample: int in range(bush_extra_samples):
+				var bush_x: float = start_x + rng.randf_range(3.0, CHUNK_SIZE - 3.0)
+				var bush_z: float = start_z + rng.randf_range(3.0, CHUNK_SIZE - 3.0)
+				var bush_density: float = terrain.forest_density_at(bush_x, bush_z)
+				if bush_density < 0.38 or rng.randf() > bush_density * 0.32:
+					continue
+				foliage_definitions.append({
+					"id": "bush_extra_%05d" % bush_index,
+					"type": "bush",
+					"variant": rng.randi_range(0, 1),
+					"position": Vector3(bush_x, terrain.height_at(bush_x, bush_z), bush_z),
+					"scale": rng.randf_range(0.7, 1.25),
+					"yaw": rng.randf_range(0.0, TAU),
+					"chunk": Vector2i(chunk_x, chunk_z)
+				})
+				bush_index += 1
+			for _sample: int in range(rock_extra_samples):
+				var rock_x: float = start_x + rng.randf_range(3.0, CHUNK_SIZE - 3.0)
+				var rock_z: float = start_z + rng.randf_range(3.0, CHUNK_SIZE - 3.0)
+				if Vector2(rock_x, rock_z).distance_to(Vector2(0.0, 38.0)) < 86.0 \
+						or rng.randf() > 0.28:
+					continue
+				foliage_definitions.append({
+					"id": "rock_extra_%05d" % rock_index,
+					"type": "rock",
+					"variant": rng.randi_range(0, 1),
+					"position": Vector3(rock_x, terrain.height_at(rock_x, rock_z), rock_z),
+					"scale": rng.randf_range(0.38, 0.88),
+					"yaw": rng.randf_range(0.0, TAU),
+					"chunk": Vector2i(chunk_x, chunk_z)
+				})
+				rock_index += 1
+
+func _density_keeps(definition: Dictionary) -> bool:
+	if density_built_multiplier >= 1.0:
+		return true
+	var parts: PackedStringArray = str(definition["id"]).split("_")
+	var index: int = int(parts[parts.size() - 1])
+	var salt: int = 31 if definition["type"] == "tree" else 67 if definition["type"] == "bush" else 101
+	var rank: int = absi(index * 2654435761 + salt * 40503) % 1000
+	return rank < roundi(density_built_multiplier * 1000.0)
 
 func _build_tree_multimeshes() -> void:
 	var groups: Dictionary = {}
 	for definition: Dictionary in foliage_definitions:
-		if definition["type"] != "tree" or state.is_removed(str(definition["id"])):
+		if definition["type"] != "tree" or state.is_removed(str(definition["id"])) \
+				or not _density_keeps(definition):
 			continue
 		var variant: int = int(definition["variant"])
 		if not groups.has(variant):
@@ -201,7 +308,8 @@ func _build_tree_multimeshes() -> void:
 func _build_scatter_multimeshes() -> void:
 	var groups: Dictionary = {}
 	for definition: Dictionary in foliage_definitions:
-		if definition["type"] == "tree" or state.is_removed(str(definition["id"])):
+		if definition["type"] == "tree" or state.is_removed(str(definition["id"])) \
+				or not _density_keeps(definition):
 			continue
 		var group_key: String = "%s_%d" % [definition["type"], int(definition["variant"])]
 		if not groups.has(group_key):
@@ -255,10 +363,12 @@ func _make_multimesh(node_name: String, mesh: Mesh, material: Material, transfor
 	instance.name = node_name
 	instance.multimesh = multimesh
 	instance.material_override = material
-	instance.visibility_range_end = visibility_end
+	instance.visibility_range_end = tree_view_distance if node_name.begins_with("Tree") else visibility_end
 	instance.visibility_range_end_margin = 64.0
 	instance.visibility_range_fade_mode = GeometryInstance3D.VISIBILITY_RANGE_FADE_SELF
 	add_child(instance)
+	if node_name.begins_with("Tree"):
+		tree_multimesh_instances.append(instance)
 	return multimesh
 
 func _relative_transform(root: Node3D, node: Node3D) -> Transform3D:
@@ -304,7 +414,8 @@ func _update_tree_collisions(force: bool) -> void:
 	var player_position: Vector2 = Vector2(player.global_position.x, player.global_position.z)
 	var desired: Dictionary = {}
 	for definition: Dictionary in foliage_definitions:
-		if definition["type"] != "tree" or state.is_removed(str(definition["id"])):
+		if definition["type"] != "tree" or state.is_removed(str(definition["id"])) \
+				or not _density_keeps(definition):
 			continue
 		var position: Vector3 = definition["position"]
 		if Vector2(position.x, position.z).distance_to(player_position) <= TREE_COLLISION_RADIUS:
@@ -351,7 +462,7 @@ func _build_grass_mesh() -> void:
 		instance.multimesh.transform_format = MultiMesh.TRANSFORM_3D
 		instance.multimesh.mesh = grass_source.mesh
 		instance.material_override = _wind_material(Color.WHITE, 0.12)
-		instance.visibility_range_end = GRASS_RADIUS + 8.0
+		instance.visibility_range_end = grass_radius + 8.0
 		instance.visibility_range_end_margin = 8.0
 		instance.visibility_range_fade_mode = GeometryInstance3D.VISIBILITY_RANGE_FADE_SELF
 		add_child(instance)
@@ -366,19 +477,23 @@ func _update_grass(force: bool) -> void:
 		return
 	last_grass_region = region
 	var transforms_by_variant: Array = [[], [], []]
-	var spacing: float = 1.7
-	var min_cell_x: int = floori((player.global_position.x - GRASS_RADIUS) / spacing)
-	var max_cell_x: int = floori((player.global_position.x + GRASS_RADIUS) / spacing)
-	var min_cell_z: int = floori((player.global_position.z - GRASS_RADIUS) / spacing)
-	var max_cell_z: int = floori((player.global_position.z + GRASS_RADIUS) / spacing)
+	var spacing: float = 1.7 / sqrt(maxf(1.0, density_multiplier))
+	var min_cell_x: int = floori((player.global_position.x - grass_radius) / spacing)
+	var max_cell_x: int = floori((player.global_position.x + grass_radius) / spacing)
+	var min_cell_z: int = floori((player.global_position.z - grass_radius) / spacing)
+	var max_cell_z: int = floori((player.global_position.z + grass_radius) / spacing)
 	for cell_x: int in range(min_cell_x, max_cell_x + 1):
 		for cell_z: int in range(min_cell_z, max_cell_z + 1):
 			var rng: RandomNumberGenerator = RandomNumberGenerator.new()
 			rng.seed = absi((cell_x * 73856093) ^ (cell_z * 19349663) ^ 1357)
 			var x: float = (float(cell_x) + rng.randf()) * spacing
 			var z: float = (float(cell_z) + rng.randf()) * spacing
-			if Vector2(x, z).distance_to(Vector2(player.global_position.x, player.global_position.z)) > GRASS_RADIUS:
+			if Vector2(x, z).distance_to(Vector2(player.global_position.x, player.global_position.z)) > grass_radius:
 				continue
+			if density_multiplier < 1.0:
+				var density_rank: int = absi(cell_x * 73856093 ^ cell_z * 19349663 ^ 1357) % 1000
+				if density_rank >= roundi(density_multiplier * 1000.0):
+					continue
 			if absf(x) > WORLD_HALF_EXTENT - 8.0 or absf(z) > WORLD_HALF_EXTENT - 8.0:
 				continue
 			if Vector2(x, z).distance_to(terrain.LAKE_CENTER) < 78.0:

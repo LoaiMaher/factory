@@ -18,6 +18,11 @@ var viewmodel: FactoryViewmodel
 var build_system: FactoryBuildSystem = FactoryBuildSystem.new()
 var hotbar_model: HotbarModel = HotbarModel.new()
 var creative_mode: CreativeMode = CreativeMode.new()
+var graphics_settings: FrontierGraphicsSettings = FrontierGraphicsSettings.new()
+var graphics_preset_cli_override: bool = false
+var benchmark_mode: bool = false
+var benchmark_runner: FrontierBenchmark
+var perf_overlay: FrontierPerfOverlay
 var placement: FactoryPlacement = FactoryPlacement.new()
 var belt_start: Dictionary = {}
 var save_system: FactorySaveSystem = FactorySaveSystem.new()
@@ -56,11 +61,26 @@ var capture_mining_override: bool = false
 var v11_capture_line_target: Vector3 = Vector3.ZERO
 
 func _ready() -> void:
+	var launch_options: Dictionary = FrontierBenchmark.parse_arguments(
+		FrontierBenchmark.collect_command_line_args())
+	benchmark_mode = not FrontierBenchmark.should_load_save(launch_options)
+	autosave_enabled = not benchmark_mode
+	graphics_settings.load_settings()
+	var launch_preset: String = str(launch_options.get("preset", ""))
+	if not launch_preset.is_empty():
+		if launch_preset == "custom":
+			graphics_settings.preset = "custom"
+			graphics_preset_cli_override = true
+		else:
+			graphics_preset_cli_override = graphics_settings.apply_preset(launch_preset)
+	graphics_settings.apply(get_viewport(), null, null, null)
 	FactoryPlayer.configure_input()
 	_configure_actions()
+	var terrain_started_usec: int = Time.get_ticks_usec()
 	terrain = FactoryTerrain.new()
 	terrain.name = "Terrain"
 	add_child(terrain)
+	var terrain_build_ms: float = float(Time.get_ticks_usec() - terrain_started_usec) / 1000.0
 	for node: Dictionary in terrain.nodes:
 		sim.register_node(int(node["id"]), str(node["item"]), str(node["purity"]), node["position"], float(node["rate"]))
 	for index: int in range(terrain.vents.size()):
@@ -73,7 +93,11 @@ func _ready() -> void:
 	foliage = FactoryFoliage.new()
 	foliage.name = "Foliage"
 	foliage.setup(terrain, player)
+	foliage.set_graphics_options(graphics_settings.foliage_density,
+		graphics_settings.grass_radius, graphics_settings.tree_view_distance)
+	var foliage_started_usec: int = Time.get_ticks_usec()
 	add_child(foliage)
+	var foliage_build_ms: float = float(Time.get_ticks_usec() - foliage_started_usec) / 1000.0
 	visuals = FactoryVisuals.new()
 	visuals.name = "Visuals"
 	visuals.setup(sim, terrain)
@@ -91,6 +115,7 @@ func _ready() -> void:
 	hud.panel_closed.connect(_on_panel_closed)
 	hud.save_requested.connect(_save_game)
 	hud.load_requested.connect(_load_game)
+	hud.graphics_settings_apply_requested.connect(_apply_graphics_settings)
 	hud.tier_requested.connect(_buy_tier)
 	hud.craft_requested.connect(_hand_craft)
 	hud.creative_toggle_requested.connect(_toggle_creative_mode)
@@ -107,11 +132,20 @@ func _ready() -> void:
 	viewmodel.name = "Viewmodel"
 	viewmodel.setup(player, hud, visuals, machine_models, hotbar_model, build_system)
 	add_child(viewmodel)
+	graphics_settings.apply(get_viewport(), terrain.environment, terrain.sun, foliage)
+	perf_overlay = FrontierPerfOverlay.new()
+	perf_overlay.name = "PerformanceOverlay"
+	perf_overlay.configure(graphics_settings)
+	add_child(perf_overlay)
 	var spire_position := Vector3(0.0, terrain.height_at(0.0, -34.0), -34.0)
 	spire_entity_id = sim.add_entity("spire", spire_position)
 	_create_preview()
-	var arguments: PackedStringArray = OS.get_cmdline_user_args()
-	if arguments.has("--demo-factory"):
+	var arguments: PackedStringArray = FrontierBenchmark.collect_command_line_args()
+	if benchmark_mode:
+		if str(launch_options.get("route", "")) == "factory":
+			_build_demo_factory()
+		hud.show_toast("")
+	elif arguments.has("--demo-factory"):
 		autosave_enabled = false
 		save_backup_pending = FileAccess.file_exists(save_system.save_path)
 		_build_demo_factory()
@@ -129,6 +163,12 @@ func _ready() -> void:
 		hud.show_toast("Press H for controls · E to interact · B to build.", 6.0)
 	sim.power.apply_launch_flags(OS.get_cmdline_user_args())
 	visuals.refresh()
+	if benchmark_mode:
+		benchmark_runner = FrontierBenchmark.new()
+		benchmark_runner.configure(self, graphics_settings, launch_options,
+			float(Time.get_ticks_usec()) / 1000.0,
+			terrain_build_ms, foliage_build_ms)
+		add_child(benchmark_runner)
 	for argument: String in OS.get_cmdline_user_args():
 		if argument == "--capture-all":
 			call_deferred("_capture_all")
@@ -180,6 +220,8 @@ func _physics_process(delta: float) -> void:
 	_update_sightings()
 
 func _process(delta: float) -> void:
+	if benchmark_mode:
+		return
 	if not mining_boulder_id.is_empty() and Input.is_key_pressed(KEY_E):
 		hand_mine_elapsed += delta
 		if hand_mine_elapsed >= 0.42 and not hand_mining_swing_started:
@@ -244,6 +286,8 @@ func _update_aim_status(delta: float) -> void:
 		hud.hint_label.text = ""
 
 func _unhandled_input(event: InputEvent) -> void:
+	if benchmark_mode:
+		return
 	if event is InputEventKey and event.pressed and not event.echo:
 		var key: Key = event.keycode
 		if key == KEY_ESCAPE:
@@ -261,6 +305,12 @@ func _unhandled_input(event: InputEvent) -> void:
 			get_viewport().set_input_as_handled()
 		elif key == KEY_F7:
 			_toggle_creative_mode()
+			get_viewport().set_input_as_handled()
+		elif key == KEY_F3:
+			perf_overlay.toggle_overlay()
+			get_viewport().set_input_as_handled()
+		elif key == KEY_F10:
+			_toggle_graphics_settings()
 			get_viewport().set_input_as_handled()
 		elif key == KEY_B and not hud.panel_is_open():
 			_toggle_build_menu()
@@ -920,6 +970,8 @@ func _dismantle_aimed() -> void:
 		"no refunds in Creative mode" if creative_mode.active else "connected belts, materials and buffers refunded"))
 
 func _save_game() -> void:
+	if benchmark_mode:
+		return
 	if save_backup_pending:
 		if not save_system.backup_existing_save():
 			hud.show_toast("Save skipped · couldn't back up the existing save.", 6.0)
@@ -936,9 +988,13 @@ func _save_game() -> void:
 		hud.show_toast("Save failed.")
 
 func _load_game() -> void:
+	if benchmark_mode:
+		return
 	_load_saved_game(true)
 
 func _load_saved_game(show_toast: bool) -> bool:
+	if benchmark_mode:
+		return false
 	var loaded: Dictionary = save_system.load_game(sim, player)
 	if loaded.is_empty():
 		if show_toast:
@@ -1060,6 +1116,27 @@ func _highest_building_tier() -> int:
 
 func _on_panel_closed() -> void:
 	hud.close_build_menu()
+
+func _toggle_graphics_settings() -> void:
+	if hud.graphics_settings_open:
+		hud.close_panel()
+	else:
+		hud.close_build_menu()
+		hud.open_graphics_settings(graphics_settings)
+
+func _apply_graphics_settings() -> void:
+	var restart_required: bool = graphics_settings.apply(
+		get_viewport(), terrain.environment, terrain.sun, foliage)
+	if not benchmark_mode and not graphics_preset_cli_override:
+		graphics_settings.save_settings()
+	if restart_required:
+		hud.show_toast("Applied. Tree and scatter density take effect after restarting.", 5.0)
+	elif graphics_preset_cli_override:
+		hud.show_toast("Applied for this session; command-line preset is not saved.", 5.0)
+	else:
+		hud.show_toast("Graphics settings applied.")
+	if perf_overlay != null:
+		perf_overlay.configure(graphics_settings)
 
 func _update_sightings() -> void:
 	if herd.members.is_empty():
