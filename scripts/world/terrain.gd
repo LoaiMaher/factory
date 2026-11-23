@@ -629,7 +629,7 @@ func _ore_tint(item: String) -> Color:
 		"copper_ore":
 			return Color("92593a")
 		"limestone":
-			return Color("b4a98f")
+			return Color("a89d84")
 		"caterium_ore":
 			return Color("d8bb4b")
 		_:

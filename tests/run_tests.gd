@@ -1155,6 +1155,8 @@ func _test_ore_variant_mapping_and_collision() -> void:
 		"res://assets/models/ore_node_limestone.glb"
 	]
 	var unique_paths: Dictionary = {}
+	var piece_prefixes: Array[String] = ["Ore_Slab_", "Ore_Lobe_", "Ore_Plate_"]
+	var piece_counts: Dictionary = {}
 	for index: int in range(items.size()):
 		var item: String = items[index]
 		var model_path: String = terrain._ore_mesh_path(item)
@@ -1166,6 +1168,11 @@ func _test_ore_variant_mapping_and_collision() -> void:
 		if packed == null:
 			continue
 		var model: Node3D = packed.instantiate() as Node3D
+		var piece_count: int = 0
+		for mesh_node: Node in model.find_children("*", "MeshInstance3D", true, false):
+			if str(mesh_node.name).begins_with(piece_prefixes[index]):
+				piece_count += 1
+		piece_counts[item] = piece_count
 		for variant_name: String in ["OreNode_A", "OreNode_B", "OreNode_C"]:
 			var variant: Node3D = model.find_child(variant_name, true, false) as Node3D
 			var meshes: Array[Node] = variant.find_children("*", "MeshInstance3D", true, false) \
@@ -1190,11 +1197,17 @@ func _test_ore_variant_mapping_and_collision() -> void:
 						maximum_height = maxf(maximum_height, vertex.y)
 			_check("%s %s keeps the shared flat deposit footprint" % [item, variant_name],
 				not meshes.is_empty() and absf(maximum_radius - 3.0) <= 0.05
-				and maximum_height >= 0.15 and maximum_height <= 0.35,
+				and maximum_height >= 0.15 and maximum_height <= 0.3
+				and maximum_height * 1.2 <= 0.35,
 				str({"radius": maximum_radius, "height": maximum_height, "meshes": meshes.size()}))
 		model.free()
 	_check("ore resource meshes use distinct paths", unique_paths.size() == items.size(),
 		str(unique_paths.keys()))
+	var unique_piece_counts: Dictionary = {}
+	for item: String in items:
+		unique_piece_counts[piece_counts.get(item, 0)] = true
+	_check("ore GLBs have distinct slab or child-mesh counts",
+		unique_piece_counts.size() == items.size(), str(piece_counts))
 	_check("unknown ore resources retain the legacy mesh fallback",
 		terrain._ore_mesh_path("caterium_ore") == "res://assets/models/ore_node.glb",
 		terrain._ore_mesh_path("caterium_ore"))

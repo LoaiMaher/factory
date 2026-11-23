@@ -1739,7 +1739,9 @@ func _capture_ore_visuals() -> void:
 	for definition: Dictionary in terrain.nodes:
 		var item: String = str(definition["item"])
 		if item in ["iron_ore", "copper_ore", "limestone"] \
-				and not bool(definition.get("hidden", false)) and not item_nodes.has(item):
+				and not bool(definition.get("hidden", false)) \
+				and not sim.node_reservations.has(int(definition["id"])) \
+				and not item_nodes.has(item):
 			item_nodes[item] = definition
 	for item: String in ["iron_ore", "copper_ore", "limestone"]:
 		if not item_nodes.has(item):
@@ -1762,6 +1764,27 @@ func _capture_ore_visuals() -> void:
 		await get_tree().create_timer(0.45).timeout
 		await RenderingServer.frame_post_draw
 		_write_capture(item.trim_suffix("_ore") + "-45-degree")
+
+	var pure_item_nodes: Dictionary = {}
+	for definition: Dictionary in terrain.nodes:
+		var item: String = str(definition["item"])
+		if item in ["iron_ore", "copper_ore", "limestone"] \
+				and str(definition["purity"]) == "pure" \
+				and not sim.node_reservations.has(int(definition["id"])) \
+				and not bool(definition.get("hidden", false)):
+			pure_item_nodes[item] = definition
+	for item: String in ["iron_ore", "copper_ore", "limestone"]:
+		if not pure_item_nodes.has(item):
+			push_error("Ore visual capture is missing a visible pure " + item + " deposit")
+			get_tree().quit()
+			return
+		var point: Vector3 = pure_item_nodes[item]["position"]
+		var target: Vector3 = point + Vector3.UP * 0.22
+		var high_camera: Vector3 = point + Vector3(3.5, 5.22, 3.5)
+		_set_capture_view(target, high_camera)
+		await get_tree().create_timer(0.45).timeout
+		await RenderingServer.frame_post_draw
+		_write_capture(item.trim_suffix("_ore") + "-pure")
 
 	var miner_site: Dictionary = {}
 	for definition: Dictionary in terrain.nodes:
@@ -1787,8 +1810,8 @@ func _capture_ore_visuals() -> void:
 	visuals.refresh()
 	await get_tree().process_frame
 	await get_tree().process_frame
-	var miner_target: Vector3 = miner_site["position"] + Vector3.UP * 2.1
-	var miner_camera: Vector3 = miner_site["position"] + Vector3(8.0, 8.0, -8.0)
+	var miner_target: Vector3 = miner_site["position"] + Vector3.UP * 1.5
+	var miner_camera: Vector3 = miner_site["position"] + Vector3(6.0, 12.0, -6.0)
 	_set_capture_view(miner_target, miner_camera)
 	await get_tree().create_timer(0.65).timeout
 	await RenderingServer.frame_post_draw
