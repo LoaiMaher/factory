@@ -13,6 +13,8 @@ var terrain: FactoryTerrain
 var player: FactoryPlayer
 var density_multiplier: float = 1.0
 var grass_radius: float = DEFAULT_GRASS_RADIUS
+var grass_fade_start: float = 52.0
+var grass_fade_end: float = 60.0
 var tree_view_distance: float = 450.0
 var density_built_multiplier: float = 1.0
 var density_rebuild_required: bool = false
@@ -45,6 +47,8 @@ func set_graphics_options(density: float, radius: float, tree_distance: float) -
 	var was_ready: bool = is_node_ready()
 	density_multiplier = clampf(density, 0.5, 1.25)
 	grass_radius = clampf(radius, 20.0, 100.0)
+	grass_fade_end = grass_radius
+	grass_fade_start = maxf(0.0, grass_radius - 8.0)
 	tree_view_distance = clampf(tree_distance, 100.0, 720.0)
 	density_rebuild_required = was_ready \
 		and not is_equal_approx(density_multiplier, density_built_multiplier)
@@ -52,6 +56,10 @@ func set_graphics_options(density: float, radius: float, tree_distance: float) -
 		instance.visibility_range_end = _tree_visibility_end()
 	for instance: MultiMeshInstance3D in grass_instances:
 		instance.visibility_range_end = grass_radius + 8.0
+		var material: ShaderMaterial = instance.material_override as ShaderMaterial
+		if material != null:
+			material.set_shader_parameter("fade_start", grass_fade_start)
+			material.set_shader_parameter("fade_end", grass_fade_end)
 	if was_ready and not grass_instances.is_empty():
 		_update_grass(true)
 	return density_rebuild_required
@@ -487,7 +495,8 @@ func _build_grass_mesh() -> void:
 		instance.multimesh = MultiMesh.new()
 		instance.multimesh.transform_format = MultiMesh.TRANSFORM_3D
 		instance.multimesh.mesh = grass_source.mesh
-		instance.material_override = _wind_material(Color.WHITE, 0.12)
+		instance.material_override = _wind_material(
+			Color.WHITE, 0.12, grass_fade_start, grass_fade_end)
 		instance.visibility_range_end = grass_radius + 8.0
 		instance.visibility_range_end_margin = 8.0
 		instance.visibility_range_fade_mode = GeometryInstance3D.VISIBILITY_RANGE_FADE_SELF
