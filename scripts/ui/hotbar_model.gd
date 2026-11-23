@@ -81,13 +81,13 @@ func cycle(step: int, unlocked_tiers: int,
 		return select_slot(index, unlocked_tiers, building_definitions)
 	return {"ok": false, "reason": "No unlocked hotbar slots"}
 
-func quantity(index: int, inventory: Dictionary,
+func quantity(index: int, inventory: FrontierInventory,
 		building_definitions: Dictionary = {}) -> int:
 	var definitions: Dictionary = BuildingDefs.all() if building_definitions.is_empty() else building_definitions
 	var slot: Dictionary = slot_at(index)
 	var id: String = str(slot.get("id", ""))
 	if slot.get("type", "") == "item":
-		return maxi(0, int(inventory.get(id, 0)))
+		return inventory.count(id) if inventory != null else 0
 	if slot.get("type", "") != "building" or not definitions.has(id):
 		return 0
 	var cost: Dictionary = definitions[id].get("cost", {})
@@ -98,7 +98,8 @@ func quantity(index: int, inventory: Dictionary,
 		var item_cost: int = int(cost[item_id])
 		if item_cost <= 0:
 			continue
-		affordable = mini(affordable, floori(float(maxi(0, int(inventory.get(item_id, 0)))) / float(item_cost)))
+		var quantity: int = inventory.count(item_id) if inventory != null else 0
+		affordable = mini(affordable, floori(float(quantity) / float(item_cost)))
 	if affordable == 2147483647:
 		return 0
 	return affordable * 2 if id in ["belt_mk1", "belt_mk2"] else affordable

@@ -6,10 +6,10 @@ const SPRINT_SPEED: float = 11.5
 const JUMP_VELOCITY: float = 5.8
 const MOUSE_SENSITIVITY: float = 0.0022
 
-var inventory: Dictionary = {
+var inventory: FrontierInventory = FrontierInventory.from_totals({
 	"iron_plate": 100, "iron_rod": 50, "wire": 80,
 	"concrete": 40, "iron_ingot": 20
-}
+})
 var camera: Camera3D
 var pitch: float = 0.0
 var mouse_captured: bool = true

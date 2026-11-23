@@ -55,11 +55,27 @@ var graphics_settings_open: bool = false
 var graphics_settings_ref: FrontierGraphicsSettings
 var graphics_setting_controls: Dictionary = {}
 var loading_graphics_settings: bool = false
+var storage_open: bool = false
+var storage_snapshot_valid: bool = false
+var storage_contents_snapshot: Dictionary = {}
+var storage_slot_stacks: Array[Dictionary] = []
+var inventory_category_filter: String = "all"
+var inventory_grid: FactoryInventoryPanel
+var storage_grid: FactoryInventoryPanel
+var cursor_stack: Dictionary = {}
+var cursor_stack_panel: PanelContainer
+var cursor_stack_icon: TextureRect
+var cursor_stack_count: Label
+var cursor_origin_type: String = ""
+var cursor_origin_slot: int = -1
+var cursor_origin_entity: int = -1
+var cursor_origin_item: String = ""
 
 func _ready() -> void:
 	root = Control.new()
 	root.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	root.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	root.resized.connect(_center_panel)
 	add_child(root)
 	var crosshair: Label = Label.new()
 	crosshair.text = "+"
@@ -135,6 +151,7 @@ func _ready() -> void:
 	_create_build_menu()
 	_create_help_panel()
 	_create_hotbar()
+	_create_cursor_stack_visual()
 	_update_hotbar()
 	call_deferred("_prepare_hotbar_icons")
 
@@ -196,6 +213,9 @@ func _process(delta: float) -> void:
 	if hotbar != null:
 		hotbar.set_interactive(active_panel or build_menu.visible)
 		_update_hotbar()
+	if storage_open:
+		_refresh_storage_grid()
+	_update_cursor_stack_visual()
 
 func show_toast(message: String, duration: float = 4.0) -> void:
 	toast_label.text = message
@@ -212,6 +232,12 @@ func open_entity(entity_id: int) -> void:
 		return
 	selected_entity_id = entity_id
 	var entity: FactoryEntity = sim.entities[entity_id]
+	if entity.kind == "storage":
+		_open_storage_panel(entity)
+		return
+	storage_open = false
+	inventory_open = false
+	_set_inventory_panel_size(false)
 	_set_panel("%s diagnostics" % entity.kind.replace("_", " ").capitalize())
 	entity_status_label = RichTextLabel.new()
 	entity_status_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -237,12 +263,6 @@ func open_entity(entity_id: int) -> void:
 		insert.pressed.connect(_insert_inventory)
 		panel_body.add_child(insert)
 		panel_body.add_child(_label(_buffer_summary(entity), 15))
-	elif entity.kind == "storage":
-		panel_body.add_child(_label(_buffer_summary(entity), 15))
-		var take_all: Button = Button.new()
-		take_all.text = "Take all"
-		take_all.pressed.connect(_take_storage)
-		panel_body.add_child(take_all)
 	elif entity.kind == "spire":
 		_add_spire_panel(entity)
 	else:
@@ -257,42 +277,376 @@ func open_entity(entity_id: int) -> void:
 
 func open_inventory() -> void:
 	inventory_open = true
+	storage_open = false
 	selected_entity_id = -1
+	_set_inventory_panel_size(true)
 	_set_panel("Inventory & hand crafting")
-	panel_body.add_child(_label(
-		"Click an item to add 100 in Creative mode." if creative_mode_active
-		else "Starter cargo and delivered items", 15))
-	var creative_toggle: Button = Button.new()
+	var content := HBoxContainer.new()
+	content.add_theme_constant_override("separation", 24)
+	panel_body.add_child(content)
+	var inventory_column := VBoxContainer.new()
+	inventory_column.custom_minimum_size.x = 548.0
+	content.add_child(inventory_column)
+	var toolbar := HBoxContainer.new()
+	inventory_column.add_child(toolbar)
+	var creative_toggle := Button.new()
 	creative_toggle.text = "Return to Survival" if creative_mode_active else "Switch to Creative"
 	creative_toggle.pressed.connect(creative_toggle_requested.emit)
-	panel_body.add_child(creative_toggle)
+	toolbar.add_child(creative_toggle)
+	var sort_button := Button.new()
+	sort_button.text = "Sort"
+	sort_button.pressed.connect(_sort_inventory)
+	toolbar.add_child(sort_button)
 	assignment_hint = _label("Hover an item, press 1–0 to assign · Right-click a slot to clear", 13)
-	panel_body.add_child(assignment_hint)
+	inventory_column.add_child(assignment_hint)
+	var categories := HBoxContainer.new()
+	inventory_column.add_child(categories)
+	var category_ids: Array[String] = ["all", "raw", "processed", "component", "special"]
+	var category_labels: Array[String] = ["All", "Raw", "Processed", "Components", "Special"]
+	for category_index: int in range(category_ids.size()):
+		var category_button := Button.new()
+		category_button.text = category_labels[category_index]
+		category_button.pressed.connect(_set_inventory_category.bind(category_ids[category_index]))
+		categories.add_child(category_button)
+	inventory_grid = FactoryInventoryPanel.new()
+	inventory_grid.slot_input.connect(_on_player_slot_input)
+	inventory_grid.slot_hovered.connect(_on_inventory_slot_hovered)
+	inventory_column.add_child(inventory_grid)
+	inventory_grid.configure(player.inventory, icon_cache, inventory_category_filter)
+	var craft_column := VBoxContainer.new()
+	craft_column.custom_minimum_size.x = 440.0
+	content.add_child(craft_column)
+	craft_column.add_child(_label("Hand crafting", 19))
 	var items: Array[String] = []
 	for item_id: String in Items.all():
 		items.append(item_id)
-	items.sort_custom(func(first: String, second: String) -> bool:
-		return Items.item_name(first) < Items.item_name(second))
+	items.sort()
+	if creative_mode_active:
+		craft_column.add_child(_label("Creative items · click for one full stack", 14))
 	for item_id: String in items:
-		var item_button: Button = Button.new()
-		item_button.text = "%s  ×  %d" % [Items.item_name(item_id), int(player.inventory.get(item_id, 0))]
-		item_button.alignment = HORIZONTAL_ALIGNMENT_LEFT
-		item_button.mouse_entered.connect(_set_assignment_target.bind("item", item_id))
-		item_button.mouse_exited.connect(_clear_assignment_target.bind("item", item_id))
-		item_button.pressed.connect(creative_item_requested.emit.bind(item_id))
-		panel_body.add_child(item_button)
+		if creative_mode_active:
+			var item_button := Button.new()
+			item_button.text = Items.item_name(item_id)
+			item_button.icon = icon_cache.get_icon("item", item_id) if icon_cache != null else null
+			item_button.pressed.connect(creative_item_requested.emit.bind(item_id))
+			craft_column.add_child(item_button)
 	for recipe_id: String in recipe_definitions:
-		var recipe_button: Button = Button.new()
-		recipe_button.text = "Craft %s" % recipe_id.replace("_", " ")
+		var recipe: Dictionary = recipe_definitions[recipe_id]
+		var output_id: String = str(recipe["outputs"].keys()[0])
+		var output_count: int = int(recipe["outputs"][output_id])
+		var recipe_button := Button.new()
+		recipe_button.text = "Craft %s × %d" % [Items.item_name(output_id), output_count]
+		recipe_button.icon = icon_cache.get_icon("item", output_id) if icon_cache != null else null
+		recipe_button.tooltip_text = "%s → %s" % [str(recipe["inputs"]), Items.description(output_id)]
 		recipe_button.pressed.connect(_request_craft.bind(recipe_id))
-		panel_body.add_child(recipe_button)
-	var close: Button = Button.new()
-	close.text = "Close  [Esc]"
+		craft_column.add_child(recipe_button)
+	var close := Button.new()
+	close.text = "Close  [Tab / Esc]"
 	close.pressed.connect(close_panel)
 	panel_body.add_child(close)
 	active_panel = true
 	player.set_panel_open(true)
 	panel.visible = true
+
+func _set_inventory_category(category: String) -> void:
+	inventory_category_filter = category
+	if inventory_grid != null:
+		inventory_grid.configure(player.inventory, icon_cache, inventory_category_filter)
+
+func _sort_inventory() -> void:
+	player.inventory.sort()
+	if inventory_grid != null:
+		inventory_grid.configure(player.inventory, icon_cache, inventory_category_filter)
+	refresh_hotbar()
+
+func _on_inventory_slot_hovered(slot_index: int, entered: bool) -> void:
+	if inventory_grid == null or slot_index >= player.inventory.slots.size():
+		return
+	var item_id: String = str(player.inventory.slots[slot_index].get("item_id", ""))
+	if entered and not item_id.is_empty():
+		_set_assignment_target("item", item_id)
+	else:
+		_clear_assignment_target("item", item_id)
+
+func _on_player_slot_input(slot_index: int, button_index: int, shift_pressed: bool) -> void:
+	if slot_index >= player.inventory.slots.size():
+		return
+	var slot: Dictionary = player.inventory.slots[slot_index]
+	var item_id: String = str(slot.get("item_id", ""))
+	var quantity: int = int(slot.get("count", 0))
+	if shift_pressed and storage_open and not item_id.is_empty():
+		if creative_mode_active:
+			show_toast("Creative items can't be stored")
+			return
+		var moved: int = sim.insert_storage_item(selected_entity_id, item_id, quantity)
+		player.inventory.take_slot(slot_index, moved)
+		_refresh_open_inventory()
+		return
+	if slot_index >= player.inventory.capacity and not cursor_stack.is_empty():
+		return
+	if cursor_stack.is_empty():
+		if quantity > 0:
+			var stack_limit: int = Items.stack_size(item_id)
+			var take_count: int = mini(quantity, stack_limit)
+			if button_index == MOUSE_BUTTON_RIGHT:
+				take_count = mini(ceili(float(quantity) / 2.0), stack_limit)
+			cursor_stack = player.inventory.take_slot(slot_index, take_count)
+			_set_cursor_origin("player", slot_index, -1, item_id)
+	elif button_index == MOUSE_BUTTON_RIGHT:
+		_place_one_in_player_slot(slot_index)
+	else:
+		var held_item_id: String = str(cursor_stack.get("item_id", ""))
+		var held_count: int = int(cursor_stack.get("count", 0))
+		cursor_stack = player.inventory.place_into(slot_index, cursor_stack)
+		var moved_count: int = held_count
+		if not cursor_stack.is_empty() and str(cursor_stack.get("item_id", "")) == held_item_id:
+			moved_count -= int(cursor_stack.get("count", 0))
+		if cursor_origin_type == "storage" and moved_count > 0:
+			world_item_collected.emit(held_item_id, moved_count)
+		if not cursor_stack.is_empty():
+			if str(cursor_stack.get("item_id", "")) != held_item_id:
+				_set_cursor_origin("player", slot_index, -1,
+					str(cursor_stack.get("item_id", "")))
+		else:
+			_clear_cursor_origin()
+	_refresh_open_inventory()
+	refresh_hotbar()
+
+func _place_one_in_player_slot(slot_index: int) -> void:
+	if cursor_stack.is_empty():
+		return
+	var item_id: String = str(cursor_stack["item_id"])
+	var slot: Dictionary = player.inventory.slots[slot_index]
+	if not slot.is_empty() and str(slot.get("item_id", "")) != item_id:
+		return
+	var remainder: Dictionary = player.inventory.place_into(
+		slot_index, {"item_id": item_id, "count": 1})
+	if remainder.is_empty():
+		cursor_stack["count"] = int(cursor_stack["count"]) - 1
+		if cursor_origin_type == "storage":
+			world_item_collected.emit(item_id, 1)
+		if int(cursor_stack["count"]) <= 0:
+			cursor_stack.clear()
+			_clear_cursor_origin()
+
+func _refresh_open_inventory() -> void:
+	if inventory_grid != null and is_instance_valid(inventory_grid):
+		inventory_grid.configure(player.inventory, icon_cache, inventory_category_filter)
+	if storage_open:
+		_refresh_storage_grid()
+
+func _set_inventory_panel_size(wide: bool) -> void:
+	if panel == null:
+		return
+	var scroll: ScrollContainer = panel.get_child(0) as ScrollContainer
+	panel.set_anchors_preset(Control.PRESET_TOP_LEFT)
+	if wide:
+		panel.size = Vector2(1130.0, 700.0)
+		if scroll != null:
+			scroll.custom_minimum_size = Vector2(1110.0, 680.0)
+	else:
+		panel.size = Vector2(620.0, 510.0)
+		if scroll != null:
+			scroll.custom_minimum_size = Vector2(600.0, 490.0)
+	_center_panel()
+
+func _center_panel() -> void:
+	if panel != null and root != null:
+		panel.position = (root.size - panel.size) * 0.5
+
+func _open_storage_panel(entity: FactoryEntity) -> void:
+	storage_open = true
+	storage_snapshot_valid = false
+	inventory_open = false
+	_set_inventory_panel_size(true)
+	_set_panel("%s · transfer" % entity.kind.capitalize())
+	panel_body.add_child(_label("Shift-click to transfer · Take all moves only what fits", 15))
+	var columns := HBoxContainer.new()
+	columns.add_theme_constant_override("separation", 24)
+	panel_body.add_child(columns)
+	var player_column := VBoxContainer.new()
+	player_column.add_child(_label("Player inventory", 18))
+	inventory_grid = FactoryInventoryPanel.new()
+	inventory_grid.slot_input.connect(_on_player_slot_input)
+	inventory_grid.slot_hovered.connect(_on_inventory_slot_hovered)
+	player_column.add_child(inventory_grid)
+	inventory_grid.configure(player.inventory, icon_cache)
+	columns.add_child(player_column)
+	var storage_column := VBoxContainer.new()
+	storage_column.add_child(_label("Storage", 18))
+	storage_grid = FactoryInventoryPanel.new()
+	storage_grid.slot_input.connect(_on_storage_slot_input)
+	storage_column.add_child(storage_grid)
+	_refresh_storage_grid()
+	var take_all := Button.new()
+	take_all.text = "Take all that fits"
+	take_all.pressed.connect(_take_storage)
+	storage_column.add_child(take_all)
+	columns.add_child(storage_column)
+	var close := Button.new()
+	close.text = "Close  [Tab / Esc]"
+	close.pressed.connect(close_panel)
+	panel_body.add_child(close)
+	active_panel = true
+	player.set_panel_open(true)
+	panel.visible = true
+
+func _refresh_storage_grid() -> void:
+	if not storage_open or storage_grid == null or not is_instance_valid(storage_grid) \
+			or not sim.entities.has(selected_entity_id):
+		return
+	var storage: FactoryEntity = sim.entities[selected_entity_id]
+	var contents: Dictionary = storage.input_buffer.duplicate(true)
+	if storage_snapshot_valid and contents == storage_contents_snapshot:
+		return
+	storage_contents_snapshot = contents
+	storage_snapshot_valid = true
+	var storage_inventory: FrontierInventory = FrontierInventory.from_totals(contents)
+	storage_slot_stacks.clear()
+	for index: int in range(maxi(FrontierInventory.DEFAULT_CAPACITY, storage_inventory.slots.size())):
+		var slot: Dictionary = storage_inventory.slots[index] \
+			if index < storage_inventory.slots.size() else {}
+		storage_slot_stacks.append(slot.duplicate(true))
+	storage_grid.configure(storage_inventory, icon_cache)
+
+func _on_storage_slot_input(slot_index: int, button_index: int, shift_pressed: bool) -> void:
+	if not sim.entities.has(selected_entity_id):
+		return
+	var storage: FactoryEntity = sim.entities[selected_entity_id]
+	if slot_index < 0 or slot_index >= storage_slot_stacks.size():
+		return
+	var rendered_stack: Dictionary = storage_slot_stacks[slot_index]
+	var item_id: String = str(rendered_stack.get("item_id", ""))
+	var quantity: int = int(rendered_stack.get("count", 0))
+	var storage_inventory: FrontierInventory = FrontierInventory.from_totals(storage.input_buffer)
+	if slot_index >= storage_inventory.slots.size():
+		return
+	if shift_pressed:
+		if item_id.is_empty() or quantity <= 0:
+			return
+		var transfer_count: int = player.inventory.fit_count(item_id, quantity)
+		if transfer_count > 0:
+			var moved: int = sim.take_storage_item(selected_entity_id, item_id, transfer_count)
+			player.inventory.add(item_id, moved)
+			world_item_collected.emit(item_id, moved)
+	elif cursor_stack.is_empty():
+		if item_id.is_empty() or quantity <= 0:
+			return
+		var stack_limit: int = Items.stack_size(item_id)
+		var amount: int = ceili(float(quantity) / 2.0) \
+			if button_index == MOUSE_BUTTON_RIGHT else quantity
+		amount = mini(amount, stack_limit)
+		var moved: int = sim.take_storage_item(selected_entity_id, item_id, amount)
+		if moved > 0:
+			cursor_stack = {"item_id": item_id, "count": moved}
+			_set_cursor_origin("storage", slot_index, selected_entity_id, item_id)
+	else:
+		if creative_mode_active and cursor_origin_type != "storage":
+			show_toast("Creative items can't be stored")
+			return
+		var current_slot: Dictionary = storage_inventory.slots[slot_index]
+		if str(current_slot.get("item_id", "")) != item_id:
+			_refresh_storage_grid()
+			return
+		var held_item_id: String = str(cursor_stack.get("item_id", ""))
+		var held_count: int = int(cursor_stack.get("count", 0))
+		if button_index == MOUSE_BUTTON_RIGHT \
+				and not item_id.is_empty() and item_id != held_item_id:
+			return
+		var next_inventory := FrontierInventory.new()
+		next_inventory.from_data(storage_inventory.to_data())
+		var place_stack: Dictionary = {"item_id": held_item_id, "count": held_count}
+		if button_index == MOUSE_BUTTON_RIGHT:
+			place_stack["count"] = 1
+		var remainder: Dictionary = next_inventory.place_into(slot_index, place_stack)
+		if button_index == MOUSE_BUTTON_RIGHT and not remainder.is_empty():
+			return
+		if not _replace_storage_inventory(selected_entity_id, next_inventory.totals()):
+			return
+		if button_index == MOUSE_BUTTON_RIGHT:
+			cursor_stack["count"] = held_count - 1
+			if int(cursor_stack["count"]) <= 0:
+				cursor_stack.clear()
+				_clear_cursor_origin()
+		else:
+			cursor_stack = remainder
+			if cursor_stack.is_empty():
+				_clear_cursor_origin()
+			elif str(cursor_stack.get("item_id", "")) != held_item_id:
+				_set_cursor_origin("storage", slot_index, selected_entity_id,
+					str(cursor_stack.get("item_id", "")))
+	_refresh_open_inventory()
+	refresh_hotbar()
+
+func _replace_storage_inventory(entity_id: int, next_totals: Dictionary) -> bool:
+	var next_total: int = 0
+	for item_variant: Variant in next_totals:
+		next_total += int(next_totals[item_variant])
+	if next_total > 1000 or not sim.entities.has(entity_id):
+		return false
+	var current_totals: Dictionary = sim.entities[entity_id].input_buffer.duplicate(true)
+	for item_variant: Variant in current_totals:
+		var item_id: String = str(item_variant)
+		var remove_count: int = int(current_totals[item_variant]) \
+			- int(next_totals.get(item_id, 0))
+		if remove_count > 0 \
+				and sim.take_storage_item(entity_id, item_id, remove_count) != remove_count:
+			return false
+	for item_variant: Variant in next_totals:
+		var item_id: String = str(item_variant)
+		var insert_count: int = int(next_totals[item_variant]) \
+			- int(current_totals.get(item_id, 0))
+		if insert_count > 0 \
+				and sim.insert_storage_item(entity_id, item_id, insert_count) != insert_count:
+			return false
+	return true
+
+func _set_cursor_origin(source: String, slot_index: int, entity_id: int, item_id: String) -> void:
+	cursor_origin_type = source
+	cursor_origin_slot = slot_index
+	cursor_origin_entity = entity_id
+	cursor_origin_item = item_id
+
+func _clear_cursor_origin() -> void:
+	cursor_origin_type = ""
+	cursor_origin_slot = -1
+	cursor_origin_entity = -1
+	cursor_origin_item = ""
+
+func _return_cursor_stack() -> void:
+	if cursor_stack.is_empty():
+		_clear_cursor_origin()
+		return
+	var pending: Dictionary = cursor_stack.duplicate(true)
+	if cursor_origin_type == "storage":
+		var item_id: String = str(pending.get("item_id", ""))
+		var quantity: int = int(pending.get("count", 0))
+		if sim.entities.has(cursor_origin_entity):
+			quantity -= sim.insert_storage_item(cursor_origin_entity, item_id, quantity)
+		if quantity > 0:
+			var remainder: int = player.inventory.add(item_id, quantity)
+			player.inventory.add_restored(item_id, remainder)
+			world_item_collected.emit(item_id, quantity)
+	elif cursor_origin_type == "player" and cursor_origin_slot >= 0:
+		pending = player.inventory.place_into(cursor_origin_slot, pending)
+		if not pending.is_empty():
+			var pending_item: String = str(pending.get("item_id", ""))
+			var remainder: int = player.inventory.add(pending_item, int(pending.get("count", 0)))
+			player.inventory.add_restored(pending_item, remainder)
+	else:
+		var item_id: String = str(pending.get("item_id", ""))
+		var remainder: int = player.inventory.add(item_id, int(pending.get("count", 0)))
+		player.inventory.add_restored(item_id, remainder)
+	cursor_stack.clear()
+	_clear_cursor_origin()
+	if storage_open:
+		_refresh_storage_grid()
+	refresh_hotbar()
+
+func discard_cursor_stack() -> void:
+	cursor_stack.clear()
+	_clear_cursor_origin()
+	_update_cursor_stack_visual()
 
 func open_hub() -> void:
 	selected_entity_id = -1
@@ -539,8 +893,10 @@ func toggle_help() -> void:
 func close_panel() -> void:
 	if not active_panel:
 		return
+	_return_cursor_stack()
 	active_panel = false
 	inventory_open = false
+	storage_open = false
 	graphics_settings_open = false
 	panel.visible = false
 	assignment_target.clear()
@@ -573,11 +929,11 @@ func refresh_hotbar() -> void:
 func _create_panel() -> void:
 	panel = PanelContainer.new()
 	panel.mouse_filter = Control.MOUSE_FILTER_STOP
-	panel.set_anchors_preset(Control.PRESET_CENTER)
-	panel.position = Vector2(-310.0, -255.0)
+	panel.set_anchors_preset(Control.PRESET_TOP_LEFT)
 	panel.size = Vector2(620.0, 510.0)
 	panel.visible = false
 	root.add_child(panel)
+	_center_panel()
 	var scroll: ScrollContainer = ScrollContainer.new()
 	scroll.custom_minimum_size = Vector2(600.0, 490.0)
 	panel.add_child(scroll)
@@ -623,6 +979,45 @@ func _create_hotbar() -> void:
 	hotbar.slot_cleared.connect(_clear_hotbar_slot)
 	root.add_child(hotbar)
 
+func _create_cursor_stack_visual() -> void:
+	cursor_stack_panel = PanelContainer.new()
+	cursor_stack_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	cursor_stack_panel.visible = false
+	cursor_stack_panel.custom_minimum_size = Vector2(56.0, 48.0)
+	var style := StyleBoxFlat.new()
+	style.bg_color = Color("171c1d")
+	style.border_color = Color("d3a15d")
+	style.set_border_width_all(1)
+	style.set_corner_radius_all(4)
+	cursor_stack_panel.add_theme_stylebox_override("panel", style)
+	var row := HBoxContainer.new()
+	row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	cursor_stack_panel.add_child(row)
+	cursor_stack_icon = TextureRect.new()
+	cursor_stack_icon.custom_minimum_size = Vector2(36.0, 36.0)
+	cursor_stack_icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	cursor_stack_icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	cursor_stack_icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	row.add_child(cursor_stack_icon)
+	cursor_stack_count = _label("", 13)
+	cursor_stack_count.vertical_alignment = VERTICAL_ALIGNMENT_BOTTOM
+	row.add_child(cursor_stack_count)
+	root.add_child(cursor_stack_panel)
+
+func _update_cursor_stack_visual() -> void:
+	if cursor_stack_panel == null:
+		return
+	var held: bool = not cursor_stack.is_empty()
+	cursor_stack_panel.visible = held and active_panel
+	if not held:
+		return
+	cursor_stack_panel.position = get_viewport().get_mouse_position() + Vector2(14.0, 14.0)
+	var item_id: String = str(cursor_stack.get("item_id", ""))
+	cursor_stack_icon.texture = icon_cache.get_icon("item", item_id) \
+		if icon_cache != null else null
+	var quantity: int = int(cursor_stack.get("count", 0))
+	cursor_stack_count.text = str(quantity) if quantity > 1 else ""
+
 func _prepare_hotbar_icons() -> void:
 	if icon_cache == null or icon_machine_models == null or icon_visuals == null:
 		return
@@ -634,7 +1029,8 @@ func _on_hotbar_icons_ready() -> void:
 
 func _update_hotbar() -> void:
 	if hotbar != null:
-		hotbar.refresh(hotbar_model, player.inventory if player != null else {},
+		hotbar.refresh(hotbar_model,
+			player.inventory if player != null else FrontierInventory.new(),
 			unlocked_tiers, creative_mode_active)
 
 func set_creative_mode(active: bool) -> void:
@@ -728,26 +1124,40 @@ func _on_recipe_selected(index: int, recipe_names: Array[String]) -> void:
 		refresh_entity_panel()
 
 func _take_output() -> void:
-	var items: Dictionary = sim.take_output(selected_entity_id)
+	if not sim.entities.has(selected_entity_id):
+		return
+	var items: Dictionary = sim.entities[selected_entity_id].output_buffer.duplicate(true)
 	for item_id: String in items:
-		var quantity: int = int(items[item_id])
-		player.inventory[item_id] = int(player.inventory.get(item_id, 0)) + quantity
-		world_item_collected.emit(item_id, quantity)
+		var quantity: int = player.inventory.fit_count(item_id, int(items[item_id]))
+		var moved: int = sim.take_output_item(selected_entity_id, item_id, quantity)
+		if moved > 0:
+			player.inventory.add(item_id, moved)
+			world_item_collected.emit(item_id, moved)
+		if moved < int(items[item_id]):
+			show_toast("Inventory full")
 	refresh_entity_panel()
 
 func _take_storage() -> void:
-	var items: Dictionary = sim.take_storage(selected_entity_id)
+	if not sim.entities.has(selected_entity_id) or sim.entities[selected_entity_id].kind != "storage":
+		return
+	var items: Dictionary = sim.entities[selected_entity_id].input_buffer.duplicate(true)
 	for item_id: String in items:
-		var quantity: int = int(items[item_id])
-		player.inventory[item_id] = int(player.inventory.get(item_id, 0)) + quantity
-		world_item_collected.emit(item_id, quantity)
-	refresh_entity_panel()
+		var quantity: int = player.inventory.fit_count(item_id, int(items[item_id]))
+		var moved: int = sim.take_storage_item(selected_entity_id, item_id, quantity)
+		if moved > 0:
+			player.inventory.add(item_id, moved)
+			world_item_collected.emit(item_id, moved)
+		if moved < int(items[item_id]):
+			show_toast("Some items could not fit")
+	_refresh_open_inventory()
+	refresh_hotbar()
 
 func _insert_inventory() -> void:
-	var entity: FactoryEntity = sim.entities[selected_entity_id]
-	for item_id: String in player.inventory.keys():
-		var amount: int = sim.insert_input(selected_entity_id, str(item_id), int(player.inventory[item_id]))
-		player.inventory[item_id] = int(player.inventory[item_id]) - amount
+	for item_variant: Variant in player.inventory.totals():
+		var item_id: String = str(item_variant)
+		var amount: int = sim.insert_input(
+			selected_entity_id, item_id, player.inventory.count(item_id))
+		player.inventory.remove(item_id, amount)
 	refresh_entity_panel()
 
 func _add_spire_panel(entity: FactoryEntity) -> void:

@@ -252,12 +252,70 @@ func try_insert(entity_id: int, item_id: String, port_id: String) -> bool:
 	entity.input_buffer[item_id] = int(entity.input_buffer.get(item_id, 0)) + 1
 	return true
 
+func insert_input(entity_id: int, item_id: String, quantity: int) -> int:
+	if quantity <= 0 or not entities.has(entity_id):
+		return 0
+	var entity: FactoryEntity = entities[entity_id]
+	if entity.kind == "storage":
+		return insert_storage_item(entity_id, item_id, quantity)
+	var input_ports: Array[String] = []
+	for port: Dictionary in building_definitions.get(entity.kind, {}).get("ports", []):
+		if str(port.get("dir", "")) == "in":
+			input_ports.append(str(port.get("id", "")))
+	var inserted: int = 0
+	while inserted < quantity:
+		var accepted: bool = false
+		for port_id: String in input_ports:
+			if try_insert(entity_id, item_id, port_id):
+				accepted = true
+				break
+		if not accepted:
+			break
+		inserted += 1
+	return inserted
+
 func take_storage(entity_id: int) -> Dictionary:
 	if not entities.has(entity_id) or entities[entity_id].kind != "storage":
 		return {}
 	var result: Dictionary = entities[entity_id].input_buffer.duplicate(true)
 	entities[entity_id].input_buffer.clear()
 	return result
+
+func take_storage_item(entity_id: int, item_id: String, quantity: int) -> int:
+	if quantity <= 0 or not entities.has(entity_id) or entities[entity_id].kind != "storage":
+		return 0
+	var storage: FactoryEntity = entities[entity_id]
+	var moved: int = mini(quantity, int(storage.input_buffer.get(item_id, 0)))
+	if moved <= 0:
+		return 0
+	storage.input_buffer[item_id] = int(storage.input_buffer[item_id]) - moved
+	if int(storage.input_buffer[item_id]) <= 0:
+		storage.input_buffer.erase(item_id)
+	return moved
+
+func insert_storage_item(entity_id: int, item_id: String, quantity: int) -> int:
+	if quantity <= 0 or item_id.is_empty() or not entities.has(entity_id) \
+			or entities[entity_id].kind != "storage":
+		return 0
+	var storage: FactoryEntity = entities[entity_id]
+	var space: int = maxi(0, 1000 - _inventory_total(storage.input_buffer))
+	var moved: int = mini(quantity, space)
+	if moved <= 0:
+		return 0
+	storage.input_buffer[item_id] = int(storage.input_buffer.get(item_id, 0)) + moved
+	return moved
+
+func take_output_item(entity_id: int, item_id: String, quantity: int) -> int:
+	if quantity <= 0 or not entities.has(entity_id):
+		return 0
+	var entity: FactoryEntity = entities[entity_id]
+	var moved: int = mini(quantity, int(entity.output_buffer.get(item_id, 0)))
+	if moved <= 0:
+		return 0
+	entity.output_buffer[item_id] = int(entity.output_buffer[item_id]) - moved
+	if int(entity.output_buffer[item_id]) <= 0:
+		entity.output_buffer.erase(item_id)
+	return moved
 
 func take_output(entity_id: int) -> Dictionary:
 	if not entities.has(entity_id):
@@ -317,14 +375,29 @@ func _power_diagnostic(entity: FactoryEntity) -> String:
 	return "Power: %.0f / %.0f MW network · %d%% satisfaction" % [
 		supply, demand, roundi(satisfaction * 100.0)]
 
+func preview_refund(entity_id: int) -> Dictionary:
+	return _build_refund_preview(entity_id).get("refund", {})
+
 func remove_entity_with_refund(entity_id: int, world_items: Dictionary = {}) -> Dictionary:
 	if not entities.has(entity_id):
 		return {}
+	var preview: Dictionary = _build_refund_preview(entity_id)
+	_add_items(world_items, preview.get("world_items", {}))
+	for remove_id: int in preview.get("remove_ids", []):
+		entities.erase(remove_id)
+	_rebuild_indexes()
+	power.rebuild(entities)
+	return preview.get("refund", {})
+
+func _build_refund_preview(entity_id: int) -> Dictionary:
+	if not entities.has(entity_id):
+		return {"refund": {}, "world_items": {}, "remove_ids": []}
 	var remove_ids: Array[int] = [entity_id]
 	for belt: FactoryEntity in entities.values():
 		if _is_belt_segment(belt.kind) and (int(belt.extra["from"]["id"]) == entity_id or int(belt.extra["to"]["id"]) == entity_id):
 			remove_ids.append(belt.id)
 	var refund: Dictionary = {}
+	var world_items: Dictionary = {}
 	for remove_id: int in remove_ids:
 		var entity: FactoryEntity = entities.get(remove_id)
 		if entity == null:
@@ -350,10 +423,7 @@ func remove_entity_with_refund(entity_id: int, world_items: Dictionary = {}) -> 
 				for item_id: String in queue:
 					_add_items(refund, {item_id: 1})
 					_add_items(world_items, {item_id: 1})
-		entities.erase(remove_id)
-	_rebuild_indexes()
-	power.rebuild(entities)
-	return refund
+	return {"refund": refund, "world_items": world_items, "remove_ids": remove_ids}
 
 func remove_entity(entity_id: int) -> FactoryEntity:
 	if not entities.has(entity_id):

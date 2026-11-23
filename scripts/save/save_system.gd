@@ -15,7 +15,8 @@ func save_game(sim: FactorySim, player: FactoryPlayer, unlocked_tiers: int,
 		"sim": sim.to_dict(),
 		"player": {"position": [player.position.x, player.position.y, player.position.z],
 			"rotation_y": player.rotation.y, "pitch": player.pitch,
-			"inventory": player.inventory.duplicate(true)},
+			"inventory": player.inventory.totals(),
+			"inventory_slots": player.inventory.to_data()},
 		"unlocked_tiers": unlocked_tiers,
 		"world": world_state.duplicate(true),
 		"hotbar": hotbar_data.duplicate(true),
@@ -64,10 +65,15 @@ func load_game(sim: FactorySim, player: FactoryPlayer) -> Dictionary:
 	player.rotation.y = float(player_data.get("rotation_y", 0.0))
 	player.pitch = float(player_data.get("pitch", 0.0))
 	player.camera.rotation.x = player.pitch
-	player.inventory.clear()
-	var inventory: Dictionary = player_data.get("inventory", {})
-	for item_id: Variant in inventory:
-		player.inventory[str(item_id)] = int(inventory[item_id])
+	var inventory_slots: Variant = player_data.get("inventory_slots", null)
+	if inventory_slots is Array:
+		var restored_inventory := FrontierInventory.new()
+		restored_inventory.from_data(inventory_slots)
+		player.inventory = restored_inventory
+	else:
+		var legacy_inventory: Variant = player_data.get("inventory", {})
+		player.inventory = FrontierInventory.from_totals(
+			legacy_inventory if legacy_inventory is Dictionary else {})
 	var world_state: Variant = data.get("world", {})
 	if not world_state is Dictionary:
 		world_state = {}
