@@ -4,7 +4,7 @@ A first-person, headless-testable factory builder set in a procedural valley. Mi
 
 ## Run
 
-Open the project in Godot 4.3 and press **F6/F5** to run the main scene/project. To start with a sample production line for a demo, run with `-- --demo-factory`.
+Open the project in Godot 4.7.2 and press **F6/F5** to run the main scene/project. Windows Desktop is the primary target; use the **Windows Desktop** x86_64 export preset to create `build/windows/Frontier.exe`. To start with a sample production line for a demo, run with `-- --demo-factory`.
 
 ## Controls
 
@@ -18,5 +18,5 @@ Open the project in Godot 4.3 and press **F6/F5** to run the main scene/project.
 ## Headless tests
 
 ```sh
-~/bin/godot --headless --path . -s tests/run_tests.gd
+~/bin/godot-4.7.2 --headless --path . -s tests/run_tests.gd
 ```

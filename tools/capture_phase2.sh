@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-GODOT="${GODOT:-/home/ubuntu/bin/godot}"
+GODOT="${GODOT:-$HOME/bin/godot-4.7.2}"
 OUTPUT="${FACTORY_CAPTURE_DIR:-/home/ubuntu/specs/shots/v6}"
 mkdir -p "$OUTPUT"
 

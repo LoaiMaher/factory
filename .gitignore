@@ -3,4 +3,7 @@
 /android/
 *.translation
 export_presets.cfg.bak
-/build/
+/build/*
+!/build/windows/
+/build/windows/*
+!/build/windows/.gitkeep
