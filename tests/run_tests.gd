@@ -31,6 +31,7 @@ func _run_all() -> void:
 	_test_hotbar_model()
 	_test_creative_mode()
 	_test_full_hotbar_build_menu_selection()
+	_test_creative_cursor_focus()
 	_test_hotbar_input_filtering()
 	print("RESULT: %d/%d test groups passed" % [passed_groups, groups])
 	quit(1 if failures > 0 else 0)
@@ -1407,6 +1408,49 @@ func _test_full_hotbar_build_menu_selection() -> void:
 	app.free()
 	hud.queue_free()
 	player.free()
+	_finish_group()
+
+func _test_creative_cursor_focus() -> void:
+	var main_script: Script = load("res://scripts/main.gd") as Script
+	var app: Node = main_script.new() as Node
+	var sim: FactorySim = app.get("sim") as FactorySim
+	var machine_id: int = sim.add_entity("smelter", Vector3.ZERO, 0.0, {"recipe": "iron_ingot"})
+	var player: FactoryPlayer = FactoryPlayer.new()
+	get_root().add_child(player)
+	var model: HotbarModel = app.get("hotbar_model") as HotbarModel
+	model.assign(0, "building", "smelter")
+	model.selected_index = 0
+	var hud: FactoryHUD = FactoryHUD.new()
+	hud.setup(sim, player, model)
+	get_root().add_child(hud)
+	app.set("player", player)
+	app.set("hud", hud)
+
+	hud.show_build_menu(["smelter"])
+	player.set_panel_open(true)
+	app.call("_toggle_creative_mode")
+	_check("Creative toggle keeps cursor visible with the build menu open",
+		player.panel_open and Input.mouse_mode == Input.MOUSE_MODE_VISIBLE and hud.build_menu.visible,
+		str([player.panel_open, Input.mouse_mode, hud.build_menu.visible, hud.panel_is_open()]))
+
+	hud.close_build_menu()
+	hud.open_hub()
+	app.call("_toggle_creative_mode")
+	_check("Creative toggle keeps cursor visible with the HUB panel open",
+		player.panel_open and Input.mouse_mode == Input.MOUSE_MODE_VISIBLE and hud.panel_is_open(),
+		str([player.panel_open, Input.mouse_mode, hud.panel_is_open()]))
+
+	hud.close_panel()
+	hud.open_entity(machine_id)
+	app.call("_toggle_creative_mode")
+	_check("Creative toggle keeps cursor visible with a machine panel open",
+		player.panel_open and Input.mouse_mode == Input.MOUSE_MODE_VISIBLE and hud.panel_is_open(),
+		str([player.panel_open, Input.mouse_mode, hud.panel_is_open()]))
+
+	hud.close_panel()
+	app.free()
+	hud.queue_free()
+	player.queue_free()
 	_finish_group()
 
 func _test_hotbar_input_filtering() -> void:

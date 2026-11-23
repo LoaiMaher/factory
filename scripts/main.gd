@@ -366,7 +366,7 @@ func _apply_hotbar_selection(show_toast: bool = true) -> void:
 		viewmodel.set_action(action)
 	_reset_placement_state()
 	if action.get("type", "") == "building":
-		if player.panel_open and not hud.panel_is_open():
+		if player.panel_open and not hud.panel_is_open() and not hud.build_menu.visible:
 			player.set_panel_open(false)
 		if show_toast:
 			hud.show_toast("Selected %s · R rotates · click places" % str(action["id"]).replace("_", " "), 3.0)
