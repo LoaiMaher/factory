@@ -56,6 +56,7 @@ func _run_all() -> void:
 	_test_machine_panel_refresh_and_close()
 	_test_machine_panel_creative_transfers()
 	_test_machine_output_stack_transfers()
+	_test_machine_origin_cursor_return()
 	print("RESULT: %d/%d test groups passed" % [passed_groups, groups])
 	quit(1 if failures > 0 else 0)
 
@@ -838,8 +839,9 @@ func _test_machine_panel_creative_transfers() -> void:
 	player.inventory = FrontierInventory.from_totals({"iron_ore": 67})
 	machine_panel._on_inventory_slot_input(0, MOUSE_BUTTON_LEFT, true)
 	_check("Creative blocks machine input deposits but tracks collected output as a gain",
-		creative_input_blocked and output_count == 4
-		and survival_inventory.count("iron_ingot") == 4
+		creative_input_blocked and output_count == 2
+		and survival_inventory.count("iron_ingot") == 2
+		and int(sim.entities[entity_id].output_buffer.get("iron_ingot", 0)) == 2
 		and sim.entities[entity_id].input_buffer.get("iron_ore", 0) == 10
 		and player.inventory.count("iron_ore") == 57
 		and int(player.inventory.slots[0].get("count", 0)) == 54
@@ -924,6 +926,36 @@ func _test_machine_output_stack_transfers() -> void:
 		str([rendered_stack, left_count, left_output, right_count, right_output,
 			shift_count, shift_output, inventory_count, cursor_cap, cap_remaining,
 			mini_grid_count, take_fit, remaining_output]))
+	hud.free()
+	player.free()
+	_finish_group()
+
+func _test_machine_origin_cursor_return() -> void:
+	var sim := FactorySim.new()
+	var entity_id: int = sim.add_entity("smelter", Vector3.ZERO, 0.0, {
+		"recipe": "iron_ingot"
+	})
+	sim.entities[entity_id].output_buffer["iron_ingot"] = 5
+	var player := FactoryPlayer.new()
+	player.inventory = FrontierInventory.new()
+	player.inventory.add("copper_ore", 64 * player.inventory.capacity)
+	get_root().add_child(player)
+	var hud := FactoryHUD.new()
+	hud.setup(sim, player)
+	get_root().add_child(hud)
+	hud.open_entity(entity_id)
+	var click_event := InputEventMouseButton.new()
+	click_event.button_index = MOUSE_BUTTON_LEFT
+	click_event.pressed = true
+	hud.machine_panel._on_output_slot_input(click_event, 0)
+	var held_count: int = int(hud.cursor_stack.get("count", 0))
+	hud.close_panel()
+	var output_count: int = int(sim.entities[entity_id].output_buffer.get("iron_ingot", 0))
+	_check("machine-origin cursor returns to output without creating overflow",
+		held_count == 5 and hud.cursor_stack.is_empty() and output_count == 5
+		and player.inventory.slots.size() == player.inventory.capacity,
+		str([held_count, output_count, player.inventory.slots.size(),
+			hud.cursor_stack]))
 	hud.free()
 	player.free()
 	_finish_group()

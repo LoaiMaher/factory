@@ -356,6 +356,19 @@ func take_output_item(entity_id: int, item_id: String, quantity: int) -> int:
 func take_output_items(entity_id: int, item_id: String, quantity: int) -> int:
 	return take_output_item(entity_id, item_id, quantity)
 
+func insert_output_items(entity_id: int, item_id: String, quantity: int) -> int:
+	if quantity <= 0 or item_id.is_empty() or not entities.has(entity_id):
+		return 0
+	var capacity: int = output_capacity(entity_id, item_id)
+	if capacity <= 0:
+		return 0
+	var entity: FactoryEntity = entities[entity_id]
+	var current: int = int(entity.output_buffer.get(item_id, 0))
+	var moved: int = mini(quantity, maxi(0, capacity - current))
+	if moved > 0:
+		entity.output_buffer[item_id] = current + moved
+	return moved
+
 func take_output(entity_id: int) -> Dictionary:
 	if not entities.has(entity_id):
 		return {}

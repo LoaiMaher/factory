@@ -718,10 +718,24 @@ func _return_cursor_stack() -> void:
 	elif cursor_origin_type == "machine":
 		var item_id: String = str(pending.get("item_id", ""))
 		var quantity: int = int(pending.get("count", 0))
-		var remainder: int = player.inventory.add(item_id, quantity)
-		if remainder > 0:
-			player.inventory.add_restored(item_id, remainder)
-		world_item_collected.emit(item_id, quantity)
+		if sim != null and sim.entities.has(cursor_origin_entity):
+			quantity -= sim.insert_output_items(cursor_origin_entity, item_id, quantity)
+		var player_quantity: int = 0
+		if quantity > 0:
+			var leftover: int = player.inventory.add(item_id, quantity)
+			player_quantity = quantity - leftover
+			quantity = leftover
+		if quantity > 0 and sim != null and sim.entities.has(cursor_origin_entity):
+			quantity -= sim.insert_output_items(cursor_origin_entity, item_id, quantity)
+		if player_quantity > 0:
+			world_item_collected.emit(item_id, player_quantity)
+		if quantity > 0:
+			cursor_stack = {"item_id": item_id, "count": quantity}
+			_update_cursor_stack_visual()
+			if machine_panel != null and is_instance_valid(machine_panel):
+				machine_panel.refresh()
+			refresh_hotbar()
+			return
 	elif cursor_origin_type == "player" and cursor_origin_slot >= 0:
 		pending = player.inventory.place_into(cursor_origin_slot, pending)
 		if not pending.is_empty():
@@ -734,9 +748,11 @@ func _return_cursor_stack() -> void:
 		player.inventory.add_restored(item_id, remainder)
 	cursor_stack.clear()
 	_clear_cursor_origin()
+	_update_cursor_stack_visual()
 	if storage_open:
 		_refresh_storage_grid()
 	if machine_panel != null and is_instance_valid(machine_panel):
+		machine_panel.refresh()
 		machine_panel.refresh_inventory()
 	refresh_hotbar()
 
