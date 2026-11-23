@@ -555,14 +555,13 @@ func _set_inventory_panel_size(wide: bool) -> void:
 		return
 	var scroll: ScrollContainer = panel.get_child(0) as ScrollContainer
 	panel.set_anchors_preset(Control.PRESET_TOP_LEFT)
-	if wide:
-		panel.size = Vector2(1130.0, 700.0)
-		if scroll != null:
-			scroll.custom_minimum_size = Vector2(1110.0, 680.0)
-	else:
-		panel.size = Vector2(620.0, 510.0)
-		if scroll != null:
-			scroll.custom_minimum_size = Vector2(600.0, 490.0)
+	var panel_width: float = 1130.0 if wide else 620.0
+	var desired_height: float = 700.0 if wide else 510.0
+	var panel_height: float = minf(desired_height, _max_panel_height())
+	panel.size = Vector2(panel_width, panel_height)
+	if scroll != null:
+		scroll.custom_minimum_size = Vector2(panel_width - 20.0,
+			maxf(1.0, panel_height - 20.0))
 	_center_panel()
 
 func _fit_machine_panel_to_content() -> void:
@@ -570,14 +569,27 @@ func _fit_machine_panel_to_content() -> void:
 			or not is_instance_valid(machine_panel) or panel_body == null:
 		return
 	var content_height: float = machine_panel.get_combined_minimum_size().y
+	var panel_height: float = minf(content_height + 40.0, _max_panel_height())
 	var panel_scroll: ScrollContainer = panel.get_child(0) as ScrollContainer
 	if panel_scroll != null:
-		panel_scroll.custom_minimum_size.y = content_height + 20.0
-	panel.size.y = content_height + 40.0
+		panel_scroll.custom_minimum_size.y = maxf(1.0, panel_height - 20.0)
+	panel.size.y = panel_height
 	_center_panel()
+
+func _max_panel_height() -> float:
+	var viewport_height: float = root.size.y if root != null else 0.0
+	if viewport_height <= 0.0 and root != null:
+		viewport_height = root.get_viewport_rect().size.y
+	return maxf(1.0, viewport_height - 48.0)
 
 func _center_panel() -> void:
 	if panel != null and root != null:
+		var maximum_height: float = _max_panel_height()
+		if panel.size.y > maximum_height:
+			panel.size.y = maximum_height
+			var panel_scroll: ScrollContainer = panel.get_child(0) as ScrollContainer
+			if panel_scroll != null:
+				panel_scroll.custom_minimum_size.y = maxf(1.0, maximum_height - 20.0)
 		panel.position = (root.size - panel.size) * 0.5
 
 func _open_storage_panel(entity: FactoryEntity) -> void:

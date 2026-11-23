@@ -54,6 +54,7 @@ func _run_all() -> void:
 	_test_storage_stack_withdrawals()
 	_test_machine_view_and_transfers()
 	_test_machine_panel_refresh_and_close()
+	await _test_machine_panel_overflow_scroll()
 	_test_machine_panel_creative_transfers()
 	_test_machine_output_stack_transfers()
 	_test_machine_origin_cursor_return()
@@ -808,6 +809,47 @@ func _test_machine_panel_refresh_and_close() -> void:
 		str([miner_panel.miner_mode, miner_panel.take_button.visible,
 			miner_panel.inventory_grid == null,
 			miner_panel.deposit_label.text]))
+	hud.free()
+	player.free()
+	_finish_group()
+
+func _test_machine_panel_overflow_scroll() -> void:
+	var sim := FactorySim.new()
+	var entity_id: int = sim.add_entity("smelter", Vector3.ZERO)
+	var player := FactoryPlayer.new()
+	for _index: int in range(40):
+		player.inventory.slots.append({"item_id": "iron_ore", "count": 1})
+	get_root().add_child(player)
+	var hud := FactoryHUD.new()
+	hud.setup(sim, player)
+	get_root().add_child(hud)
+	await process_frame
+	hud.root.set_anchors_and_offsets_preset(Control.PRESET_TOP_LEFT)
+	hud.root.size = Vector2(1600.0, 720.0)
+	hud.open_entity(entity_id)
+	await process_frame
+	await process_frame
+	await process_frame
+	var panel_scroll: ScrollContainer = hud.panel.get_child(0) as ScrollContainer
+	var scroll_bar: VScrollBar = panel_scroll.get_v_scroll_bar()
+	var max_scroll: float = scroll_bar.max_value - scroll_bar.page
+	var viewport_rect: Rect2 = hud.root.get_viewport_rect()
+	var panel_rect: Rect2 = hud.panel.get_global_rect()
+	var inventory_grid: FactoryInventoryPanel = hud.machine_panel.inventory_grid
+	var panel_inside_viewport: bool = panel_rect.position.x >= viewport_rect.position.x \
+		and panel_rect.position.y >= viewport_rect.position.y \
+		and panel_rect.end.x <= viewport_rect.end.x \
+		and panel_rect.end.y <= viewport_rect.end.y
+	_check("machine panel clamps overflow content and keeps it scrollable",
+		panel_inside_viewport and max_scroll > 0.0,
+		str({"panel": panel_rect, "viewport": viewport_rect, "max_scroll": max_scroll,
+			"scroll_max": scroll_bar.max_value, "scroll_page": scroll_bar.page,
+			"scroll_size": panel_scroll.size,
+			"body_min": hud.panel_body.get_combined_minimum_size(),
+			"machine_min": hud.machine_panel.get_combined_minimum_size(),
+			"grid_min": inventory_grid.get_combined_minimum_size(),
+			"grid_children": inventory_grid.get_child_count(),
+			"inventory_slots": player.inventory.slots.size()}))
 	hud.free()
 	player.free()
 	_finish_group()
