@@ -194,7 +194,7 @@ func _process(delta: float) -> void:
 			player.inventory[item_id] = int(player.inventory.get(item_id, 0)) + 1
 			var impact_position: Vector3 = mining_hit_position
 			audio_manager.call("play_one_shot", "pick_hit", impact_position)
-			visuals.spawn_mining_dust(impact_position)
+			visuals.spawn_mining_dust(impact_position, player.camera.global_position)
 			hud.refresh_hotbar()
 			hand_mine_elapsed -= 0.6
 			hand_mining_swing_started = false

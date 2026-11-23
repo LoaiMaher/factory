@@ -88,7 +88,7 @@ func _process(delta: float) -> void:
 		hand_left.rotation = Vector3(0.15, -0.45, -0.08 + mouse_lag.x * 0.2)
 	if hand_right != null:
 		var mining_rotation: float = _mining_swing_rotation(delta)
-		var swing_offset: Vector3 = Vector3(0.0, mining_rotation * 0.3, -mining_rotation * 0.1)
+		var swing_offset: Vector3 = Vector3(0.0, -mining_rotation * 0.16, -mining_rotation * 0.24)
 		hand_right.scale = Vector3.ONE * 0.55
 		hand_right.position = right_hand_base + Vector3(idle_x + mouse_lag.x,
 			bob - idle_y + mouse_lag.y + switch_offset, 0.0) + swing_offset
@@ -99,7 +99,7 @@ func _process(delta: float) -> void:
 			build_tool.rotation.x = mining_rotation * 0.75
 		if mining_pick != null:
 			mining_pick.visible = mining_active
-			mining_pick.rotation.x = -0.18 + mining_rotation * 0.9
+			mining_pick.rotation.x = -0.18 - mining_rotation * 0.55
 	if build_tool != null:
 		var dismantling: bool = build_system != null and build_system.dismantle_mode
 		build_tool.visible = current_action.get("type", "empty") == "building" or dismantling
@@ -201,9 +201,10 @@ func _create_overlay() -> void:
 		mining_pick = pick_scene.instantiate() as Node3D
 		mining_pick.name = "MiningPick"
 		hand_right.add_child(mining_pick)
-		mining_pick.position = Vector3(-0.08, 0.02, -0.22)
-		mining_pick.scale = Vector3.ONE * 0.82
-		mining_pick.rotation.z = 0.35
+		mining_pick.position = Vector3(-0.22, 0.32, -0.30)
+		mining_pick.scale = Vector3.ONE * 0.95
+		mining_pick.rotation = Vector3.ZERO
+		mining_pick.rotation.z = 0.24
 		machine_models.apply_pbr_materials(mining_pick)
 		_set_viewmodel_layers(mining_pick)
 		mining_pick.visible = false

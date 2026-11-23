@@ -1181,18 +1181,46 @@ def build_hands():
 
 def build_hand_pick():
     root = empty("HandPick")
-    cone(root, "Pick_Wooden_Haft", (0.0, 0.0, 0.0), 0.048, 0.038, 0.78,
+    cone(root, "Pick_Wooden_Haft", (0.0, 0.0, 0.0), 0.035, 0.029, 0.65,
          "Pick_Wood", 16)
-    cylinder(root, "Pick_Grip", (0.0, -0.01, 0.08), 0.06, 0.24,
-             "Rubber", 16, 0.012)
-    cylinder_between(root, "Pick_Steel_Head",
-                     (-0.13, 0.0, 0.28), (0.18, 0.0, 0.28),
-                     0.045, "Steel", 16)
-    cube(root, "Pick_Chisel_End", (-0.18, 0.0, 0.28), (0.14, 0.11, 0.085),
-         "Steel", 0.035)
-    cone(root, "Pick_Point", (0.27, 0.0, 0.28), 0.05, 0.0, 0.32,
+    cylinder(root, "Pick_Grip_Wrap", (0.0, 0.0, -0.215), 0.044, 0.20,
+             "Rubber", 16, 0.008)
+    for index in range(4):
+        z = -0.29 + index * 0.05
+        torus(root, "Pick_Grip_Ridge_%02d" % index, (0.0, 0.0, z), 0.041, 0.003,
+              "Paint_Dark")
+    cylinder(root, "Pick_Head_Collar", (0.0, 0.0, 0.265), 0.052, 0.07,
+             "Steel", 16, 0.012)
+    torus(root, "Pick_Collar_Lip", (0.0, 0.0, 0.30), 0.052, 0.008, "Steel")
+    head_curve = bpy.data.curves.new("Pick_Curved_Head", "CURVE")
+    head_curve.dimensions = "3D"
+    head_curve.resolution_u = 12
+    head_curve.bevel_depth = 0.034
+    head_curve.bevel_resolution = 4
+    head_curve.use_fill_caps = True
+    spline = head_curve.splines.new("BEZIER")
+    head_points = [
+        (-0.12, 0.0, 0.31), (-0.06, 0.008, 0.333),
+        (0.0, 0.014, 0.345), (0.06, 0.008, 0.333), (0.12, 0.0, 0.31)
+    ]
+    spline.bezier_points.add(len(head_points) - 1)
+    for point, coordinates in zip(spline.bezier_points, head_points):
+        point.co = coordinates
+        point.handle_left_type = "AUTO"
+        point.handle_right_type = "AUTO"
+    curved_head = bpy.data.objects.new("Pick_Curved_Head", head_curve)
+    bpy.context.collection.objects.link(curved_head)
+    attach(curved_head, root, (0.0, 0.0, 0.0))
+    head_curve.materials.append(material("Steel"))
+    bpy.ops.object.select_all(action="DESELECT")
+    curved_head.select_set(True)
+    bpy.context.view_layer.objects.active = curved_head
+    bpy.ops.object.convert(target="MESH")
+    cube(root, "Pick_Flat_Chisel", (-0.145, 0.0, 0.31), (0.06, 0.095, 0.05),
+         "Steel", 0.016)
+    cone(root, "Pick_Point", (0.145, 0.0, 0.31), 0.034, 0.0, 0.07,
          "Steel", 16, (0.0, math.pi / 2.0, 0.0))
-    return root, (0.52, 0.52, 0.52)
+    return root, (0.38, 0.15, 0.72)
 
 def build_tool():
     root = empty("BuildTool")

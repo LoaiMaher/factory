@@ -115,21 +115,34 @@ func _set_aim_outline(root: Node3D, enabled: bool) -> void:
 		var mesh: MeshInstance3D = raw_mesh as MeshInstance3D
 		mesh.material_overlay = outline_material if enabled else null
 
-func spawn_mining_dust(world_position: Vector3) -> void:
+func spawn_mining_dust(world_position: Vector3, camera_position: Vector3 = Vector3.ZERO) -> void:
+	var view_position: Vector3 = camera_position
+	if view_position == Vector3.ZERO:
+		view_position = viewer_position + Vector3.UP * 1.62
+	if world_position.distance_to(view_position) < 1.2:
+		return
 	var particles: CPUParticles3D = CPUParticles3D.new()
 	particles.name = "MiningImpactDust"
 	particles.position = to_local(world_position)
 	particles.one_shot = true
 	particles.amount = 12
-	particles.lifetime = 0.55
+	particles.lifetime = 0.24
+	particles.emission_shape = CPUParticles3D.EMISSION_SHAPE_SPHERE
+	particles.emission_sphere_radius = 0.08
 	particles.direction = Vector3.UP
-	particles.spread = 38.0
-	particles.initial_velocity_min = 0.55
-	particles.initial_velocity_max = 1.4
-	particles.gravity = Vector3(0.0, -2.2, 0.0)
-	particles.mesh = SphereMesh.new()
+	particles.spread = 48.0
+	particles.initial_velocity_min = 0.2
+	particles.initial_velocity_max = 0.55
+	particles.gravity = Vector3(0.0, -1.0, 0.0)
+	particles.scale_amount_min = 0.8
+	particles.scale_amount_max = 1.2
+	var puff: SphereMesh = SphereMesh.new()
+	puff.radius = 0.07
+	puff.height = 0.14
+	particles.mesh = puff
 	var material: StandardMaterial3D = StandardMaterial3D.new()
-	material.albedo_color = Color(0.55, 0.48, 0.37, 0.65)
+	material.albedo_color = Color(0.55, 0.48, 0.37, 0.2)
+	material.roughness = 1.0
 	material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
 	particles.material_override = material
 	add_child(particles)
