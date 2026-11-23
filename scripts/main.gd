@@ -1041,6 +1041,7 @@ func _load_saved_game(show_toast: bool) -> bool:
 		if show_toast:
 			hud.show_toast("No compatible save found.")
 		return false
+	_discard_cursor_stack_after_load()
 	var restore_position: Vector3 = player.position
 	restore_position.x = clampf(restore_position.x, -FactoryTerrain.WORLD_HALF_EXTENT + 1.0,
 		FactoryTerrain.WORLD_HALF_EXTENT - 1.0)
@@ -1082,6 +1083,10 @@ func _load_saved_game(show_toast: bool) -> bool:
 			load_message += " %d machines couldn't be restored and were refunded." % sim.restore_failure_count
 		hud.show_toast(load_message)
 	return true
+
+func _discard_cursor_stack_after_load() -> void:
+	if hud != null:
+		hud.discard_cursor_stack()
 
 func _buy_tier(index: int) -> void:
 	if creative_mode.active:

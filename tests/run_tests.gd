@@ -46,6 +46,7 @@ func _run_all() -> void:
 	_test_inventory_gameplay()
 	_test_inventory_save_migration()
 	_test_cursor_stack_save()
+	_test_cursor_stack_load()
 	print("RESULT: %d/%d test groups passed" % [passed_groups, groups])
 	quit(1 if failures > 0 else 0)
 
@@ -385,6 +386,36 @@ func _test_cursor_stack_save() -> void:
 	terrain.free()
 	foliage.free()
 	app.free()
+	_finish_group()
+
+func _test_cursor_stack_load() -> void:
+	var sim := FactorySim.new()
+	var player := FactoryPlayer.new()
+	get_root().add_child(player)
+	player.inventory = FrontierInventory.from_totals({"iron_ore": 10})
+	var save_system := FactorySaveSystem.new()
+	save_system.save_path = "user://cursor_stack_load_test.json"
+	save_system.save_game(sim, player, 0)
+	player.inventory = FrontierInventory.new()
+	var hud := FactoryHUD.new()
+	hud.setup(sim, player)
+	get_root().add_child(hud)
+	hud.cursor_stack = {"item_id": "copper_ore", "count": 5}
+	hud._set_cursor_origin("player", 0, -1, "copper_ore")
+	var load_data: Dictionary = save_system.load_game(sim, player)
+	var main_script: Script = load("res://scripts/main.gd") as Script
+	var app: Node = main_script.new() as Node
+	app.set("hud", hud)
+	app.call("_discard_cursor_stack_after_load")
+	_check("loading while holding a cursor stack discards it without duplication",
+		not load_data.is_empty() and hud.cursor_stack.is_empty()
+		and player.inventory.count("iron_ore") == 10
+		and player.inventory.count("copper_ore") == 0,
+		str([player.inventory.totals(), hud.cursor_stack]))
+	DirAccess.remove_absolute(ProjectSettings.globalize_path(save_system.save_path))
+	app.free()
+	hud.free()
+	player.free()
 	_finish_group()
 
 func _test_placement_and_ports() -> void:

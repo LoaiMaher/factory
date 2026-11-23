@@ -604,6 +604,11 @@ func _return_cursor_stack() -> void:
 	_clear_cursor_origin()
 	refresh_hotbar()
 
+func discard_cursor_stack() -> void:
+	cursor_stack.clear()
+	_clear_cursor_origin()
+	_update_cursor_stack_visual()
+
 func open_hub() -> void:
 	selected_entity_id = -1
 	_set_panel("HUB · Tier unlocks")
