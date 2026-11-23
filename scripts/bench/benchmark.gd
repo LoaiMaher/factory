@@ -5,6 +5,7 @@ const DEFAULT_SECONDS: float = 60.0
 const DEFAULT_WARMUP: float = 5.0
 const HITCH_33_MS: float = 33.3
 const HITCH_50_MS: float = 50.0
+const MIN_FLY_CLEARANCE: float = 25.0
 const ROUTES: Array[String] = ["flythrough", "walk", "factory"]
 
 var main_node: Node
@@ -199,7 +200,8 @@ func _prepare_route() -> void:
 			var point: Vector2 = fly_xz[index]
 			route_altitudes.append(fly_altitudes[index])
 			route_points.append(Vector3(point.x,
-				terrain.height_at(point.x, point.y) + fly_altitudes[index], point.y))
+				terrain.height_at(point.x, point.y) + maxf(fly_altitudes[index], MIN_FLY_CLEARANCE),
+				point.y))
 	for index: int in range(route_points.size() - 1):
 		var length: float = route_points[index].distance_to(route_points[index + 1])
 		segment_lengths.append(length)
@@ -246,9 +248,12 @@ func _sample_route(distance: float) -> Vector3:
 		if remaining <= segment_length:
 			var weight: float = remaining / maxf(segment_length, 0.001)
 			var point: Vector3 = route_points[index].lerp(route_points[index + 1], weight)
-			if route == "flythrough":
+			var ground_height: float = terrain.height_at(point.x, point.z)
+			if route == "walk":
+				point.y = ground_height
+			elif route == "flythrough":
 				var altitude: float = lerpf(route_altitudes[index], route_altitudes[index + 1], weight)
-				point.y = terrain.height_at(point.x, point.z) + altitude
+				point.y = ground_height + maxf(altitude, MIN_FLY_CLEARANCE)
 			return point
 		remaining -= segment_length
 	return route_points[route_points.size() - 1]
