@@ -257,6 +257,13 @@ func take_storage(entity_id: int) -> Dictionary:
 	entities[entity_id].input_buffer.clear()
 	return result
 
+func take_output(entity_id: int) -> Dictionary:
+	if not entities.has(entity_id):
+		return {}
+	var result: Dictionary = entities[entity_id].output_buffer.duplicate(true)
+	entities[entity_id].output_buffer.clear()
+	return result
+
 func tick(dt: float) -> void:
 	if dt <= 0.0:
 		return
@@ -308,7 +315,7 @@ func _power_diagnostic(entity: FactoryEntity) -> String:
 	return "Power: %.0f / %.0f MW network · %d%% satisfaction" % [
 		supply, demand, roundi(satisfaction * 100.0)]
 
-func remove_entity_with_refund(entity_id: int) -> Dictionary:
+func remove_entity_with_refund(entity_id: int, world_items: Dictionary = {}) -> Dictionary:
 	if not entities.has(entity_id):
 		return {}
 	var remove_ids: Array[int] = [entity_id]
@@ -326,14 +333,19 @@ func remove_entity_with_refund(entity_id: int) -> Dictionary:
 			if entity.kind == "belt_mk2":
 				_add_items(refund, {"screw": count * 2})
 			for item: Dictionary in entity.belt_items:
-				_add_items(refund, {str(item["item"]): 1})
+				var item_id: String = str(item["item"])
+				_add_items(refund, {item_id: 1})
+				_add_items(world_items, {item_id: 1})
 		else:
 			_add_items(refund, entity.cost)
 			_add_items(refund, entity.input_buffer)
 			_add_items(refund, entity.output_buffer)
+			_add_items(world_items, entity.input_buffer)
+			_add_items(world_items, entity.output_buffer)
 			for queue: Array in entity.extra.get("merge_queues", {}).values():
 				for item_id: String in queue:
 					_add_items(refund, {item_id: 1})
+					_add_items(world_items, {item_id: 1})
 		entities.erase(remove_id)
 	_rebuild_indexes()
 	power.rebuild(entities)

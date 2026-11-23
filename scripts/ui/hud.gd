@@ -12,6 +12,7 @@ signal hotbar_selected(index: int)
 signal hotbar_changed(index: int)
 signal creative_toggle_requested
 signal creative_item_requested(item_id: String)
+signal world_item_collected(item_id: String, quantity: int)
 
 var sim: FactorySim
 var building_definitions: Dictionary = BuildingDefs.all()
@@ -549,13 +550,17 @@ func _on_recipe_selected(index: int, recipe_names: Array[String]) -> void:
 func _take_output() -> void:
 	var items: Dictionary = sim.take_output(selected_entity_id)
 	for item_id: String in items:
-		player.inventory[item_id] = int(player.inventory.get(item_id, 0)) + int(items[item_id])
+		var quantity: int = int(items[item_id])
+		player.inventory[item_id] = int(player.inventory.get(item_id, 0)) + quantity
+		world_item_collected.emit(item_id, quantity)
 	refresh_entity_panel()
 
 func _take_storage() -> void:
 	var items: Dictionary = sim.take_storage(selected_entity_id)
 	for item_id: String in items:
-		player.inventory[item_id] = int(player.inventory.get(item_id, 0)) + int(items[item_id])
+		var quantity: int = int(items[item_id])
+		player.inventory[item_id] = int(player.inventory.get(item_id, 0)) + quantity
+		world_item_collected.emit(item_id, quantity)
 	refresh_entity_panel()
 
 func _insert_inventory() -> void:

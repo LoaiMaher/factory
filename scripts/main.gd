@@ -95,6 +95,7 @@ func _ready() -> void:
 	hud.craft_requested.connect(_hand_craft)
 	hud.creative_toggle_requested.connect(_toggle_creative_mode)
 	hud.creative_item_requested.connect(_grant_creative_item)
+	hud.world_item_collected.connect(creative_mode.record_world_gain)
 	hud.quit_requested.connect(_quit_game)
 	hud.set_creative_mode(creative_mode.active)
 	audio_manager = load("res://scripts/world/audio_manager.gd").new() as Node
@@ -192,6 +193,7 @@ func _process(delta: float) -> void:
 				return
 			var item_id: String = str(result["item"])
 			player.inventory[item_id] = int(player.inventory.get(item_id, 0)) + 1
+			creative_mode.record_world_gain(item_id, 1)
 			var impact_position: Vector3 = mining_hit_position
 			audio_manager.call("play_one_shot", "pick_hit", impact_position)
 			visuals.spawn_mining_dust(impact_position, player.camera.global_position)
@@ -900,7 +902,10 @@ func _dismantle_aimed() -> void:
 	var entity_id: int = int(object.get_meta("entity_id"))
 	if not sim.entities.has(entity_id) or sim.entities[entity_id].kind == "spire":
 		return
-	var refund: Dictionary = sim.remove_entity_with_refund(entity_id)
+	var world_items: Dictionary = {}
+	var refund: Dictionary = sim.remove_entity_with_refund(entity_id, world_items)
+	for item_id: String in world_items:
+		creative_mode.record_world_gain(item_id, int(world_items[item_id]))
 	creative_mode.add_refund(refund, player.inventory)
 	audio_manager.call("play_one_shot", "dismantle", player.global_position)
 	hud.show_toast("Dismantled · %s." % (

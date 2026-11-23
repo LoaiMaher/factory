@@ -1219,9 +1219,86 @@ func _test_creative_mode() -> void:
 	creative.add_refund({"iron_plate": 5}, grant_inventory)
 	_check("creative item clicks grant 100 and dismantling refunds are suppressed",
 		granted and int(grant_inventory.get("iron_ore", 0)) == 100
-		and int(grant_inventory.get("iron_plate", 0)) == 0,
+		and int(grant_inventory.get("iron_plate", 0)) == 0
+		and creative.world_gains.is_empty(),
 		str(grant_inventory))
 	creative.exit()
+
+	var gain_player: FactoryPlayer = FactoryPlayer.new()
+	get_root().add_child(gain_player)
+	gain_player.inventory.clear()
+	gain_player.inventory.merge({"iron_plate": 7, "wire": 13}, true)
+	var gain_snapshot: Dictionary = gain_player.inventory.duplicate(true)
+	var gain_creative: CreativeMode = CreativeMode.new()
+	gain_creative.enter(gain_player.inventory, 1)
+	var gain_sim: FactorySim = FactorySim.new()
+	var gain_storage_id: int = gain_sim.add_entity("storage", Vector3.ZERO)
+	gain_sim.entities[gain_storage_id].input_buffer = {"iron_ore": 5}
+	var gain_hud: FactoryHUD = FactoryHUD.new()
+	gain_hud.setup(gain_sim, gain_player)
+	get_root().add_child(gain_hud)
+	gain_hud.selected_entity_id = gain_storage_id
+	gain_hud.world_item_collected.connect(gain_creative.record_world_gain)
+	gain_hud._take_storage()
+	var gain_terrain: FactoryTerrain = FactoryTerrain.new()
+	gain_terrain._configure_noise()
+	gain_terrain._build_boulders()
+	var hand_mined: Dictionary = gain_terrain.mine_boulder("near_iron_00")
+	var hand_mined_item: String = str(hand_mined.get("item", ""))
+	gain_player.inventory[hand_mined_item] = int(gain_player.inventory.get(hand_mined_item, 0)) + 1
+	gain_creative.record_world_gain(hand_mined_item, 1)
+	gain_terrain.free()
+	var gain_restored: Dictionary = gain_creative.exit()
+	var expected_gain_inventory: Dictionary = gain_snapshot.duplicate(true)
+	expected_gain_inventory[hand_mined_item] = int(expected_gain_inventory.get(hand_mined_item, 0)) + 6
+	_check("storage pickups and a hand-mined item survive Creative exit",
+		hand_mined_item == "iron_ore" and int(gain_player.inventory.get("iron_ore", 0)) == 6
+		and gain_restored.get("inventory", {}) == expected_gain_inventory
+		and gain_creative.world_gains.is_empty(),
+		str([gain_player.inventory, gain_restored, gain_creative.world_gains]))
+	gain_hud.queue_free()
+	gain_player.queue_free()
+
+	var output_player: FactoryPlayer = FactoryPlayer.new()
+	get_root().add_child(output_player)
+	output_player.inventory.clear()
+	output_player.inventory["wire"] = 4
+	var output_creative: CreativeMode = CreativeMode.new()
+	output_creative.enter(output_player.inventory, 0)
+	var output_sim: FactorySim = FactorySim.new()
+	var output_machine: int = output_sim.add_entity("smelter", Vector3.ZERO, 0.0,
+		{"recipe": "iron_ingot"})
+	output_sim.entities[output_machine].output_buffer["iron_ingot"] = 2
+	var output_hud: FactoryHUD = FactoryHUD.new()
+	output_hud.setup(output_sim, output_player)
+	get_root().add_child(output_hud)
+	output_hud.selected_entity_id = output_machine
+	output_hud.world_item_collected.connect(output_creative.record_world_gain)
+	output_hud._take_output()
+	var output_restored: Dictionary = output_creative.exit()
+	_check("machine output collection is retained when leaving Creative",
+		output_restored.get("inventory", {}) == {"wire": 4, "iron_ingot": 2},
+		str(output_restored))
+	output_hud.queue_free()
+	output_player.queue_free()
+
+	var salvage_mode: CreativeMode = CreativeMode.new()
+	var salvage_inventory: Dictionary = {"wire": 2}
+	salvage_mode.enter(salvage_inventory, 0)
+	var salvage_sim: FactorySim = FactorySim.new()
+	var salvage_storage: int = salvage_sim.add_entity("storage", Vector3.ZERO)
+	salvage_sim.entities[salvage_storage].input_buffer["iron_ore"] = 2
+	var salvaged_items: Dictionary = {}
+	var salvage_refund: Dictionary = salvage_sim.remove_entity_with_refund(
+		salvage_storage, salvaged_items)
+	for item_id: String in salvaged_items:
+		salvage_mode.record_world_gain(item_id, int(salvaged_items[item_id]))
+	salvage_mode.add_refund(salvage_refund, salvage_inventory)
+	var salvaged_state: Dictionary = salvage_mode.exit()
+	_check("dismantled machine contents are restored without Creative construction refunds",
+		salvaged_items == {"iron_ore": 2}
+		and salvaged_state.get("inventory", {}) == {"wire": 2, "iron_ore": 2},
+		str([salvaged_items, salvage_refund, salvaged_state]))
 
 	var save_system: FactorySaveSystem = FactorySaveSystem.new()
 	save_system.save_path = "user://creative_mode_round_trip_test.json"
@@ -1232,6 +1309,7 @@ func _test_creative_mode() -> void:
 	saved_player.inventory.merge({"iron_plate": 100, "copper_ore": 100}, true)
 	var survival_snapshot: Dictionary = {"iron_plate": 21, "iron_rod": 9}
 	creative.enter(survival_snapshot, 2)
+	creative.record_world_gain("copper_ore", 2)
 	var save_ok: bool = save_system.save_game(saved_sim, saved_player, 2, {}, {},
 		saved_sim.power.bypass, creative.to_dict())
 	var restored_sim: FactorySim = FactorySim.new()
@@ -1242,15 +1320,20 @@ func _test_creative_mode() -> void:
 	loaded_creative.load_dict(loaded.get("creative", {}))
 	var creative_was_active: bool = loaded_creative.active
 	var creative_snapshot: Dictionary = loaded_creative.survival_inventory.duplicate(true)
+	var gains_snapshot: Dictionary = loaded_creative.world_gains.duplicate(true)
 	var restored_state: Dictionary = loaded_creative.exit()
 	var snapshot_saved: bool = creative_snapshot == survival_snapshot
-	var inventory_restored: bool = restored_state.get("inventory", {}) == survival_snapshot
+	var expected_loaded_inventory: Dictionary = survival_snapshot.duplicate(true)
+	expected_loaded_inventory["copper_ore"] = 2
+	var inventory_restored: bool = restored_state.get("inventory", {}) == expected_loaded_inventory
 	var tiers_restored: bool = int(restored_state.get("unlocked_tiers", -1)) == 2
-	_check("save/load retains creative mode and its survival snapshot",
+	_check("save/load retains Creative snapshot and collected world gains",
 		save_ok and creative_was_active and snapshot_saved
-		and inventory_restored and tiers_restored,
+		and gains_snapshot == {"copper_ore": 2}
+		and inventory_restored and tiers_restored
+		and loaded_creative.world_gains.is_empty(),
 		str([save_ok, creative_was_active, snapshot_saved, inventory_restored,
-			tiers_restored, loaded, creative_snapshot, restored_state]))
+			tiers_restored, loaded, creative_snapshot, gains_snapshot, restored_state]))
 	DirAccess.remove_absolute(ProjectSettings.globalize_path(save_system.save_path))
 	saved_player.queue_free()
 	restored_player.queue_free()
