@@ -62,6 +62,8 @@ var storage_slot_stacks: Array[Dictionary] = []
 var inventory_category_filter: String = "all"
 var inventory_grid: FactoryInventoryPanel
 var storage_grid: FactoryInventoryPanel
+var machine_panel: FactoryMachinePanel
+var machine_refresh_elapsed: float = 0.0
 var cursor_stack: Dictionary = {}
 var cursor_stack_panel: PanelContainer
 var cursor_stack_icon: TextureRect
@@ -205,6 +207,12 @@ func _process(delta: float) -> void:
 			var lines: Array[String] = sim.diagnostics(selected_entity_id)
 			for index: int in range(mini(lines.size(), diagnostic_labels.size())):
 				diagnostic_labels[index].text = lines[index]
+	if active_panel and machine_panel != null:
+		machine_refresh_elapsed += delta
+		if machine_refresh_elapsed >= 0.2:
+			machine_refresh_elapsed = 0.0
+			if not machine_panel.refresh():
+				close_panel()
 	if help_panel.visible:
 		help_elapsed += delta
 		if help_elapsed >= 20.0:
@@ -228,7 +236,13 @@ func set_crosshair_hint(text_value: String) -> void:
 	crosshair_hint.text = text_value
 
 func open_entity(entity_id: int) -> void:
-	if sim == null or not sim.entities.has(entity_id):
+	if sim == null:
+		return
+	if not sim.machine_view(entity_id).is_empty():
+		selected_entity_id = entity_id
+		_open_machine_panel(entity_id)
+		return
+	if not sim.entities.has(entity_id):
 		return
 	selected_entity_id = entity_id
 	var entity: FactoryEntity = sim.entities[entity_id]
@@ -274,6 +288,26 @@ func open_entity(entity_id: int) -> void:
 	active_panel = true
 	player.set_panel_open(true)
 	panel.visible = true
+
+func _open_machine_panel(entity_id: int) -> void:
+	inventory_open = false
+	storage_open = false
+	graphics_settings_open = false
+	_set_inventory_panel_size(true)
+	_set_panel("")
+	machine_panel = FactoryMachinePanel.new()
+	machine_panel.items_collected.connect(world_item_collected.emit)
+	machine_panel.inventory_changed.connect(refresh_hotbar)
+	machine_panel.toast_requested.connect(show_toast)
+	if not machine_panel.configure(sim, player, icon_cache, entity_id):
+		machine_panel.free()
+		machine_panel = null
+		return
+	panel_body.add_child(machine_panel)
+	active_panel = true
+	player.set_panel_open(true)
+	panel.visible = true
+	machine_refresh_elapsed = 0.0
 
 func open_inventory() -> void:
 	inventory_open = true
@@ -898,6 +932,7 @@ func close_panel() -> void:
 	inventory_open = false
 	storage_open = false
 	graphics_settings_open = false
+	machine_panel = null
 	panel.visible = false
 	assignment_target.clear()
 	player.set_panel_open(false)
@@ -908,7 +943,10 @@ func panel_is_open() -> bool:
 
 func refresh_entity_panel() -> void:
 	if active_panel and selected_entity_id >= 0:
-		open_entity(selected_entity_id)
+		if machine_panel != null:
+			machine_panel.refresh()
+		else:
+			open_entity(selected_entity_id)
 
 func has_assignment_target() -> bool:
 	return not assignment_target.is_empty()
@@ -1066,11 +1104,13 @@ func _set_panel(title: String) -> void:
 	for child: Node in panel_body.get_children():
 		child.queue_free()
 	assignment_hint = null
+	machine_panel = null
 	assignment_target.clear()
 	entity_status_label = null
 	diagnostic_labels.clear()
-	var heading: Label = _label(title, 22)
-	panel_body.add_child(heading)
+	if not title.is_empty():
+		var heading: Label = _label(title, 22)
+		panel_body.add_child(heading)
 
 func _label(text_value: String, font_size: int) -> Label:
 	var label: Label = Label.new()
