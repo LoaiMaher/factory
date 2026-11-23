@@ -13,6 +13,7 @@ signal hotbar_changed(index: int)
 signal creative_toggle_requested
 signal creative_item_requested(item_id: String)
 signal world_item_collected(item_id: String, quantity: int)
+signal graphics_settings_apply_requested
 
 var sim: FactorySim
 var building_definitions: Dictionary = BuildingDefs.all()
@@ -50,6 +51,10 @@ var player: FactoryPlayer
 var unlocked_tiers: int = 0
 var audio_manager: Node
 var creative_mode_active: bool = false
+var graphics_settings_open: bool = false
+var graphics_settings_ref: FrontierGraphicsSettings
+var graphics_setting_controls: Dictionary = {}
+var loading_graphics_settings: bool = false
 
 func _ready() -> void:
 	root = Control.new()
@@ -329,6 +334,180 @@ func open_pause() -> void:
 	player.set_panel_open(true)
 	panel.visible = true
 
+func open_graphics_settings(settings: FrontierGraphicsSettings) -> void:
+	graphics_settings_ref = settings
+	graphics_settings_open = true
+	selected_entity_id = -1
+	_set_panel("Graphics settings")
+	graphics_setting_controls.clear()
+	loading_graphics_settings = true
+	_add_graphics_option("Preset", "preset",
+		["low", "medium", "high", "ultra", "custom"],
+		["Low", "Medium", "High", "Ultra", "Custom"], settings.preset)
+	_add_graphics_option("Window mode", "window_mode",
+		["windowed", "borderless", "exclusive"],
+		["Windowed", "Borderless fullscreen", "Exclusive fullscreen"], settings.window_mode)
+	_add_graphics_option("VSync", "vsync", ["on", "off"], ["On", "Off"], "on" if settings.vsync else "off")
+	_add_graphics_spin("Max FPS (0 = uncapped)", "max_fps", 0.0, 500.0, 10.0, float(settings.max_fps))
+	_add_graphics_spin("Render scale", "render_scale", 0.5, 1.0, 0.05, settings.render_scale)
+	_add_graphics_option("Scaling mode", "scaling_mode",
+		["bilinear", "fsr1", "fsr2"], ["Bilinear", "FSR 1", "FSR 2"], settings.scaling_mode)
+	_add_graphics_option("Antialiasing", "antialiasing",
+		["off", "fxaa", "taa", "smaa", "msaa2x", "msaa4x"],
+		["Off", "FXAA", "TAA", "SMAA", "MSAA 2×", "MSAA 4×"], settings.antialiasing)
+	_add_graphics_spin("Directional shadow atlas", "shadow_atlas_size", 1024.0, 8192.0, 1024.0,
+		float(settings.shadow_atlas_size))
+	_add_graphics_option("Soft shadow filter", "soft_shadow_quality",
+		["very_low", "low", "medium", "high", "ultra"],
+		["Very low", "Low", "Medium", "High", "Ultra"], settings.soft_shadow_quality)
+	_add_graphics_spin("Shadow distance (m)", "shadow_distance", 60.0, 1100.0, 10.0,
+		settings.shadow_distance)
+	_add_graphics_spin("Shadow split 1", "shadow_split_1", 0.0, 1.0, 0.01, settings.shadow_split_1)
+	_add_graphics_spin("Shadow split 2", "shadow_split_2", 0.0, 1.0, 0.01, settings.shadow_split_2)
+	_add_graphics_spin("Shadow split 3", "shadow_split_3", 0.0, 1.0, 0.01, settings.shadow_split_3)
+	_add_graphics_check("SSAO", "ssao", settings.ssao)
+	_add_graphics_check("SSIL", "ssil", settings.ssil)
+	_add_graphics_check("Glow", "glow", settings.glow)
+	_add_graphics_check("Volumetric fog", "volumetric_fog", settings.volumetric_fog)
+	_add_graphics_spin("Foliage density", "foliage_density", 0.5, 1.25, 0.05,
+		settings.foliage_density)
+	_add_graphics_spin("Grass radius (m)", "grass_radius", 20.0, 100.0, 1.0, settings.grass_radius)
+	_add_graphics_spin("Tree view distance (m)", "tree_view_distance", 100.0, 720.0, 10.0,
+		settings.tree_view_distance)
+	panel_body.add_child(_label(
+		"Grass density/radius update now; tree and scatter density are rebuilt on restart.", 13))
+	var buttons: HBoxContainer = HBoxContainer.new()
+	var apply_button: Button = Button.new()
+	apply_button.text = "Apply"
+	apply_button.pressed.connect(_apply_graphics_settings_from_controls)
+	buttons.add_child(apply_button)
+	var close: Button = Button.new()
+	close.text = "Close  [Esc]"
+	close.pressed.connect(close_panel)
+	buttons.add_child(close)
+	panel_body.add_child(buttons)
+	loading_graphics_settings = false
+	active_panel = true
+	player.set_panel_open(true)
+	panel.visible = true
+
+func _add_graphics_option(label_text: String, key: String, values: Array[String],
+		labels: Array[String], selected_value: String) -> void:
+	var row: HBoxContainer = HBoxContainer.new()
+	row.add_child(_graphics_control_label(label_text))
+	var option: OptionButton = OptionButton.new()
+	option.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	for index: int in range(values.size()):
+		option.add_item(labels[index])
+		option.set_item_metadata(index, values[index])
+	var selected_index: int = values.find(selected_value)
+	option.select(maxi(0, selected_index))
+	if key == "preset":
+		option.item_selected.connect(_on_graphics_preset_selected)
+	else:
+		option.item_selected.connect(_mark_graphics_preset_custom)
+	row.add_child(option)
+	panel_body.add_child(row)
+	graphics_setting_controls[key] = option
+
+func _add_graphics_spin(label_text: String, key: String, minimum: float, maximum: float,
+		step: float, initial_value: float) -> void:
+	var row: HBoxContainer = HBoxContainer.new()
+	row.add_child(_graphics_control_label(label_text))
+	var spin: SpinBox = SpinBox.new()
+	spin.min_value = minimum
+	spin.max_value = maximum
+	spin.step = step
+	spin.value = initial_value
+	spin.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	spin.value_changed.connect(_mark_graphics_preset_custom)
+	row.add_child(spin)
+	panel_body.add_child(row)
+	graphics_setting_controls[key] = spin
+
+func _add_graphics_check(label_text: String, key: String, checked: bool) -> void:
+	var check: CheckBox = CheckBox.new()
+	check.text = label_text
+	check.button_pressed = checked
+	check.toggled.connect(_mark_graphics_preset_custom)
+	panel_body.add_child(check)
+	graphics_setting_controls[key] = check
+
+func _graphics_control_label(text_value: String) -> Label:
+	var label: Label = _label(text_value, 14)
+	label.custom_minimum_size.x = 210.0
+	return label
+
+func _on_graphics_preset_selected(index: int) -> void:
+	if loading_graphics_settings:
+		return
+	var option: OptionButton = graphics_setting_controls["preset"] as OptionButton
+	var selected_preset: String = str(option.get_item_metadata(index))
+	if selected_preset != "custom" and FrontierGraphicsSettings.PRESETS.has(selected_preset):
+		loading_graphics_settings = true
+		var preset_values: Dictionary = FrontierGraphicsSettings.PRESETS[selected_preset]
+		for key: String in preset_values:
+			_set_graphics_form_value(key, preset_values[key])
+		loading_graphics_settings = false
+	else:
+		_mark_graphics_preset_custom()
+
+func _set_graphics_form_value(key: String, value: Variant) -> void:
+	if not graphics_setting_controls.has(key):
+		return
+	var control: Control = graphics_setting_controls[key]
+	if control is OptionButton:
+		var option: OptionButton = control as OptionButton
+		for index: int in range(option.item_count):
+			if str(option.get_item_metadata(index)) == str(value):
+				option.select(index)
+				return
+	elif control is SpinBox:
+		(control as SpinBox).value = float(value)
+	elif control is CheckBox:
+		(control as CheckBox).button_pressed = bool(value)
+
+func _mark_graphics_preset_custom(_value: Variant = null) -> void:
+	if loading_graphics_settings or not graphics_setting_controls.has("preset"):
+		return
+	var preset_option: OptionButton = graphics_setting_controls["preset"] as OptionButton
+	for index: int in range(preset_option.item_count):
+		if str(preset_option.get_item_metadata(index)) == "custom":
+			preset_option.select(index)
+			return
+
+func _apply_graphics_settings_from_controls() -> void:
+	var preset_option: OptionButton = graphics_setting_controls["preset"] as OptionButton
+	graphics_settings_ref.preset = str(preset_option.get_item_metadata(preset_option.selected))
+	graphics_settings_ref.window_mode = _graphics_option_value("window_mode")
+	graphics_settings_ref.vsync = _graphics_option_value("vsync") == "on"
+	graphics_settings_ref.max_fps = roundi(_graphics_spin_value("max_fps"))
+	graphics_settings_ref.render_scale = _graphics_spin_value("render_scale")
+	graphics_settings_ref.scaling_mode = _graphics_option_value("scaling_mode")
+	graphics_settings_ref.antialiasing = _graphics_option_value("antialiasing")
+	graphics_settings_ref.shadow_atlas_size = roundi(_graphics_spin_value("shadow_atlas_size"))
+	graphics_settings_ref.soft_shadow_quality = _graphics_option_value("soft_shadow_quality")
+	graphics_settings_ref.shadow_distance = _graphics_spin_value("shadow_distance")
+	graphics_settings_ref.shadow_split_1 = _graphics_spin_value("shadow_split_1")
+	graphics_settings_ref.shadow_split_2 = _graphics_spin_value("shadow_split_2")
+	graphics_settings_ref.shadow_split_3 = _graphics_spin_value("shadow_split_3")
+	graphics_settings_ref.ssao = (graphics_setting_controls["ssao"] as CheckBox).button_pressed
+	graphics_settings_ref.ssil = (graphics_setting_controls["ssil"] as CheckBox).button_pressed
+	graphics_settings_ref.glow = (graphics_setting_controls["glow"] as CheckBox).button_pressed
+	graphics_settings_ref.volumetric_fog = \
+		(graphics_setting_controls["volumetric_fog"] as CheckBox).button_pressed
+	graphics_settings_ref.foliage_density = _graphics_spin_value("foliage_density")
+	graphics_settings_ref.grass_radius = _graphics_spin_value("grass_radius")
+	graphics_settings_ref.tree_view_distance = _graphics_spin_value("tree_view_distance")
+	graphics_settings_apply_requested.emit()
+
+func _graphics_option_value(key: String) -> String:
+	var option: OptionButton = graphics_setting_controls[key] as OptionButton
+	return str(option.get_item_metadata(option.selected))
+
+func _graphics_spin_value(key: String) -> float:
+	return (graphics_setting_controls[key] as SpinBox).value
+
 func show_build_menu(available: Array[String]) -> void:
 	for child: Node in build_grid.get_children():
 		child.queue_free()
@@ -362,6 +541,7 @@ func close_panel() -> void:
 		return
 	active_panel = false
 	inventory_open = false
+	graphics_settings_open = false
 	panel.visible = false
 	assignment_target.clear()
 	player.set_panel_open(false)
@@ -433,7 +613,7 @@ func _create_help_panel() -> void:
 	guide.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	help_panel.add_child(guide)
 	guide.add_child(_label("PLANETARY FIELD GUIDE", 19))
-	guide.add_child(_label("WASD move · Shift sprint · Space jump · Mouse look\nE interact / mine · B build · R rotate · F dismantle · X dismantle mode\nTab inventory and craft · F7 creative mode · F5 save · F9 load · H toggle this guide", 15))
+	guide.add_child(_label("WASD move · Shift sprint · Space jump · Mouse look\nE interact / mine · B build · R rotate · F dismantle · X dismantle mode\nTab inventory and craft · F7 creative · F10 graphics · F3 performance\nF5 save · F9 load · H toggle this guide", 15))
 
 func _create_hotbar() -> void:
 	hotbar = FactoryHotbar.new()

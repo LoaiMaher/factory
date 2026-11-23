@@ -29,6 +29,9 @@ var landing_position: Vector3 = Vector3(0.0, 0.0, 12.0)
 var building_definitions: Dictionary = BuildingDefs.all()
 var terrain_material: ShaderMaterial
 var machine_models: MachineModels = MachineModels.new()
+var world_environment: WorldEnvironment
+var environment: Environment
+var sun: DirectionalLight3D
 
 func _ready() -> void:
 	_configure_noise()
@@ -404,8 +407,8 @@ func _build_lake() -> void:
 	add_child(lake)
 
 func _create_environment() -> void:
-	var world_environment: WorldEnvironment = WorldEnvironment.new()
-	var environment: Environment = Environment.new()
+	world_environment = WorldEnvironment.new()
+	environment = Environment.new()
 	var use_forward_plus: bool = _uses_forward_plus()
 	environment.background_mode = Environment.BG_SKY
 	var sky_material: PanoramaSkyMaterial = PanoramaSkyMaterial.new()
@@ -438,7 +441,7 @@ func _create_environment() -> void:
 	environment.volumetric_fog_albedo = Color("a7bbc3")
 	world_environment.environment = environment
 	add_child(world_environment)
-	var sun: DirectionalLight3D = DirectionalLight3D.new()
+	sun = DirectionalLight3D.new()
 	sun.name = "LateMorningSun"
 	sun.rotation_degrees = Vector3(-38.0, -34.0, 0.0)
 	sun.light_color = Color("ffe2c4")
@@ -446,7 +449,7 @@ func _create_environment() -> void:
 	sun.shadow_enabled = use_forward_plus
 	sun.shadow_blur = 1.2
 	sun.directional_shadow_mode = DirectionalLight3D.SHADOW_PARALLEL_4_SPLITS
-	sun.directional_shadow_max_distance = 1100.0
+	sun.directional_shadow_max_distance = 450.0
 	sun.light_angular_distance = 0.6
 	add_child(sun)
 
