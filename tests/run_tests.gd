@@ -96,6 +96,28 @@ func _test_ore_node_model() -> void:
 				part != null and not meshes.is_empty()
 				and (meshes[0] as MeshInstance3D).mesh.get_surface_count() > 0,
 				str(meshes.size()))
+			var maximum_height: float = -1000000.0
+			for raw_mesh: Node in meshes:
+				var mesh_node: MeshInstance3D = raw_mesh as MeshInstance3D
+				if mesh_node.mesh == null:
+					continue
+				var mesh_transform: Transform3D = mesh_node.transform
+				var ancestor: Node = mesh_node.get_parent()
+				while ancestor != null and ancestor != model:
+					mesh_transform = (ancestor as Node3D).transform * mesh_transform
+					ancestor = ancestor.get_parent()
+				var bounds: AABB = mesh_node.mesh.get_aabb()
+				for corner_x: int in range(2):
+					for corner_y: int in range(2):
+						for corner_z: int in range(2):
+							var corner: Vector3 = bounds.position + Vector3(
+								bounds.size.x * float(corner_x),
+								bounds.size.y * float(corner_y),
+								bounds.size.z * float(corner_z))
+							maximum_height = maxf(maximum_height, (mesh_transform * corner).y)
+			_check("%s ore slabs stay nearly flush with terrain" % variant,
+				maximum_height >= 0.15 and maximum_height <= 0.35,
+				"max height %.3f m" % maximum_height)
 		model.free()
 	_check("shared ore-node shader is available",
 		load("res://shaders/resource_node.gdshader") is Shader,
