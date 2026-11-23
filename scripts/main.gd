@@ -169,7 +169,14 @@ func _ready() -> void:
 			float(Time.get_ticks_usec()) / 1000.0,
 			terrain_build_ms, foliage_build_ms)
 		add_child(benchmark_runner)
-	for argument: String in OS.get_cmdline_user_args():
+	var user_arguments: PackedStringArray = OS.get_cmdline_user_args()
+	if user_arguments.has("--capture-perf-overlay") \
+			or user_arguments.has("--capture-settings-panel"):
+		call_deferred("_capture_graphics_panels",
+			user_arguments.has("--capture-perf-overlay"),
+			user_arguments.has("--capture-settings-panel"))
+		return
+	for argument: String in user_arguments:
 		if argument == "--capture-all":
 			call_deferred("_capture_all")
 			break
@@ -285,8 +292,28 @@ func _update_aim_status(delta: float) -> void:
 	else:
 		hud.hint_label.text = ""
 
+func _input(event: InputEvent) -> void:
+	if benchmark_mode:
+		return
+	_handle_graphics_shortcut(event)
+
+func _handle_graphics_shortcut(event: InputEvent) -> bool:
+	if not event is InputEventKey or not event.pressed or event.echo:
+		return false
+	if event.keycode == KEY_F3:
+		perf_overlay.toggle_overlay()
+	elif event.keycode == KEY_F10:
+		_toggle_graphics_settings()
+	else:
+		return false
+	if is_inside_tree():
+		get_viewport().set_input_as_handled()
+	return true
+
 func _unhandled_input(event: InputEvent) -> void:
 	if benchmark_mode:
+		return
+	if _handle_graphics_shortcut(event):
 		return
 	if event is InputEventKey and event.pressed and not event.echo:
 		var key: Key = event.keycode
@@ -305,12 +332,6 @@ func _unhandled_input(event: InputEvent) -> void:
 			get_viewport().set_input_as_handled()
 		elif key == KEY_F7:
 			_toggle_creative_mode()
-			get_viewport().set_input_as_handled()
-		elif key == KEY_F3:
-			perf_overlay.toggle_overlay()
-			get_viewport().set_input_as_handled()
-		elif key == KEY_F10:
-			_toggle_graphics_settings()
 			get_viewport().set_input_as_handled()
 		elif key == KEY_B and not hud.panel_is_open():
 			_toggle_build_menu()
@@ -1123,6 +1144,28 @@ func _toggle_graphics_settings() -> void:
 	else:
 		hud.close_build_menu()
 		hud.open_graphics_settings(graphics_settings)
+
+func _capture_graphics_panels(capture_perf_overlay: bool, capture_settings_panel: bool) -> void:
+	if hud.help_panel.visible:
+		hud.toggle_help()
+	if capture_perf_overlay:
+		if hud.panel_is_open():
+			hud.close_panel()
+		hud.close_build_menu()
+		perf_overlay.set_overlay_visible(true)
+		await get_tree().create_timer(0.5).timeout
+		await RenderingServer.frame_post_draw
+		_write_capture("perf-overlay")
+	if capture_settings_panel:
+		perf_overlay.set_overlay_visible(false)
+		if hud.panel_is_open():
+			hud.close_panel()
+		hud.close_build_menu()
+		hud.open_graphics_settings(graphics_settings)
+		await get_tree().create_timer(0.5).timeout
+		await RenderingServer.frame_post_draw
+		_write_capture("settings-panel")
+	get_tree().quit()
 
 func _apply_graphics_settings() -> void:
 	var restart_required: bool = graphics_settings.apply(

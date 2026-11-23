@@ -28,9 +28,13 @@ func configure(settings: FrontierGraphicsSettings) -> void:
 	graphics_settings = settings
 
 func toggle_overlay() -> void:
-	panel.visible = not panel.visible
+	set_overlay_visible(not panel.visible)
+
+func set_overlay_visible(is_visible: bool) -> void:
+	panel.visible = is_visible
 	if panel.visible:
 		RenderingServer.viewport_set_measure_render_time(get_viewport().get_viewport_rid(), true)
+		_update_summary()
 
 func _process(delta: float) -> void:
 	if not panel.visible:
@@ -44,6 +48,9 @@ func _process(delta: float) -> void:
 	if update_elapsed < 0.2:
 		return
 	update_elapsed = 0.0
+	_update_summary()
+
+func _update_summary() -> void:
 	var frame_times: Array[float] = []
 	var frame_total: float = 0.0
 	for sample: Dictionary in samples:
