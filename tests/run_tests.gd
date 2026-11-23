@@ -33,6 +33,9 @@ func _run_all() -> void:
 	_test_full_hotbar_build_menu_selection()
 	_test_creative_cursor_focus()
 	_test_hotbar_input_filtering()
+	_test_graphics_settings_and_persistence()
+	_test_benchmark_stats_and_cli()
+	_test_benchmark_no_save()
 	print("RESULT: %d/%d test groups passed" % [passed_groups, groups])
 	quit(1 if failures > 0 else 0)
 
@@ -1472,6 +1475,108 @@ func _test_hotbar_input_filtering() -> void:
 		first_slot.mouse_filter == Control.MOUSE_FILTER_IGNORE,
 		str(first_slot.mouse_filter))
 	hotbar.queue_free()
+	_finish_group()
+
+func _test_graphics_settings_and_persistence() -> void:
+	var settings: FrontierGraphicsSettings = FrontierGraphicsSettings.new()
+	settings.apply_preset("low")
+	_check("Low preset uses requested shadow, fog, foliage, and AA values",
+		settings.shadow_atlas_size == 2048 and settings.shadow_distance == 180.0
+		and not settings.ssao and not settings.ssil and not settings.volumetric_fog
+		and settings.foliage_density == 0.5 and settings.grass_radius == 35.0
+		and settings.antialiasing == "fxaa", str(settings.to_dict()))
+	settings.apply_preset("medium")
+	_check("Medium preset uses requested shadow, AO, foliage, and TAA values",
+		settings.shadow_atlas_size == 4096 and settings.shadow_distance == 300.0
+		and settings.ssao and not settings.ssil and not settings.volumetric_fog
+		and settings.foliage_density == 0.75 and settings.grass_radius == 48.0
+		and settings.antialiasing == "taa", str(settings.to_dict()))
+	settings.apply_preset("high")
+	_check("High preset uses requested shadow, AO, fog, and foliage values",
+		settings.shadow_atlas_size == 4096 and settings.shadow_distance == 450.0
+		and settings.ssao and settings.ssil and settings.volumetric_fog
+		and settings.foliage_density == 1.0 and settings.grass_radius == 60.0,
+		str(settings.to_dict()))
+	settings.apply_preset("ultra")
+	_check("Ultra preset uses requested distance, density, and full-scale FSR2-off values",
+		settings.shadow_atlas_size == 8192 and settings.shadow_distance == 700.0
+		and settings.ssao and settings.ssil and settings.volumetric_fog
+		and settings.foliage_density == 1.25 and settings.grass_radius == 75.0
+		and settings.scaling_mode == "bilinear" and settings.render_scale == 1.0,
+		str(settings.to_dict()))
+	settings.window_mode = "borderless"
+	settings.vsync = false
+	settings.max_fps = 120
+	settings.render_scale = 0.85
+	settings.scaling_mode = "fsr1"
+	settings.antialiasing = "smaa"
+	settings.shadow_split_2 = 0.37
+	settings.glow = false
+	var path: String = "user://m1-graphics-settings-test.cfg"
+	_check("Graphics settings save succeeds", settings.save_settings(path), path)
+	var loaded: FrontierGraphicsSettings = FrontierGraphicsSettings.new()
+	_check("Graphics settings load succeeds", loaded.load_settings(path), path)
+	_check("Graphics settings round-trip persists all option categories",
+		loaded.preset == settings.preset and loaded.window_mode == settings.window_mode
+		and loaded.vsync == settings.vsync and loaded.max_fps == settings.max_fps
+		and is_equal_approx(loaded.render_scale, settings.render_scale)
+		and loaded.scaling_mode == settings.scaling_mode
+		and loaded.antialiasing == settings.antialiasing
+		and loaded.shadow_atlas_size == settings.shadow_atlas_size
+		and is_equal_approx(loaded.shadow_split_2, settings.shadow_split_2) and not loaded.glow,
+		str(loaded.to_dict()))
+	DirAccess.remove_absolute(ProjectSettings.globalize_path(path))
+	_finish_group()
+
+func _test_benchmark_stats_and_cli() -> void:
+	var times: Array[float] = [10.0, 20.0, 30.0, 40.0, 100.0]
+	var stats: Dictionary = FrontierBenchmark.summarize_frame_times(times)
+	_check("Synthetic frame-time average FPS is exact",
+		is_equal_approx(float(stats["average_fps"]), 25.0), str(stats))
+	_check("Synthetic 1% and 0.1% lows average the slowest frame",
+		is_equal_approx(float(stats["one_percent_low_fps"]), 10.0)
+		and is_equal_approx(float(stats["zero_point_one_percent_low_fps"]), 10.0),
+		str(stats))
+	_check("Synthetic percentiles and hitch thresholds are exact",
+		float(stats["p50_ms"]) == 30.0 and float(stats["p99_ms"]) == 100.0
+		and int(stats["hitches_over_33_3_ms"]) == 2
+		and int(stats["hitches_over_50_ms"]) == 1, str(stats))
+	var double_dash: Dictionary = FrontierBenchmark.parse_arguments(PackedStringArray([
+		"--", "--benchmark=walk", "--preset=high", "--bench-seconds=10", "--bench-warmup=2"
+	]))
+	_check("CLI parser accepts standard -- user args",
+		bool(double_dash["enabled"]) and double_dash["route"] == "walk"
+		and double_dash["preset"] == "high" and float(double_dash["seconds"]) == 10.0
+		and float(double_dash["warmup"]) == 2.0, str(double_dash))
+	var double_plus: Dictionary = FrontierBenchmark.parse_arguments(PackedStringArray([
+		"++benchmark=flythrough", "++preset=ultra", "++bench-seconds=30",
+		"++bench-warmup=1"
+	]))
+	_check("CLI parser accepts raw ++-prefixed args",
+		bool(double_plus["enabled"]) and double_plus["route"] == "flythrough"
+		and double_plus["preset"] == "ultra" and float(double_plus["seconds"]) == 30.0
+		and float(double_plus["warmup"]) == 1.0, str(double_plus))
+	_finish_group()
+
+func _test_benchmark_no_save() -> void:
+	var path: String = "user://m1-benchmark-save-guard.json"
+	var original: String = "{\"sentinel\":\"leave unchanged\"}"
+	var file: FileAccess = FileAccess.open(path, FileAccess.WRITE)
+	file.store_string(original)
+	file.close()
+	var app: Node = load("res://scripts/main.gd").new()
+	app.set("benchmark_mode", true)
+	var save_system: FactorySaveSystem = FactorySaveSystem.new()
+	save_system.save_path = path
+	app.set("save_system", save_system)
+	app.call("_save_game")
+	app.call("_load_game")
+	var unchanged: String = FileAccess.get_file_as_string(path)
+	_check("Benchmark mode suppresses save and load without changing player save",
+		not FrontierBenchmark.should_load_save({"enabled": true}) and unchanged == original,
+		unchanged)
+	app.free()
+	DirAccess.remove_absolute(ProjectSettings.globalize_path(path))
 	_finish_group()
 
 func _connect(sim: FactorySim, kind: String, from_id: int, from_port: String, to_id: int, to_port: String) -> Dictionary:
