@@ -13,6 +13,7 @@ var sim: FactorySim
 var player: FactoryPlayer
 var icon_cache: FactoryIconCache
 var entity_id: int = -1
+var miner_mode: bool = false
 var creative_mode_active: bool = false
 var recipe_ids: Array[String] = []
 var recipe_selector: OptionButton
@@ -26,6 +27,7 @@ var recipe_output_slots: Array[Dictionary] = []
 var input_cards: Array[Dictionary] = []
 var output_slots: Array[Dictionary] = []
 var progress_bar: ProgressBar
+var take_button: Button
 var cycle_label: Label
 var production_label: Label
 var deposit_label: Label
@@ -60,11 +62,20 @@ func refresh() -> bool:
 	return true
 
 func _build(view: Dictionary) -> void:
+	miner_mode = str(view.get("kind", "")) == "miner_mk1"
 	add_theme_constant_override("separation", 8)
 	size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	var columns := HBoxContainer.new()
+	columns.add_theme_constant_override("separation", 18)
+	columns.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	add_child(columns)
+	var production_column := VBoxContainer.new()
+	production_column.custom_minimum_size.x = 500.0
+	production_column.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	columns.add_child(production_column)
 	var header := HBoxContainer.new()
 	header.custom_minimum_size.y = 96.0
-	add_child(header)
+	production_column.add_child(header)
 	building_icon = TextureRect.new()
 	building_icon.custom_minimum_size = Vector2(96.0, 96.0)
 	building_icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
@@ -76,19 +87,18 @@ func _build(view: Dictionary) -> void:
 	header.add_child(identity)
 	machine_name = _label("", 24)
 	identity.add_child(machine_name)
-	status_panel = PanelContainer.new()
-	status_panel.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
-	status_style = StyleBoxFlat.new()
-	status_style.set_border_width_all(1)
-	status_style.set_corner_radius_all(5)
-	status_panel.add_theme_stylebox_override("panel", status_style)
-	identity.add_child(status_panel)
-	status_label = _label("", 15)
-	status_panel.add_child(status_label)
+	recipe_selector = OptionButton.new()
+	recipe_selector.custom_minimum_size.y = 38.0
+	recipe_selector.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	recipe_selector.item_selected.connect(_on_recipe_selected)
+	production_column.add_child(recipe_selector)
+	_load_recipe_options(view)
 
 	var recipe_row := HBoxContainer.new()
-	recipe_row.custom_minimum_size.y = 66.0
-	add_child(recipe_row)
+	recipe_row.custom_minimum_size.y = 62.0
+	recipe_row.visible = not miner_mode
+	recipe_row.add_theme_constant_override("separation", 6)
+	production_column.add_child(recipe_row)
 	var recipe_flow := HBoxContainer.new()
 	recipe_flow.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	recipe_flow.add_theme_constant_override("separation", 6)
@@ -103,43 +113,64 @@ func _build(view: Dictionary) -> void:
 	recipe_flow.add_child(arrow)
 	for _index: int in range(output_slot_count):
 		recipe_output_slots.append(_make_rate_slot(recipe_flow))
-	recipe_selector = OptionButton.new()
-	recipe_selector.custom_minimum_size = Vector2(220.0, 38.0)
-	recipe_selector.item_selected.connect(_on_recipe_selected)
-	recipe_row.add_child(recipe_selector)
-	_load_recipe_options(view)
 
-	var content := HBoxContainer.new()
-	content.add_theme_constant_override("separation", 20)
-	add_child(content)
-	var production_column := VBoxContainer.new()
-	production_column.custom_minimum_size.x = 520.0
-	production_column.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	content.add_child(production_column)
+	status_panel = PanelContainer.new()
+	status_panel.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
+	status_style = StyleBoxFlat.new()
+	status_style.set_border_width_all(1)
+	status_style.set_corner_radius_all(12)
+	status_panel.add_theme_stylebox_override("panel", status_style)
+	identity.add_child(status_panel)
+	status_label = _label("", 15)
+	status_label.add_theme_color_override("font_color", Color("f4f2eb"))
+	status_panel.add_child(status_label)
+
 	var slot_row := HBoxContainer.new()
-	slot_row.add_theme_constant_override("separation", 8)
+	slot_row.add_theme_constant_override("separation", 10)
 	production_column.add_child(slot_row)
+	var input_row := HBoxContainer.new()
+	input_row.add_theme_constant_override("separation", 6)
+	input_row.visible = not miner_mode
+	slot_row.add_child(input_row)
 	for _index: int in range(input_slot_count):
-		input_cards.append(_make_input_card(slot_row))
+		input_cards.append(_make_input_card(input_row))
+	var process_column := VBoxContainer.new()
+	process_column.custom_minimum_size.x = 92.0
+	if miner_mode:
+		process_column.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	process_column.alignment = BoxContainer.ALIGNMENT_CENTER
+	process_column.add_theme_constant_override("separation", 6)
+	slot_row.add_child(process_column)
+	var process_arrow := _label("→", 24)
+	process_arrow.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	process_arrow.visible = not miner_mode
+	process_column.add_child(process_arrow)
+	progress_bar = ProgressBar.new()
+	progress_bar.max_value = 100.0
+	progress_bar.custom_minimum_size = Vector2(88.0, 14.0)
+	progress_bar.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	process_column.add_child(progress_bar)
 	var output_column := VBoxContainer.new()
-	output_column.custom_minimum_size.x = mini(output_slot_count, 2) * 72.0
+	output_column.custom_minimum_size.x = mini(output_slot_count, 2) * 68.0
+	output_column.visible = not miner_mode
 	slot_row.add_child(output_column)
-	output_column.add_child(_label("Output", 12))
+	var output_heading := _label("Output", 12)
+	output_heading.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	output_column.add_child(output_heading)
 	var output_slot_row := GridContainer.new()
 	output_slot_row.columns = 2
-	output_slot_row.add_theme_constant_override("h_separation", 4)
-	output_slot_row.add_theme_constant_override("v_separation", 4)
+	output_slot_row.add_theme_constant_override("h_separation", 3)
+	output_slot_row.add_theme_constant_override("v_separation", 3)
 	output_column.add_child(output_slot_row)
 	for index: int in range(output_slot_count):
 		output_slots.append(_make_output_slot(output_slot_row, index))
-	var take_button := Button.new()
+	take_button = Button.new()
 	take_button.text = "Take"
+	take_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	take_button.visible = not miner_mode
 	take_button.pressed.connect(_take_output)
 	output_column.add_child(take_button)
-	progress_bar = ProgressBar.new()
-	progress_bar.max_value = 100.0
-	progress_bar.custom_minimum_size = Vector2(500.0, 20.0)
-	production_column.add_child(progress_bar)
+
 	cycle_label = _label("", 13)
 	production_column.add_child(cycle_label)
 	production_label = _label("", 14)
@@ -148,21 +179,26 @@ func _build(view: Dictionary) -> void:
 	production_column.add_child(deposit_label)
 	power_label = _label("", 13)
 	production_column.add_child(power_label)
+
+	if not miner_mode:
+		var inventory_column := VBoxContainer.new()
+		inventory_column.custom_minimum_size.x = 540.0
+		inventory_column.size_flags_horizontal = Control.SIZE_SHRINK_END
+		var inventory_heading := _label("Player inventory · Shift-click to insert", 14)
+		inventory_grid = FactoryInventoryPanel.new()
+		inventory_grid.slot_input.connect(_on_inventory_slot_input)
+		columns.add_child(inventory_column)
+		inventory_column.add_child(inventory_heading)
+		inventory_column.add_child(inventory_grid)
+		if player != null:
+			inventory_grid.configure(player.inventory, icon_cache)
+
 	why_label = _label("", 12)
 	why_label.clip_text = true
-	why_label.autowrap_mode = TextServer.AUTOWRAP_OFF
+	why_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	why_label.max_lines_visible = 2
+	why_label.custom_minimum_size.y = 34.0
 	why_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-
-	var inventory_column := VBoxContainer.new()
-	inventory_column.custom_minimum_size.x = 496.0
-	content.add_child(inventory_column)
-	var inventory_heading := _label("Player inventory · Shift-click to insert", 14)
-	inventory_column.add_child(inventory_heading)
-	inventory_grid = FactoryInventoryPanel.new()
-	inventory_grid.slot_input.connect(_on_inventory_slot_input)
-	inventory_column.add_child(inventory_grid)
-	if player != null:
-		inventory_grid.configure(player.inventory, icon_cache)
 	add_child(why_label)
 
 func _load_recipe_options(view: Dictionary) -> void:
@@ -188,7 +224,7 @@ func _update_header(view: Dictionary) -> void:
 			tint = Color("e15d51")
 		"idle":
 			tint = Color("9da6a3")
-	status_style.bg_color = tint.darkened(0.72)
+	status_style.bg_color = tint.darkened(0.65)
 	status_style.border_color = tint
 
 func _update_recipe(view: Dictionary) -> void:
@@ -229,35 +265,52 @@ func _update_slots(view: Dictionary) -> void:
 	for index: int in range(input_cards.size()):
 		var card: Dictionary = input_cards[index]
 		var visible: bool = index < inputs.size()
-		(card["panel"] as Control).visible = visible
+		(card["container"] as Control).visible = visible
 		if not visible:
 			continue
 		var item: Dictionary = inputs[index]
 		var item_id: String = str(item.get("item_id", ""))
-		(card["icon"] as TextureRect).texture = \
-			icon_cache.get_icon("item", item_id) if icon_cache != null else null
-		(card["name"] as Label).text = Items.item_name(item_id)
-		(card["count"] as Label).text = "%d / %d" % [
-			int(item.get("count", 0)), int(item.get("maximum", 0))]
-		(card["rate"] as Label).text = "needs %.0f/min, getting %.0f/min" % [
-			float(item.get("needs_per_min", 0.0)), float(item.get("getting_per_min", 0.0))]
+		var input_button: Button = card["button"]
+		input_button.icon = icon_cache.get_icon("item", item_id) \
+			if icon_cache != null else null
+		var input_count: int = int(item.get("count", 0))
+		var input_maximum: int = int(item.get("maximum", 0))
+		input_button.tooltip_text = Items.item_name(item_id)
+		(card["count"] as Label).text = str(input_count) if input_count > 0 else ""
+		(card["capacity"] as Label).text = "%d / %d" % [
+			input_count, input_maximum]
+		(card["rate"] as Label).text = "needs %.0f/min\ngetting %.0f/min" % [
+			float(item.get("needs_per_min", 0.0)),
+			float(item.get("getting_per_min", 0.0))]
+		var old_item_id: String = str(card.get("item_id", ""))
+		if old_item_id != item_id:
+			_style_slot_button(input_button, item_id)
+			card["item_id"] = item_id
+		input_cards[index] = card
 	var outputs: Array = view.get("outputs", [])
 	for index: int in range(output_slots.size()):
 		var slot: Dictionary = output_slots[index]
 		var button: Button = slot["button"]
+		var container: Control = slot["container"]
 		var visible: bool = index < outputs.size()
-		button.visible = visible or index == 0
+		container.visible = visible or index == 0
 		var output_item: Dictionary = outputs[index] if visible else {}
 		var item_id: String = str(output_item.get("item_id", ""))
 		var count: int = int(output_item.get("count", 0))
+		var maximum: int = int(output_item.get("maximum", 0))
 		slot["item_id"] = item_id
 		slot["count"] = count
 		button.icon = icon_cache.get_icon("item", item_id) \
 			if icon_cache != null and not item_id.is_empty() else null
-		button.text = "×%d" % count if count > 0 else ""
+		(slot["count_label"] as Label).text = str(count) if count > 0 else ""
+		(slot["capacity_label"] as Label).text = "%d / %d" % [count, maximum]
 		button.tooltip_text = "%s · %d" % [Items.item_name(item_id), count] \
 			if not item_id.is_empty() else "No output"
 		button.disabled = item_id.is_empty() or count <= 0
+		var old_item_id: String = str(slot.get("styled_item_id", ""))
+		if old_item_id != item_id:
+			_style_slot_button(button, item_id)
+			slot["styled_item_id"] = item_id
 		output_slots[index] = slot
 
 func _update_progress_and_rates(view: Dictionary) -> void:
@@ -271,7 +324,7 @@ func _update_progress_and_rates(view: Dictionary) -> void:
 	var deposit_item: String = str(view.get("deposit_item", ""))
 	deposit_label.visible = not deposit_item.is_empty()
 	if not deposit_item.is_empty():
-		deposit_label.text = "Deposit %s · %s purity · %.0f/min" % [
+		deposit_label.text = "Deposit %s · Purity: %s · %.0f/min" % [
 			Items.item_name(deposit_item), str(view.get("deposit_purity", "unknown")),
 			float(view.get("deposit_rate", 0.0))]
 
@@ -304,42 +357,77 @@ func _make_rate_slot(parent: HBoxContainer) -> Dictionary:
 	return {"container": container, "icon": icon, "rate": rate_label}
 
 func _make_input_card(parent: HBoxContainer) -> Dictionary:
-	var card := PanelContainer.new()
-	card.custom_minimum_size = Vector2(160.0, 126.0)
-	var content := VBoxContainer.new()
-	content.add_theme_constant_override("separation", 2)
-	card.add_child(content)
-	var heading := HBoxContainer.new()
-	content.add_child(heading)
-	var icon := TextureRect.new()
-	icon.custom_minimum_size = Vector2(36.0, 36.0)
-	icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-	icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
-	icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	heading.add_child(icon)
-	var name_label := _label("", 12)
-	name_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	name_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	heading.add_child(name_label)
-	var count_label := _label("", 14)
-	content.add_child(count_label)
-	var rate_label := _label("", 10)
-	rate_label.autowrap_mode = TextServer.AUTOWRAP_OFF
-	content.add_child(rate_label)
+	var card := VBoxContainer.new()
+	card.custom_minimum_size.x = 112.0
+	card.add_theme_constant_override("separation", 1)
+	var button := _make_slot_button()
+	card.add_child(button)
+	var count_label := _make_slot_count_label(button)
+	var capacity_label := _label("0 / 0", 11)
+	capacity_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	card.add_child(capacity_label)
+	var rate_label := _label("", 9)
+	rate_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	rate_label.max_lines_visible = 2
+	rate_label.custom_minimum_size.y = 24.0
+	card.add_child(rate_label)
 	parent.add_child(card)
-	return {"panel": card, "icon": icon, "name": name_label,
-		"count": count_label, "rate": rate_label}
+	return {"container": card, "button": button, "icon": button,
+		"count": count_label, "capacity": capacity_label, "rate": rate_label,
+		"item_id": ""}
 
 func _make_output_slot(parent: GridContainer, slot_index: int) -> Dictionary:
-	var button := Button.new()
-	button.custom_minimum_size = Vector2(68.0, 76.0)
-	button.expand_icon = true
-	button.add_theme_constant_override("icon_max_width", 50)
+	var container := VBoxContainer.new()
+	container.add_theme_constant_override("separation", 1)
+	var button := _make_slot_button()
 	button.gui_input.connect(_on_output_slot_input.bind(slot_index))
-	parent.add_child(button)
-	return {"button": button, "item_id": "", "count": 0}
+	container.add_child(button)
+	var count_label := _make_slot_count_label(button)
+	var capacity_label := _label("0 / 0", 11)
+	capacity_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	container.add_child(capacity_label)
+	parent.add_child(container)
+	return {"container": container, "button": button, "count_label": count_label,
+		"capacity_label": capacity_label, "item_id": "", "count": 0}
+
+func _make_slot_button() -> Button:
+	var button := Button.new()
+	button.custom_minimum_size = Vector2(64.0, 64.0)
+	button.focus_mode = Control.FOCUS_NONE
+	button.expand_icon = true
+	button.icon_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	button.vertical_icon_alignment = VERTICAL_ALIGNMENT_CENTER
+	button.add_theme_constant_override("icon_max_width", 52)
+	_style_slot_button(button, "")
+	return button
+
+func _make_slot_count_label(button: Button) -> Label:
+	var label := _label("", 12)
+	label.set_anchors_preset(Control.PRESET_FULL_RECT)
+	label.offset_left = 3.0
+	label.offset_top = 35.0
+	label.offset_right = -5.0
+	label.offset_bottom = -2.0
+	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	label.vertical_alignment = VERTICAL_ALIGNMENT_BOTTOM
+	label.add_theme_color_override("font_color", Color("f4ead5"))
+	label.add_theme_color_override("font_outline_color", Color("15191a"))
+	label.add_theme_constant_override("outline_size", 4)
+	label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	button.add_child(label)
+	return label
+
+func _style_slot_button(button: Button, item_id: String) -> void:
+	button.add_theme_stylebox_override("normal",
+		FactoryInventoryPanel.make_slot_style(item_id))
+	button.add_theme_stylebox_override("hover",
+		FactoryInventoryPanel.make_slot_style(item_id, true))
+	button.add_theme_stylebox_override("pressed",
+		FactoryInventoryPanel.make_slot_style(item_id, true))
 
 func _on_output_slot_input(event: InputEvent, slot_index: int) -> void:
+	if miner_mode:
+		return
 	if not event is InputEventMouseButton or not event.pressed \
 			or event.button_index not in [MOUSE_BUTTON_LEFT, MOUSE_BUTTON_RIGHT]:
 		return
@@ -351,6 +439,8 @@ func _on_output_slot_input(event: InputEvent, slot_index: int) -> void:
 	(slot["button"] as Button).accept_event()
 
 func _on_inventory_slot_input(slot_index: int, button_index: int, shift_pressed: bool) -> void:
+	if miner_mode:
+		return
 	if not shift_pressed or button_index != MOUSE_BUTTON_LEFT \
 			or player == null or sim == null:
 		player_slot_input_requested.emit(slot_index, button_index, shift_pressed)
@@ -377,11 +467,11 @@ func set_creative_mode(active: bool) -> void:
 	creative_mode_active = active
 
 func refresh_inventory() -> void:
-	if player != null and inventory_grid != null:
+	if not miner_mode and player != null and inventory_grid != null:
 		inventory_grid.configure(player.inventory, icon_cache)
 
 func _take_output() -> void:
-	if player == null or sim == null:
+	if miner_mode or player == null or sim == null:
 		return
 	var view: Dictionary = sim.machine_view(entity_id)
 	if view.is_empty():

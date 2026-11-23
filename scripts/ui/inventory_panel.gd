@@ -4,7 +4,7 @@ class_name FactoryInventoryPanel
 signal slot_input(slot_index: int, button_index: int, shift_pressed: bool)
 signal slot_hovered(slot_index: int, entered: bool)
 
-const SLOT_SIZE: Vector2 = Vector2(62.0, 62.0)
+const SLOT_SIZE: Vector2 = Vector2(64.0, 64.0)
 
 var inventory: FrontierInventory
 var icon_cache: FactoryIconCache
@@ -37,9 +37,12 @@ func _rebuild() -> void:
 		button.focus_mode = Control.FOCUS_NONE
 		button.disabled = filtered
 		button.tooltip_text = "Filtered slot" if filtered else _tooltip(item_id, quantity, overflow)
-		button.add_theme_stylebox_override("normal", _style(overflow, false, item_id))
-		button.add_theme_stylebox_override("hover", _style(overflow, true, item_id))
-		button.add_theme_stylebox_override("pressed", _style(overflow, true, item_id))
+		button.add_theme_stylebox_override("normal",
+			make_slot_style(item_id, false, overflow))
+		button.add_theme_stylebox_override("hover",
+			make_slot_style(item_id, true, overflow))
+		button.add_theme_stylebox_override("pressed",
+			make_slot_style(item_id, true, overflow))
 		if not display_item_id.is_empty() and icon_cache != null:
 			var icon: Texture2D = icon_cache.get_icon("item", display_item_id)
 			if icon != null:
@@ -86,7 +89,8 @@ func _tooltip(item_id: String, quantity: int, overflow: bool) -> String:
 		result += "\nOverflow · removal only"
 	return result
 
-func _style(overflow: bool, hovered: bool, item_id: String) -> StyleBoxFlat:
+static func make_slot_style(item_id: String, hovered: bool = false,
+		overflow: bool = false) -> StyleBoxFlat:
 	var style := StyleBoxFlat.new()
 	var background := Color("242a2b")
 	var border := Color("536063")

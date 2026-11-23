@@ -294,7 +294,15 @@ func _open_machine_panel(entity_id: int) -> void:
 	inventory_open = false
 	storage_open = false
 	graphics_settings_open = false
-	_set_inventory_panel_size(true)
+	var view: Dictionary = sim.machine_view(entity_id)
+	var miner_mode: bool = str(view.get("kind", "")) == "miner_mk1"
+	_set_inventory_panel_size(not miner_mode)
+	if miner_mode:
+		panel.size = Vector2(620.0, 400.0)
+		var panel_scroll: ScrollContainer = panel.get_child(0) as ScrollContainer
+		if panel_scroll != null:
+			panel_scroll.custom_minimum_size = Vector2(600.0, 380.0)
+		_center_panel()
 	_set_panel("")
 	machine_panel = FactoryMachinePanel.new()
 	machine_panel.items_collected.connect(world_item_collected.emit)
@@ -415,6 +423,7 @@ func _on_inventory_slot_hovered(slot_index: int, entered: bool) -> void:
 func _on_machine_output_slot_requested(slot_index: int, item_id: String,
 		displayed_count: int, button_index: int, shift_pressed: bool) -> void:
 	if sim == null or player == null or machine_panel == null \
+			or machine_panel.miner_mode \
 			or item_id.is_empty() or displayed_count <= 0 \
 			or not sim.entities.has(selected_entity_id):
 		return

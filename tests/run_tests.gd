@@ -775,6 +775,19 @@ func _test_machine_panel_refresh_and_close() -> void:
 	_check("machine refresh preserves child IDs and closes when its entity is removed",
 		preserved and not hud.panel_is_open() and hud.machine_panel == null,
 		str([child_ids, refreshed_ids, hud.panel_is_open()]))
+	sim.register_node(7, "iron_ore", "pure", Vector3(20.0, 0.0, 10.0), 60.0)
+	var miner_id: int = sim.add_entity("miner_mk1", Vector3(20.0, 0.0, 10.0),
+		0.0, {"node_id": 7})
+	hud.open_entity(miner_id)
+	var miner_panel: FactoryMachinePanel = hud.machine_panel
+	_check("miner panel hides inventory transfers while keeping production details",
+		miner_panel.miner_mode and not miner_panel.take_button.visible
+		and miner_panel.inventory_grid == null
+		and miner_panel.deposit_label.visible and miner_panel.progress_bar.visible
+		and miner_panel.power_label.visible,
+		str([miner_panel.miner_mode, miner_panel.take_button.visible,
+			miner_panel.inventory_grid == null,
+			miner_panel.deposit_label.text]))
 	hud.free()
 	player.free()
 	_finish_group()
