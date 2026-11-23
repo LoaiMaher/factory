@@ -56,6 +56,9 @@ var graphics_settings_ref: FrontierGraphicsSettings
 var graphics_setting_controls: Dictionary = {}
 var loading_graphics_settings: bool = false
 var storage_open: bool = false
+var storage_snapshot_valid: bool = false
+var storage_contents_snapshot: Dictionary = {}
+var storage_slot_items: Array[String] = []
 var inventory_category_filter: String = "all"
 var inventory_grid: FactoryInventoryPanel
 var storage_grid: FactoryInventoryPanel
@@ -210,6 +213,8 @@ func _process(delta: float) -> void:
 	if hotbar != null:
 		hotbar.set_interactive(active_panel or build_menu.visible)
 		_update_hotbar()
+	if storage_open:
+		_refresh_storage_grid()
 	_update_cursor_stack_visual()
 
 func show_toast(message: String, duration: float = 4.0) -> void:
@@ -452,6 +457,7 @@ func _center_panel() -> void:
 
 func _open_storage_panel(entity: FactoryEntity) -> void:
 	storage_open = true
+	storage_snapshot_valid = false
 	inventory_open = false
 	_set_inventory_panel_size(true)
 	_set_panel("%s · transfer" % entity.kind.capitalize())
@@ -491,18 +497,30 @@ func _refresh_storage_grid() -> void:
 			or not sim.entities.has(selected_entity_id):
 		return
 	var storage: FactoryEntity = sim.entities[selected_entity_id]
-	storage_grid.configure(FrontierInventory.from_totals(storage.input_buffer), icon_cache)
+	var contents: Dictionary = storage.input_buffer.duplicate(true)
+	if storage_snapshot_valid and contents == storage_contents_snapshot:
+		return
+	storage_contents_snapshot = contents
+	storage_snapshot_valid = true
+	var storage_inventory: FrontierInventory = FrontierInventory.from_totals(contents)
+	storage_slot_items.clear()
+	for index: int in range(maxi(FrontierInventory.DEFAULT_CAPACITY, storage_inventory.slots.size())):
+		var slot: Dictionary = storage_inventory.slots[index] \
+			if index < storage_inventory.slots.size() else {}
+		storage_slot_items.append(str(slot.get("item_id", "")))
+	storage_grid.configure(storage_inventory, icon_cache)
 
 func _on_storage_slot_input(slot_index: int, button_index: int, shift_pressed: bool) -> void:
 	if not sim.entities.has(selected_entity_id):
 		return
 	var storage: FactoryEntity = sim.entities[selected_entity_id]
-	var storage_inventory: FrontierInventory = FrontierInventory.from_totals(storage.input_buffer)
-	if slot_index < 0 or slot_index >= storage_inventory.capacity:
+	if slot_index < 0 or slot_index >= storage_slot_items.size():
 		return
-	var slot: Dictionary = storage_inventory.slots[slot_index]
-	var item_id: String = str(slot.get("item_id", ""))
-	var quantity: int = int(slot.get("count", 0))
+	var item_id: String = storage_slot_items[slot_index]
+	var quantity: int = int(storage.input_buffer.get(item_id, 0))
+	var storage_inventory: FrontierInventory = FrontierInventory.from_totals(storage.input_buffer)
+	if slot_index >= storage_inventory.slots.size():
+		return
 	if shift_pressed:
 		if item_id.is_empty() or quantity <= 0:
 			return
@@ -523,6 +541,10 @@ func _on_storage_slot_input(slot_index: int, button_index: int, shift_pressed: b
 	else:
 		if creative_mode_active and cursor_origin_type != "storage":
 			show_toast("Creative items can't be stored")
+			return
+		var current_slot: Dictionary = storage_inventory.slots[slot_index]
+		if str(current_slot.get("item_id", "")) != item_id:
+			_refresh_storage_grid()
 			return
 		var held_item_id: String = str(cursor_stack.get("item_id", ""))
 		var held_count: int = int(cursor_stack.get("count", 0))

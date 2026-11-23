@@ -50,6 +50,7 @@ func _run_all() -> void:
 	_test_creative_storage_deposits()
 	_test_storage_origin_return_gain()
 	_test_refund_preview()
+	_test_storage_grid_mapping_refresh()
 	print("RESULT: %d/%d test groups passed" % [passed_groups, groups])
 	quit(1 if failures > 0 else 0)
 
@@ -267,8 +268,7 @@ func _test_inventory_gameplay() -> void:
 	var storage_ui_hud := FactoryHUD.new()
 	storage_ui_hud.setup(storage_ui_sim, storage_ui_player)
 	get_root().add_child(storage_ui_hud)
-	storage_ui_hud.selected_entity_id = storage_ui_id
-	storage_ui_hud.storage_open = true
+	storage_ui_hud.open_entity(storage_ui_id)
 	storage_ui_hud.cursor_stack = storage_ui_player.inventory.take_slot(0, 5)
 	storage_ui_hud._set_cursor_origin("player", 0, -1, "copper_ore")
 	storage_ui_hud._on_storage_slot_input(0, MOUSE_BUTTON_LEFT, false)
@@ -484,9 +484,10 @@ func _test_refund_preview() -> void:
 		target_id, "in0")
 	var belt_id: int = int(belt_result.get("id", -1))
 	if belt_id >= 0:
-		belt_sim.entities[belt_id].belt_items = [
+		var belt_items: Array[Dictionary] = [
 			{"item": "copper_ore", "s": 0.5, "born_at": 0.0}
 		]
+		belt_sim.entities[belt_id].belt_items = belt_items
 	var belt_matches: bool = belt_id >= 0 \
 		and _refund_preview_matches_removal(belt_sim, source_id)
 	_check("refund preview matches removal for miner, geo tap, buffers, and loaded belts",
@@ -498,6 +499,49 @@ func _refund_preview_matches_removal(sim: FactorySim, entity_id: int) -> bool:
 	var expected: Dictionary = sim.preview_refund(entity_id)
 	var actual: Dictionary = sim.remove_entity_with_refund(entity_id)
 	return expected == actual
+
+func _test_storage_grid_mapping_refresh() -> void:
+	var sim := FactorySim.new()
+	var source_id: int = sim.add_entity("smelter", Vector3.ZERO)
+	var storage_id: int = sim.add_entity("storage", Vector3(0.0, 0.0, 10.0))
+	sim.entities[storage_id].input_buffer["iron_ore"] = 3
+	var belt_result: Dictionary = _connect(sim, "belt_mk1", source_id, "out0",
+		storage_id, "in0")
+	var belt_id: int = int(belt_result.get("id", -1))
+	if belt_id >= 0:
+		var belt: FactoryEntity = sim.entities[belt_id]
+		belt.belt_items = [{
+			"item": "copper_ore",
+			"s": float(belt.extra["length"]) - 0.01,
+			"born_at": -1.0
+		}]
+	var player := FactoryPlayer.new()
+	get_root().add_child(player)
+	var hud := FactoryHUD.new()
+	hud.setup(sim, player)
+	get_root().add_child(hud)
+	hud.open_entity(storage_id)
+	var initial_slot_item: String = hud.storage_slot_items[0]
+	sim.tick(0.05)
+	hud._process(0.016)
+	var rendered_slot_id: int = hud.storage_grid.get_child(0).get_instance_id()
+	hud._refresh_storage_grid()
+	var nodes_preserved: bool = hud.storage_grid.get_child(0).get_instance_id() == rendered_slot_id
+	var copper_slot: int = hud.storage_slot_items.find("copper_ore")
+	var displayed_item: String = hud.storage_slot_items[copper_slot] \
+		if copper_slot >= 0 else ""
+	hud._on_storage_slot_input(copper_slot, MOUSE_BUTTON_LEFT, false)
+	_check("storage contents refresh keeps nodes stable and clicks withdraw the displayed belt item",
+		belt_id >= 0 and sim.entities[storage_id].input_buffer.get("copper_ore", 0) == 0
+		and sim.entities[storage_id].input_buffer.get("iron_ore", 0) == 3
+		and nodes_preserved and displayed_item == "copper_ore"
+		and initial_slot_item == "iron_ore"
+		and hud.cursor_stack.get("item_id", "") == "copper_ore",
+		str([belt_result, hud.storage_slot_items, hud.cursor_stack,
+			sim.entities[storage_id].input_buffer, nodes_preserved]))
+	hud.free()
+	player.free()
+	_finish_group()
 
 func _test_storage_origin_return_gain() -> void:
 	var sim := FactorySim.new()
