@@ -593,19 +593,26 @@ func _return_cursor_stack() -> void:
 	if cursor_stack.is_empty():
 		_clear_cursor_origin()
 		return
-	var item_id: String = str(cursor_stack.get("item_id", ""))
-	var quantity: int = int(cursor_stack.get("count", 0))
-	if cursor_origin_type == "storage" and sim.entities.has(cursor_origin_entity):
-		var remaining: int = quantity - sim.insert_storage_item(cursor_origin_entity, item_id, quantity)
-		if remaining > 0:
-			player.inventory.add_restored(item_id, remaining)
+	var pending: Dictionary = cursor_stack.duplicate(true)
+	if cursor_origin_type == "storage":
+		var item_id: String = str(pending.get("item_id", ""))
+		var quantity: int = int(pending.get("count", 0))
+		if sim.entities.has(cursor_origin_entity):
+			quantity -= sim.insert_storage_item(cursor_origin_entity, item_id, quantity)
+		if quantity > 0:
+			var remainder: int = player.inventory.add(item_id, quantity)
+			player.inventory.add_restored(item_id, remainder)
+			world_item_collected.emit(item_id, quantity)
 	elif cursor_origin_type == "player" and cursor_origin_slot >= 0:
-		var remainder: Dictionary = player.inventory.place_into(cursor_origin_slot, cursor_stack)
-		if not remainder.is_empty():
-			player.inventory.add_restored(
-				str(remainder.get("item_id", item_id)), int(remainder.get("count", 0)))
+		pending = player.inventory.place_into(cursor_origin_slot, pending)
+		if not pending.is_empty():
+			var pending_item: String = str(pending.get("item_id", ""))
+			var remainder: int = player.inventory.add(pending_item, int(pending.get("count", 0)))
+			player.inventory.add_restored(pending_item, remainder)
 	else:
-		player.inventory.add_restored(item_id, quantity)
+		var item_id: String = str(pending.get("item_id", ""))
+		var remainder: int = player.inventory.add(item_id, int(pending.get("count", 0)))
+		player.inventory.add_restored(item_id, remainder)
 	cursor_stack.clear()
 	_clear_cursor_origin()
 	refresh_hotbar()

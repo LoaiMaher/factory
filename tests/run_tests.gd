@@ -48,6 +48,7 @@ func _run_all() -> void:
 	_test_cursor_stack_save()
 	_test_cursor_stack_load()
 	_test_creative_storage_deposits()
+	_test_storage_origin_return_gain()
 	print("RESULT: %d/%d test groups passed" % [passed_groups, groups])
 	quit(1 if failures > 0 else 0)
 
@@ -443,6 +444,38 @@ func _test_creative_storage_deposits() -> void:
 		and hud.toast_label.text == "Creative items can't be stored",
 		str([sim.entities[storage_id].input_buffer, player.inventory.totals(),
 			hud.cursor_stack, hud.toast_label.text]))
+	hud.free()
+	player.free()
+	_finish_group()
+
+func _test_storage_origin_return_gain() -> void:
+	var sim := FactorySim.new()
+	var storage_id: int = sim.add_entity("storage", Vector3.ZERO)
+	sim.entities[storage_id].input_buffer["copper_ore"] = 1
+	sim.take_storage_item(storage_id, "copper_ore", 1)
+	sim.entities[storage_id].input_buffer = {"iron_ore": 1000}
+	var survival := FrontierInventory.from_totals({"iron_ore": 64 * 48}, 48)
+	var creative := CreativeMode.new()
+	creative.enter(survival, 0)
+	var player := FactoryPlayer.new()
+	get_root().add_child(player)
+	player.inventory = creative.inventory
+	var hud := FactoryHUD.new()
+	hud.setup(sim, player)
+	get_root().add_child(hud)
+	hud.set_creative_mode(true)
+	hud.world_item_collected.connect(creative.record_world_gain)
+	hud.cursor_stack = {"item_id": "copper_ore", "count": 1}
+	hud._set_cursor_origin("storage", 0, storage_id, "copper_ore")
+	hud._return_cursor_stack()
+	var restored: Dictionary = creative.exit()
+	var restored_inventory: FrontierInventory = restored.get("inventory")
+	_check("Creative storage-origin cursor return records a gain when storage is full",
+		sim.entities[storage_id].input_buffer.get("copper_ore", 0) == 0
+		and hud.cursor_stack.is_empty()
+		and restored_inventory.count("copper_ore") == 1
+		and restored_inventory.slots.size() > restored_inventory.capacity,
+		str([sim.entities[storage_id].input_buffer, restored_inventory.to_data()]))
 	hud.free()
 	player.free()
 	_finish_group()
