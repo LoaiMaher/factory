@@ -53,6 +53,8 @@ func _run_all() -> void:
 	_test_storage_grid_mapping_refresh()
 	_test_storage_stack_withdrawals()
 	_test_machine_view_and_transfers()
+	_test_machine_panel_refresh_and_close()
+	_test_machine_panel_creative_transfers()
 	print("RESULT: %d/%d test groups passed" % [passed_groups, groups])
 	quit(1 if failures > 0 else 0)
 
@@ -711,6 +713,76 @@ func _test_machine_view_and_transfers() -> void:
 		and is_equal_approx(float(miner_view.get("deposit_rate", 0.0)), 120.0)
 		and is_equal_approx(float(miner_view.get("maximum_rate", 0.0)), 120.0),
 		str(miner_view))
+	_finish_group()
+
+func _test_machine_panel_refresh_and_close() -> void:
+	var sim := FactorySim.new()
+	var entity_id: int = sim.add_entity("smelter", Vector3.ZERO)
+	var player := FactoryPlayer.new()
+	get_root().add_child(player)
+	var hud := FactoryHUD.new()
+	hud.setup(sim, player)
+	get_root().add_child(hud)
+	hud.open_entity(entity_id)
+	var machine_panel: FactoryMachinePanel = hud.machine_panel
+	var child_ids: Array[int] = []
+	for child: Node in machine_panel.get_children():
+		child_ids.append(child.get_instance_id())
+	var recipe_selector_id: int = machine_panel.recipe_selector.get_instance_id()
+	machine_panel.refresh()
+	machine_panel.refresh()
+	var refreshed_ids: Array[int] = []
+	for child: Node in machine_panel.get_children():
+		refreshed_ids.append(child.get_instance_id())
+	var preserved: bool = child_ids == refreshed_ids \
+		and recipe_selector_id == machine_panel.recipe_selector.get_instance_id()
+	sim.remove_entity_with_refund(entity_id)
+	hud._process(0.2)
+	_check("machine refresh preserves child IDs and closes when its entity is removed",
+		preserved and not hud.panel_is_open() and hud.machine_panel == null,
+		str([child_ids, refreshed_ids, hud.panel_is_open()]))
+	hud.free()
+	player.free()
+	_finish_group()
+
+func _test_machine_panel_creative_transfers() -> void:
+	var sim := FactorySim.new()
+	var entity_id: int = sim.add_entity("smelter", Vector3.ZERO, 0.0, {
+		"recipe": "iron_ingot"
+	})
+	sim.entities[entity_id].output_buffer["iron_ingot"] = 2
+	var creative := CreativeMode.new()
+	creative.enter(FrontierInventory.new(), 0)
+	var player := FactoryPlayer.new()
+	get_root().add_child(player)
+	player.inventory = creative.inventory
+	var hud := FactoryHUD.new()
+	hud.setup(sim, player)
+	get_root().add_child(hud)
+	hud.set_creative_mode(true)
+	hud.world_item_collected.connect(creative.record_world_gain)
+	hud.open_entity(entity_id)
+	var machine_panel: FactoryMachinePanel = hud.machine_panel
+	player.inventory.add("iron_ore", 5)
+	machine_panel._on_inventory_slot_input(0, MOUSE_BUTTON_LEFT, true)
+	var creative_input_blocked: bool = player.inventory.count("iron_ore") == 5 \
+		and sim.entities[entity_id].input_buffer.is_empty()
+	machine_panel._take_output()
+	var output_count: int = int(creative.world_gains.get("iron_ingot", 0))
+	var restored: Dictionary = creative.exit()
+	var survival_inventory: FrontierInventory = restored.get("inventory")
+	hud.set_creative_mode(false)
+	player.inventory = FrontierInventory.from_totals({"iron_ore": 3})
+	machine_panel._on_inventory_slot_input(0, MOUSE_BUTTON_LEFT, true)
+	_check("Creative blocks machine input deposits but tracks collected output as a gain",
+		creative_input_blocked and output_count == 2
+		and survival_inventory.count("iron_ingot") == 2
+		and sim.entities[entity_id].input_buffer.get("iron_ore", 0) == 3
+		and player.inventory.count("iron_ore") == 0,
+		str([creative_input_blocked, output_count, survival_inventory.totals(),
+			sim.entities[entity_id].input_buffer]))
+	hud.free()
+	player.free()
 	_finish_group()
 
 func _test_placement_and_ports() -> void:
