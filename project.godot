@@ -19,8 +19,18 @@ window/stretch/mode="canvas_items"
 
 [rendering]
 
-renderer/rendering_method="gl_compatibility"
+renderer/rendering_method="forward_plus"
 renderer/rendering_method.mobile="gl_compatibility"
+renderer/rendering_method.web="gl_compatibility"
+
+[factory/dev]
+
+power_bypass=true
+
+[factory/audio]
+
+master_volume=1.0
+sfx_volume=1.0
 
 [input]
 
