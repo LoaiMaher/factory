@@ -62,6 +62,7 @@ var storage_slot_stacks: Array[Dictionary] = []
 var inventory_category_filter: String = "all"
 var inventory_grid: FactoryInventoryPanel
 var craft_list: VBoxContainer
+var craft_scroll: ScrollContainer
 var storage_grid: FactoryInventoryPanel
 var machine_panel: FactoryMachinePanel
 var machine_refresh_elapsed: float = 0.0
@@ -315,13 +316,24 @@ func _open_machine_panel(entity_id: int) -> void:
 		machine_panel = null
 		return
 	machine_panel.set_creative_mode(creative_mode_active)
-	panel_body.add_child(machine_panel)
+	var machine_frame := PanelContainer.new()
+	machine_frame.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	var frame_style := StyleBoxFlat.new()
+	frame_style.bg_color = Color(0.055, 0.068, 0.074, 0.96)
+	frame_style.border_color = Color("566164")
+	frame_style.set_border_width_all(1)
+	frame_style.set_corner_radius_all(6)
+	machine_frame.add_theme_stylebox_override("panel", frame_style)
+	machine_frame.add_child(machine_panel)
+	panel_body.add_child(machine_frame)
 	active_panel = true
 	player.set_panel_open(true)
 	panel.visible = true
 	machine_refresh_elapsed = 0.0
 
 func open_inventory() -> void:
+	var previous_craft_scroll: int = craft_scroll.scroll_vertical \
+		if craft_scroll != null and is_instance_valid(craft_scroll) else 0
 	inventory_open = true
 	storage_open = false
 	selected_entity_id = -1
@@ -365,7 +377,7 @@ func open_inventory() -> void:
 	craft_column.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	content.add_child(craft_column)
 	craft_column.add_child(_label("Hand crafting", 19))
-	var craft_scroll := ScrollContainer.new()
+	craft_scroll = ScrollContainer.new()
 	craft_scroll.custom_minimum_size = Vector2(440.0, 560.0)
 	craft_scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	craft_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
@@ -392,6 +404,14 @@ func open_inventory() -> void:
 	for recipe_id: String in recipe_definitions:
 		var recipe: Dictionary = recipe_definitions[recipe_id]
 		craft_list.add_child(_make_craft_recipe_row(recipe_id, recipe))
+	if previous_craft_scroll > 0:
+		var scroll_restore_timer := Timer.new()
+		scroll_restore_timer.one_shot = true
+		scroll_restore_timer.wait_time = 0.05
+		add_child(scroll_restore_timer)
+		scroll_restore_timer.timeout.connect(_restore_craft_scroll_position.bind(
+			craft_scroll, previous_craft_scroll, scroll_restore_timer))
+		scroll_restore_timer.start()
 	var close := Button.new()
 	close.text = "Close  [Tab / Esc]"
 	close.pressed.connect(close_panel)
@@ -522,6 +542,13 @@ func _refresh_open_inventory() -> void:
 		_refresh_crafting_affordability()
 	if storage_open:
 		_refresh_storage_grid()
+
+func _restore_craft_scroll_position(scroll: ScrollContainer, position: int,
+		timer: Timer) -> void:
+	if is_instance_valid(scroll) and scroll.is_inside_tree():
+		scroll.scroll_vertical = position
+	if is_instance_valid(timer):
+		timer.queue_free()
 
 func _set_inventory_panel_size(wide: bool) -> void:
 	if panel == null:
@@ -1189,6 +1216,7 @@ func _set_panel(title: String) -> void:
 	for child: Node in panel_body.get_children():
 		child.queue_free()
 	assignment_hint = null
+	craft_scroll = null
 	machine_panel = null
 	assignment_target.clear()
 	entity_status_label = null

@@ -57,6 +57,7 @@ func _run_all() -> void:
 	_test_machine_panel_creative_transfers()
 	_test_machine_output_stack_transfers()
 	_test_machine_origin_cursor_return()
+	await _test_craft_scroll_preservation()
 	print("RESULT: %d/%d test groups passed" % [passed_groups, groups])
 	quit(1 if failures > 0 else 0)
 
@@ -959,6 +960,50 @@ func _test_machine_origin_cursor_return() -> void:
 	hud.free()
 	player.free()
 	_finish_group()
+
+func _test_craft_scroll_preservation() -> void:
+	var sim := FactorySim.new()
+	var player := FactoryPlayer.new()
+	get_root().add_child(player)
+	player.inventory = FrontierInventory.new()
+	player.inventory.add("iron_ore", 1)
+	var hud := FactoryHUD.new()
+	hud.setup(sim, player)
+	get_root().add_child(hud)
+	hud.open_inventory()
+	await process_frame
+	var max_scroll: int = int(hud.craft_scroll.get_v_scroll_bar().max_value)
+	var target_scroll: int = mini(160, max_scroll)
+	hud.craft_scroll.scroll_vertical = target_scroll
+	await process_frame
+	var before: int = hud.craft_scroll.scroll_vertical
+	hud._request_craft("iron_ingot")
+	_complete_test_craft_for_scroll("iron_ingot", player.inventory)
+	var crafted: bool = player.inventory.count("iron_ore") == 0 \
+		and player.inventory.count("iron_ingot") == 1
+	var after_craft: int = hud.craft_scroll.scroll_vertical
+	hud.open_inventory()
+	await process_frame
+	await process_frame
+	await create_timer(0.1).timeout
+	var after_rebuild: int = hud.craft_scroll.scroll_vertical
+	_check("crafting refresh and inventory rebuild preserve craft scroll position",
+		before > 0 and crafted and after_craft == before and after_rebuild == before,
+		str([max_scroll, before, after_craft, after_rebuild]))
+	hud.free()
+	player.free()
+	_finish_group()
+
+func _complete_test_craft_for_scroll(recipe_id: String,
+		inventory: FrontierInventory) -> void:
+	var recipe: Dictionary = Recipes.all().get(recipe_id, {})
+	var inputs: Dictionary = recipe.get("inputs", {})
+	if recipe.is_empty() or not inventory.can_afford(inputs):
+		return
+	for item_id: String in inputs:
+		inventory.remove(item_id, int(inputs[item_id]))
+	for item_id: String in recipe.get("outputs", {}):
+		inventory.add(item_id, int(recipe["outputs"][item_id]))
 
 func _test_placement_and_ports() -> void:
 	var sim: FactorySim = FactorySim.new()
