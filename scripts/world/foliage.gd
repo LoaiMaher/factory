@@ -3,6 +3,8 @@ class_name FactoryFoliage
 
 const WORLD_HALF_EXTENT: float = 512.0
 const CHUNK_SIZE: float = 128.0
+const TREE_CHUNK_HALF_DIAGONAL: float = 91.0
+const TREE_VISIBILITY_FADE_MARGIN: float = 64.0
 const TREES_PER_CHUNK: int = 132
 const DEFAULT_GRASS_RADIUS: float = 60.0
 const TREE_COLLISION_RADIUS: float = 76.0
@@ -262,32 +264,42 @@ func _build_tree_multimeshes() -> void:
 				or not _density_keeps(definition):
 			continue
 		var variant: int = int(definition["variant"])
-		if not groups.has(variant):
-			groups[variant] = {"trunks": [], "canopies": [], "indices": {}}
-		var group: Dictionary = groups[variant]
+		var chunk: Vector2i = definition["chunk"]
+		var group_key: String = "%d_%d_%d" % [chunk.x, chunk.y, variant]
+		if not groups.has(group_key):
+			groups[group_key] = {"chunk": chunk, "trunks": [], "canopies": [], "indices": {}}
+		var group: Dictionary = groups[group_key]
 		var position: Vector3 = definition["position"]
 		var scale: float = float(definition["scale"])
 		var yaw: float = float(definition["yaw"])
 		var basis: Basis = Basis(Vector3.UP, yaw).scaled(Vector3(scale, scale, scale))
+		var chunk_center: Vector3 = Vector3(
+			-WORLD_HALF_EXTENT + (float(chunk.x) + 0.5) * CHUNK_SIZE, 0.0,
+			-WORLD_HALF_EXTENT + (float(chunk.y) + 0.5) * CHUNK_SIZE)
 		var trunk_index: int = group["trunks"].size()
-		group["trunks"].append(Transform3D(basis, position))
+		group["trunks"].append(Transform3D(basis, position - chunk_center))
 		var canopy_index: int = group["canopies"].size()
-		group["canopies"].append(Transform3D(basis, position))
+		group["canopies"].append(Transform3D(basis, position - chunk_center))
 		group["indices"][str(definition["id"])] = {
 			"trunk": trunk_index,
 			"canopy": canopy_index
 		}
-		groups[variant] = group
+		groups[group_key] = group
 
-	for variant: int in groups:
-		var group: Dictionary = groups[variant]
+	for group_key: String in groups:
+		var group: Dictionary = groups[group_key]
+		var chunk: Vector2i = group["chunk"]
+		var chunk_center: Vector3 = Vector3(
+			-WORLD_HALF_EXTENT + (float(chunk.x) + 0.5) * CHUNK_SIZE, 0.0,
+			-WORLD_HALF_EXTENT + (float(chunk.y) + 0.5) * CHUNK_SIZE)
+		var variant: int = int(group_key.split("_")[2])
 		var model_name: String = "tree_conifer_%02d" % (variant + 1) if variant < 3 else "tree_broadleaf_%02d" % (variant - 2)
 		var packed: PackedScene = load("res://assets/models/%s.glb" % model_name) as PackedScene
 		var model: Node3D = packed.instantiate() as Node3D
 		var trunk_source: MeshInstance3D = model.find_child("Trunk_Mesh", true, false) as MeshInstance3D
 		var canopy_source: MeshInstance3D = model.find_child("Canopy_Mesh", true, false) as MeshInstance3D
 		if trunk_source == null or canopy_source == null:
-			model.queue_free()
+			model.free()
 			continue
 		var trunk_local_transform: Transform3D = _relative_transform(model, trunk_source)
 		var canopy_local_transform: Transform3D = _relative_transform(model, canopy_source)
@@ -301,10 +313,11 @@ func _build_tree_multimeshes() -> void:
 		bark.albedo_color = Color("584331")
 		bark.roughness = 0.94
 		var leaves: ShaderMaterial = _wind_material(Color("3e6540"), 0.035, 680.0, 720.0)
-		var trunk_multimesh: MultiMesh = _make_multimesh("TreeTrunks_%d" % variant,
-			trunk_source.mesh, bark, trunk_transforms, 720.0)
-		var canopy_multimesh: MultiMesh = _make_multimesh("TreeCanopies_%d" % variant,
-			canopy_source.mesh, leaves, canopy_transforms, 720.0)
+		var batch_name: String = "Tree_%d_%d_%d" % [chunk.x, chunk.y, variant]
+		var trunk_multimesh: MultiMesh = _make_multimesh("%s_Trunks" % batch_name,
+			trunk_source.mesh, bark, trunk_transforms, _tree_visibility_end(), chunk_center, chunk)
+		var canopy_multimesh: MultiMesh = _make_multimesh("%s_Canopies" % batch_name,
+			canopy_source.mesh, leaves, canopy_transforms, _tree_visibility_end(), chunk_center, chunk)
 		for foliage_id: String in group["indices"]:
 			var indices: Dictionary = group["indices"][foliage_id]
 			var references: Array[Dictionary] = [
@@ -312,7 +325,7 @@ func _build_tree_multimeshes() -> void:
 			]
 			references.append({"multimesh": canopy_multimesh, "index": int(indices["canopy"])})
 			instance_lookup[foliage_id] = references
-		model.queue_free()
+		model.free()
 func _build_scatter_multimeshes() -> void:
 	var groups: Dictionary = {}
 	for definition: Dictionary in foliage_definitions:
@@ -360,7 +373,9 @@ func _build_scatter_multimeshes() -> void:
 		for foliage_id: String in group["indices"]:
 			instance_lookup[foliage_id] = [{"multimesh": multimesh, "index": int(group["indices"][foliage_id])}]
 
-func _make_multimesh(node_name: String, mesh: Mesh, material: Material, transforms: Array, visibility_end: float) -> MultiMesh:
+func _make_multimesh(node_name: String, mesh: Mesh, material: Material, transforms: Array,
+		visibility_end: float, instance_position: Vector3 = Vector3.ZERO,
+		tree_chunk: Vector2i = Vector2i(-1, -1)) -> MultiMesh:
 	var multimesh: MultiMesh = MultiMesh.new()
 	multimesh.transform_format = MultiMesh.TRANSFORM_3D
 	multimesh.mesh = mesh
@@ -371,11 +386,14 @@ func _make_multimesh(node_name: String, mesh: Mesh, material: Material, transfor
 	instance.name = node_name
 	instance.multimesh = multimesh
 	instance.material_override = material
-	instance.visibility_range_end = tree_view_distance if node_name.begins_with("Tree") else visibility_end
-	instance.visibility_range_end_margin = 64.0
+	instance.position = instance_position
+	instance.visibility_range_end = visibility_end
+	instance.visibility_range_end_margin = TREE_VISIBILITY_FADE_MARGIN
 	instance.visibility_range_fade_mode = GeometryInstance3D.VISIBILITY_RANGE_FADE_SELF
+	if tree_chunk.x >= 0 and tree_chunk.y >= 0:
+		instance.set_meta("tree_chunk", tree_chunk)
 	add_child(instance)
-	if node_name.begins_with("Tree"):
+	if tree_chunk.x >= 0 and tree_chunk.y >= 0:
 		tree_multimesh_instances.append(instance)
 	return multimesh
 
