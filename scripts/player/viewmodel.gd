@@ -147,9 +147,17 @@ func _create_overlay() -> void:
 	var environment: Environment = Environment.new()
 	environment.background_mode = Environment.BG_COLOR
 	environment.background_color = Color(0.0, 0.0, 0.0, 0.0)
-	environment.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
-	environment.ambient_light_color = Color("b2bdc4")
-	environment.ambient_light_energy = 0.5
+	environment.background_energy_multiplier = 0.76
+	var viewmodel_sky_material: PanoramaSkyMaterial = PanoramaSkyMaterial.new()
+	viewmodel_sky_material.panorama = load("res://assets/hdris/kloppenheim_06_puresky_2k.hdr") as Texture2D
+	var viewmodel_sky: Sky = Sky.new()
+	viewmodel_sky.sky_material = viewmodel_sky_material
+	environment.sky = viewmodel_sky
+	environment.ambient_light_source = Environment.AMBIENT_SOURCE_SKY
+	environment.ambient_light_energy = 1.45
+	environment.reflected_light_source = Environment.REFLECTION_SOURCE_SKY
+	environment.tonemap_mode = Environment.TONE_MAPPER_ACES
+	environment.tonemap_exposure = 1.05
 	environment_node.environment = environment
 	render_root.add_child(environment_node)
 	overlay_camera = Camera3D.new()
@@ -158,6 +166,7 @@ func _create_overlay() -> void:
 	overlay_camera.near = 0.04
 	overlay_camera.far = 6.0
 	overlay_camera.cull_mask = VIEWMODEL_MASK
+	overlay_camera.environment = environment
 	render_root.add_child(overlay_camera)
 	overlay_camera.make_current()
 	var key_light: DirectionalLight3D = DirectionalLight3D.new()
